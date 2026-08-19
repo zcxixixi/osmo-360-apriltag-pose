@@ -1,0 +1,28 @@
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+
+# Runtime outputs
+sessions/
+pose.csv
+*.log
+
+# Camera media (keep large/private recordings out of Git)
+*.OSV
+*.osv
+*.LRF
+*.lrf
+*.mp4
+*.MP4
+*.mov
+*.MOV
+*.mkv
+*.MKV
+
+# Local calibration and environment files
+camera.yml
+camera.yaml
+.env
+.env.*
+
