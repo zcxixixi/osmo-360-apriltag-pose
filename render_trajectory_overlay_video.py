@@ -238,13 +238,33 @@ def draw_pose_axes(
     origin = projector(position)
     rotation = rpy_to_rotation(rpy_deg)
     colors = ((40, 55, 245), (70, 220, 90), (245, 110, 55))  # X red, Y green, Z blue
-    labels = ("X", "Y", "Z")
+    labels = ("Xc", "Yc", "Zc")
     for axis, color, label in zip(np.eye(3), colors, labels):
         endpoint = projector(position + rotation @ axis * axis_length)
         cv2.arrowedLine(canvas, origin, endpoint, color, 3, cv2.LINE_AA, tipLength=0.22)
         cv2.putText(
             canvas, label, (endpoint[0] + 3, endpoint[1] - 3),
             cv2.FONT_HERSHEY_SIMPLEX, 0.42, color, 1, cv2.LINE_AA,
+        )
+
+
+def draw_board_axes(
+    canvas: np.ndarray,
+    projector: Projector,
+    axis_length: float = 0.18,
+) -> None:
+    """Draw the fixed AprilGrid/board frame used by position and orientation."""
+    origin_3d = np.zeros(3, dtype=np.float64)
+    origin = projector(origin_3d)
+    colors = ((40, 55, 245), (70, 220, 90), (245, 110, 55))
+    labels = ("Xb", "Yb", "Zb")
+    cv2.circle(canvas, origin, 4, (225, 230, 236), -1, cv2.LINE_AA)
+    for axis, color, label in zip(np.eye(3), colors, labels):
+        endpoint = projector(origin_3d + axis * axis_length)
+        cv2.arrowedLine(canvas, origin, endpoint, color, 2, cv2.LINE_AA, tipLength=0.20)
+        cv2.putText(
+            canvas, label, (endpoint[0] + 3, endpoint[1] - 3),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.36, color, 1, cv2.LINE_AA,
         )
 
 
@@ -271,18 +291,19 @@ def draw_hud(
     panel = (842, 26, 410, 394)
     blend_rect(canvas, panel, 0.68)
     cv2.rectangle(canvas, (panel[0], panel[1]), (panel[0] + panel[2], panel[1] + panel[3]), (82, 92, 106), 1, cv2.LINE_AA)
-    cv2.putText(canvas, "3D CAMERA TRAJECTORY", (862, 57), cv2.FONT_HERSHEY_SIMPLEX, 0.60, (235, 240, 246), 1, cv2.LINE_AA)
-    cv2.putText(canvas, "recent 2.0 s tail", (862, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.43, (157, 171, 188), 1, cv2.LINE_AA)
+    cv2.putText(canvas, "6DoF CAMERA POSE", (862, 57), cv2.FONT_HERSHEY_SIMPLEX, 0.60, (235, 240, 246), 1, cv2.LINE_AA)
+    cv2.putText(canvas, "board frame + camera frame", (862, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (157, 171, 188), 1, cv2.LINE_AA)
 
     grid_points = []
     for x_value in np.linspace(-0.7, 0.45, 6):
-        a = projector(np.array([x_value, -0.70, 0.50]))
-        b = projector(np.array([x_value, 0.05, 0.50]))
+        a = projector(np.array([x_value, -0.70, 0.0]))
+        b = projector(np.array([x_value, 0.05, 0.0]))
         cv2.line(canvas, a, b, (62, 72, 84), 1, cv2.LINE_AA)
     for y_value in np.linspace(-0.7, 0.05, 5):
-        a = projector(np.array([-0.70, y_value, 0.50]))
-        b = projector(np.array([0.45, y_value, 0.50]))
+        a = projector(np.array([-0.70, y_value, 0.0]))
+        b = projector(np.array([0.45, y_value, 0.0]))
         cv2.line(canvas, a, b, (62, 72, 84), 1, cv2.LINE_AA)
+    draw_board_axes(canvas, projector)
 
     samples = list(history)
     for index in range(1, len(samples)):
@@ -349,7 +370,12 @@ def main() -> int:
         source_duration - start_time,
     )
     end_time = start_time + output_duration
-    projector = Projector(data[:, 1:4], (862, 94, 368, 276))
+    board_reference = np.vstack(
+        [np.zeros((1, 3)), np.eye(3) * 0.18]
+    )
+    projector = Projector(
+        np.vstack([data[:, 1:4], board_reference]), (862, 94, 368, 276)
+    )
     history: deque[tuple[float, np.ndarray | None]] = deque()
     temporary = args.output.with_suffix(".visual.tmp.mp4")
     temporary.parent.mkdir(parents=True, exist_ok=True)
