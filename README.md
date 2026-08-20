@@ -69,19 +69,19 @@ PanoForge 中间全景、remap、逐帧检测明细和缓存均不上传。
 
 ### 视频预览
 
-点击画面即可打开对应的 MP4 视频。
+下方动画会在 GitHub 页面内自动播放；点击动画可打开对应的原始 MP4 文件。
 
 #### round
 
-[![播放 round 轨迹 Demo](sessions/round-trajectory/video_preview.jpg)](sessions/round-trajectory/round_trajectory_overlay.mp4)
+[![round 轨迹 Demo 动画](sessions/round-trajectory/video_preview.gif)](sessions/round-trajectory/round_trajectory_overlay.mp4)
 
 #### round2
 
-[![播放 round2 轨迹 Demo](sessions/round2-trajectory/video_preview.jpg)](sessions/round2-trajectory/round2_trajectory_overlay.mp4)
+[![round2 轨迹 Demo 动画](sessions/round2-trajectory/video_preview.gif)](sessions/round2-trajectory/round2_trajectory_overlay.mp4)
 
 #### w
 
-[![播放 w 轨迹 Demo](sessions/w-trajectory/video_preview.jpg)](sessions/w-trajectory/w_trajectory_overlay.mp4)
+[![w 轨迹 Demo 动画](sessions/w-trajectory/video_preview.gif)](sessions/w-trajectory/w_trajectory_overlay.mp4)
 
 `round2` 中标定板倾角较大且 Tag 严重不足，主要展示失败状态，不应视为可靠轨迹。
 轨迹叠加视频可用以下脚本重新生成：
