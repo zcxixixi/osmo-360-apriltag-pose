@@ -1,0 +1,33 @@
+frame,timestamp,camera_x_m,camera_y_m,camera_z_m,roll_deg,pitch_deg,yaw_deg,raw_camera_x_m,raw_camera_y_m,raw_camera_z_m,detected_tag_count,inlier_count,reprojection_rmse_px,detected_ids,selected_view,quality_status
+0,0.000000,,,,,,,,,,1,,,23,,insufficient_tags
+12,0.200200,,,,,,,,,,5,,,5 17 23 33 34,,insufficient_tags
+24,0.400400,,,,,,,,,,1,,,5,,insufficient_tags
+36,0.600600,,,,,,,,,,1,,,11,,insufficient_tags
+48,0.800800,,,,,,,,,,3,,,10 11 17,,insufficient_tags
+60,1.001000,,,,,,,,,,4,,,17 23 34 35,,insufficient_tags
+72,1.201200,,,,,,,,,,5,,,4 5 17 29 35,,insufficient_tags
+84,1.401400,,,,,,,,,,2,,,5 10,,insufficient_tags
+96,1.601600,,,,,,,,,,5,,,4 10 11 17 35,,insufficient_tags
+108,1.801800,,,,,,,,,,1,,,4,,insufficient_tags
+120,2.002000,,,,,,,,,,1,,,11,,insufficient_tags
+132,2.202200,,,,,,,,,,5,,,5 9 23 32 35,,insufficient_tags
+144,2.402400,,,,,,,,,,1,,,23,,insufficient_tags
+156,2.602600,,,,,,,,,,2,,,29 35,,insufficient_tags
+168,2.802800,0.1539921,-0.8006240,1.0034994,114.7847,-21.8254,-92.6977,0.1539921,-0.8006240,1.0034994,8,4,0.7794,5 9 17 27 29 32 34 35,h-120,valid
+180,3.003000,,,,,,,,,,2,,,29 35,,insufficient_tags
+192,3.203200,,,,,,,,,,2,,,17 35,,insufficient_tags
+204,3.403400,,,,,,,,,,4,,,15 17 23 35,,insufficient_tags
+216,3.603600,,,,,,,,,,6,,,7 17 23 27 32 34,,insufficient_tags
+228,3.803800,,,,,,,,,,3,,,11 32 34,,insufficient_tags
+240,4.004000,,,,,,,,,,0,,,,,insufficient_tags
+252,4.204200,,,,,,,,,,2,,,17 23,,insufficient_tags
+264,4.404400,,,,,,,,,,1,,,35,,insufficient_tags
+276,4.604600,,,,,,,,,,0,,,,,insufficient_tags
+288,4.804800,,,,,,,,,,0,,,,,insufficient_tags
+300,5.005000,,,,,,,,,,0,,,,,insufficient_tags
+312,5.205200,,,,,,,,,,3,,,17 23 34,,insufficient_tags
+324,5.405400,,,,,,,,,,1,,,17,,insufficient_tags
+336,5.605600,,,,,,,,,,0,,,,,insufficient_tags
+348,5.805800,,,,,,,,,,1,,,17,,insufficient_tags
+360,6.006000,,,,,,,,,,0,,,,,insufficient_tags
+372,6.206200,,,,,,,,,,1,,,17,,insufficient_tags

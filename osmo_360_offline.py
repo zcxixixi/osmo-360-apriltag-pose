@@ -42,10 +42,19 @@ class View:
 
 
 # Overlap is intentional: a tag near a cardinal-view edge gets another chance.
-DEFAULT_VIEWS = tuple(
-    [View(f"h{yaw:+04d}", float(yaw), 0.0) for yaw in range(-180, 180, 45)]
-    + [View("up", 0.0, 90.0, 110.0), View("down", 0.0, -90.0, 110.0)]
-)
+def make_views(horizontal_step_deg: int = 30, horizontal_fov_deg: float = 110.0) -> tuple[View, ...]:
+    """Build overlapping perspective views for AprilTag detection."""
+    yaws = range(-180, 180, horizontal_step_deg)
+    return tuple(
+        [View(f"h{yaw:+04d}", float(yaw), 0.0, horizontal_fov_deg) for yaw in yaws]
+        + [
+            View("up", 0.0, 90.0, min(horizontal_fov_deg, 120.0)),
+            View("down", 0.0, -90.0, min(horizontal_fov_deg, 120.0)),
+        ]
+    )
+
+
+DEFAULT_VIEWS = make_views()
 
 
 @dataclass
@@ -133,6 +142,7 @@ def detect_view(
                 "corners_px": px,
                 "center_px": px.mean(axis=0),
                 "object_center": center,
+                "object_corners": grid.corners(tag_id),
                 "area_px2": abs(float(cv2.contourArea(px))),
             }
         )
@@ -140,7 +150,9 @@ def detect_view(
 
 
 def solve_view(
-    detections: list[dict], view: View, size: int, min_tags: int
+    detections: list[dict], view: View, size: int, min_tags: int,
+    max_rmse_px: float = 3.0, pnp_points: str = "centers",
+    pnp_solver: str = "ippe",
 ) -> Pose | None:
     # A repeated decoded ID in one view is suspicious; keep only the largest.
     best: dict[int, dict] = {}
@@ -150,27 +162,72 @@ def solve_view(
     detections = list(best.values())
     if len(detections) < min_tags:
         return None
-    obj = np.asarray([d["object_center"] for d in detections], np.float32)
-    img = np.asarray([d["center_px"] for d in detections], np.float32)
+    if pnp_points == "corners":
+        # Four sub-pixel-refined corners per tag give stronger constraints than
+        # the legacy one-center-per-tag approximation.
+        obj = np.concatenate([d["object_corners"] for d in detections]).astype(np.float32)
+        img = np.concatenate([d["corners_px"] for d in detections]).astype(np.float32)
+    else:
+        obj = np.asarray([d["object_center"] for d in detections], np.float32)
+        img = np.asarray([d["center_px"] for d in detections], np.float32)
     k = perspective_intrinsics(size, view.fov)
-    ok, rvec, tvec, inliers = cv2.solvePnPRansac(
-        obj,
-        img,
-        k,
-        None,
-        iterationsCount=200,
-        reprojectionError=3.0,
-        confidence=0.999,
-        flags=cv2.SOLVEPNP_ITERATIVE,
-    )
-    if not ok or inliers is None or len(inliers) < min_tags:
+    if pnp_solver == "iterative":
+        ok, rvec, tvec, inliers = cv2.solvePnPRansac(
+            obj, img, k, None, iterationsCount=200, reprojectionError=3.0,
+            confidence=0.999, flags=cv2.SOLVEPNP_ITERATIVE,
+        )
+        if not ok or inliers is None:
+            return None
+        ii = inliers[:, 0]
+        solutions = [(rvec, tvec)]
+    else:
+        # The whole AprilGrid is planar. Filter decoded outliers with a planar
+        # homography first, then let IPPE return both ambiguous pose solutions.
+        homography_obj = obj[:, :2].astype(np.float64)
+        _h, mask = cv2.findHomography(
+            homography_obj, img.astype(np.float64), cv2.RANSAC, 3.0,
+            maxIters=2000, confidence=0.999,
+        )
+        if mask is None:
+            return None
+        ii = np.flatnonzero(mask.ravel())
+        min_points = min_tags * (4 if pnp_points == "corners" else 1)
+        if len(ii) < min_points:
+            return None
+        ok, rvecs, tvecs, _errors = cv2.solvePnPGeneric(
+            obj[ii], img[ii], k, None, flags=cv2.SOLVEPNP_IPPE,
+        )
+        if not ok:
+            return None
+        solutions = list(zip(rvecs, tvecs))
+    min_points = min_tags * (4 if pnp_points == "corners" else 1)
+    if len(ii) < min_points:
         return None
-    ii = inliers[:, 0]
-    rvec, tvec = cv2.solvePnPRefineLM(obj[ii], img[ii], k, None, rvec, tvec)
-    projected, _ = cv2.projectPoints(obj[ii], rvec, tvec, k, None)
-    residual = projected.reshape(-1, 2) - img[ii]
-    rmse = float(np.sqrt(np.mean(np.sum(residual * residual, axis=1))))
+    best_solution = None
+    for candidate_rvec, candidate_tvec in solutions:
+        candidate_rvec, candidate_tvec = cv2.solvePnPRefineLM(
+            obj[ii], img[ii], k, None, candidate_rvec, candidate_tvec,
+        )
+        if not (np.isfinite(candidate_rvec).all() and np.isfinite(candidate_tvec).all()):
+            continue
+        camera_points, _ = cv2.projectPoints(
+            obj[ii], candidate_rvec, candidate_tvec, k, None,
+        )
+        residual = camera_points.reshape(-1, 2) - img[ii]
+        candidate_rmse = float(np.sqrt(np.mean(np.sum(residual * residual, axis=1))))
+        rotation, _ = cv2.Rodrigues(candidate_rvec)
+        depths = (rotation @ obj[ii].T + candidate_tvec.reshape(3, 1))[2]
+        if np.all(depths > 0) and math.isfinite(candidate_rmse):
+            if best_solution is None or candidate_rmse < best_solution[0]:
+                best_solution = (candidate_rmse, candidate_rvec, candidate_tvec)
+    if best_solution is None:
+        return None
+    rmse, rvec, tvec = best_solution
+    if rmse > max_rmse_px:
+        return None
     xyz, camera_to_board = pose_view_to_panorama(rvec, tvec, view)
+    if not (np.isfinite(xyz).all() and np.isfinite(camera_to_board).all()):
+        return None
     return Pose(
         xyz,
         camera_to_board,
@@ -178,16 +235,25 @@ def solve_view(
         len(ii),
         rmse,
         view.name,
-        sorted(int(detections[i]["id"]) for i in ii),
+        sorted(
+            {
+                int(detections[i // 4]["id"])
+                if pnp_points == "corners"
+                else int(detections[i]["id"])
+                for i in ii
+            }
+        ),
     )
 
 
 def choose_pose(candidates: list[Pose]) -> Pose | None:
     if not candidates:
         return None
-    # Inlier support dominates; RMSE breaks ties. This avoids blending incompatible
-    # planar PnP solutions while preserving all candidates in detections.jsonl.
-    return min(candidates, key=lambda p: (-p.inliers, p.rmse))
+    # Perspective views overlap, so the same board often has multiple valid PnP
+    # candidates.  Reprojection fit is the primary reliability signal; choosing
+    # merely the view with most tags can select a distorted edge-of-view solution.
+    # Inlier support only breaks an equal-fit tie.
+    return min(candidates, key=lambda p: (p.rmse, -p.inliers))
 
 
 def _finite_stats(values: Iterable[float]) -> dict[str, float | None]:
@@ -206,11 +272,12 @@ def generate_plot(session: Path, summary: dict) -> None:
     rows = list(
         csv.DictReader((session / "pose.csv").open(encoding="utf-8", newline=""))
     )
-    points, errors = [], []
+    points, errors, point_times = [], [], []
     for row in rows:
-        if row["quality_status"] in {"valid", "jump_rejected"} and row["camera_x_m"]:
+        if row["quality_status"] == "valid" and row["camera_x_m"]:
             points.append([float(row[f"camera_{a}_m"]) for a in "xyz"])
             errors.append(float(row["reprojection_rmse_px"]))
+            point_times.append(float(row["timestamp"]))
     plt.style.use("dark_background")
     fig = plt.figure(figsize=(16, 10), facecolor="#0b0d10")
     ratio = summary["valid_pose_ratio"] * 100
@@ -221,8 +288,13 @@ def generate_plot(session: Path, summary: dict) -> None:
     if points:
         p = np.asarray(points)
         c = np.linspace(0, 1, len(p))
+        all_times = np.asarray([float(row["timestamp"]) for row in rows])
+        nominal_dt = float(np.median(np.diff(all_times))) if len(all_times) > 1 else math.inf
+        breaks = np.flatnonzero(np.diff(point_times) > nominal_dt * 1.5) + 1
+        segments = np.split(p, breaks)
         ax = fig.add_subplot(221, projection="3d")
-        ax.plot(*p.T, color="#57b9ff")
+        for segment in segments:
+            ax.plot(*segment.T, color="#57b9ff")
         ax.scatter(*p.T, c=c, cmap="viridis", s=9)
         ax.scatter(*p[0], c="#4ade80", s=90, label="Start")
         ax.scatter(*p[-1], c="#fb5b5b", s=90, label="End")
@@ -235,7 +307,8 @@ def generate_plot(session: Path, summary: dict) -> None:
             (224, 1, 2, "YZ"),
         ]:
             a = fig.add_subplot(slot)
-            a.plot(p[:, ai], p[:, bi], color="#57b9ff")
+            for segment in segments:
+                a.plot(segment[:, ai], segment[:, bi], color="#57b9ff")
             a.scatter(p[:, ai], p[:, bi], c=c, cmap="viridis", s=8)
             a.scatter(0, 0, c="white", marker="s")
             a.scatter(*p[0, [ai, bi]], c="#4ade80", s=60)
@@ -283,7 +356,37 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sample-fps", type=float, default=5.0)
     p.add_argument("--output-dir", type=Path, default=Path("sessions"))
     p.add_argument("--min-tags", type=int, default=6)
+    p.add_argument(
+        "--max-rmse-px",
+        type=float,
+        default=3.0,
+        help="reject PnP candidates above this reprojection RMSE",
+    )
     p.add_argument("--view-size", type=int, default=960)
+    p.add_argument(
+        "--pnp-points", choices=("corners", "centers"), default="centers",
+        help="use tag centers (default) or experimental tag corners",
+    )
+    p.add_argument(
+        "--pnp-solver", choices=("ippe", "iterative"), default="ippe",
+        help="planar IPPE (default) or legacy iterative RANSAC",
+    )
+    p.add_argument(
+        "--max-processed-frames", type=int,
+        help="stop after this many sampled frames (for small validation runs)",
+    )
+    p.add_argument(
+        "--full-scan", action="store_true",
+        help="reliable production mode: scan all high-resolution views",
+    )
+    p.add_argument(
+        "--horizontal-step-deg", type=int, default=30,
+        help="yaw spacing between perspective views (default: 30)",
+    )
+    p.add_argument(
+        "--horizontal-fov-deg", type=float, default=110.0,
+        help="horizontal FOV of perspective views (default: 110)",
+    )
     p.add_argument(
         "--max-speed",
         type=float,
@@ -307,6 +410,12 @@ def main() -> int:
         or args.spacing < 0
         or args.sample_fps <= 0
         or args.min_tags < 4
+        or args.max_rmse_px <= 0
+        or args.view_size < 160
+        or (args.max_processed_frames is not None and args.max_processed_frames <= 0)
+        or args.horizontal_step_deg <= 0
+        or 360 % args.horizontal_step_deg != 0
+        or not 30.0 <= args.horizontal_fov_deg < 180.0
     ):
         raise SystemExit("invalid grid/sampling parameters")
     session = args.output_dir / (
@@ -339,11 +448,53 @@ def main() -> int:
     step = max(1, round(source_fps / args.sample_fps)) if source_fps > 0 else 1
     grid = Grid(args.rows, args.cols, args.tag_size, args.spacing, args.first_id)
     detector = make_detector()
+    views = make_views(args.horizontal_step_deg, args.horizontal_fov_deg)
     seen = Counter()
     rmses: list[float] = []
     jumps: list[float] = []
     processed = valid = frame_no = 0
     previous: tuple[float, np.ndarray] | None = None
+    tracked_view: View | None = None
+    search_size = min(960, args.view_size)
+
+    def evaluate_view(pano: np.ndarray, view: View, size: int) -> tuple[list[dict], Pose | None, dict]:
+        perspective = py360convert.e2p(
+            pano, fov_deg=view.fov, u_deg=view.yaw, v_deg=view.pitch,
+            out_hw=(size, size), mode="bilinear",
+        )
+        detections = detect_view(perspective, detector, grid)
+        pose = solve_view(
+            detections, view, size, args.min_tags, args.max_rmse_px,
+            args.pnp_points, args.pnp_solver,
+        )
+        record = {
+            "view": asdict(view),
+            "size": size,
+            "detections": [
+                {"id": d["id"], "corners_px": d["corners_px"].round(2).tolist()}
+                for d in detections
+            ],
+            "pose": None if pose is None else {
+                "xyz": pose.xyz.tolist(), "rpy": pose.rpy,
+                "inliers": pose.inliers, "rmse": pose.rmse,
+            },
+        }
+        return detections, pose, record
+
+    def recentered_view(base: View, detections: list[dict], size: int) -> View:
+        centers = np.asarray([d["center_px"] for d in detections], dtype=float)
+        focal = perspective_intrinsics(size, base.fov)[0, 0]
+        offset = centers.mean(axis=0) - size / 2.0
+        yaw = base.yaw + math.degrees(math.atan2(offset[0], focal))
+        pitch = base.pitch - math.degrees(math.atan2(offset[1], focal))
+        span = np.ptp(centers, axis=0)
+        angular_span = math.degrees(2 * math.atan2(max(span) / 2.0, focal))
+        return View(
+            "tracked", ((yaw + 180.0) % 360.0) - 180.0,
+            float(np.clip(pitch, -85.0, 85.0)),
+            float(np.clip(max(angular_span * 1.8, 70.0), 70.0, 100.0)),
+        )
+
     csv_fields = [
         "frame",
         "timestamp",
@@ -370,6 +521,8 @@ def main() -> int:
         writer = csv.DictWriter(cf, fieldnames=csv_fields)
         writer.writeheader()
         while not STOP:
+            if args.max_processed_frames is not None and processed >= args.max_processed_frames:
+                break
             ok, pano = cap.read()
             if not ok:
                 break
@@ -379,50 +532,75 @@ def main() -> int:
             timestamp = frame_no / source_fps if source_fps > 0 else float(processed)
             processed += 1
             all_ids: set[int] = set()
-            view_records = []
-            candidates = []
-            for view in DEFAULT_VIEWS:
-                perspective = py360convert.e2p(
-                    pano,
-                    fov_deg=view.fov,
-                    u_deg=view.yaw,
-                    v_deg=view.pitch,
-                    out_hw=(args.view_size, args.view_size),
-                    mode="bilinear",
-                )
-                detections = detect_view(perspective, detector, grid)
-                ids = sorted({int(d["id"]) for d in detections})
-                all_ids.update(ids)
-                pose = solve_view(detections, view, args.view_size, args.min_tags)
-                if pose:
-                    candidates.append(pose)
-                view_records.append(
-                    {
-                        "view": asdict(view),
-                        "detections": [
-                            {
-                                "id": d["id"],
-                                "corners_px": d["corners_px"].round(2).tolist(),
-                            }
-                            for d in detections
-                        ],
-                        "pose": None
-                        if pose is None
-                        else {
-                            "xyz": pose.xyz.tolist(),
-                            "rpy": pose.rpy,
-                            "inliers": pose.inliers,
-                            "rmse": pose.rmse,
-                        },
-                    }
-                )
+            view_records: list[dict] = []
+            candidates: list[Pose] = []
+
+            # Reliable production path: high-resolution overlapping views plus
+            # one board-centered refinement. It is slower but maximizes measured poses.
+            if args.full_scan:
+                coarse: list[tuple[View, list[dict]]] = []
+                for view in views:
+                    dets, candidate, record = evaluate_view(pano, view, args.view_size)
+                    view_records.append(record)
+                    coarse.append((view, dets))
+                    all_ids.update(int(d["id"]) for d in dets)
+                    if candidate:
+                        candidates.append(candidate)
+                base, dets = max(coarse, key=lambda item: len(item[1]))
+                if len(dets) >= 2:
+                    refined_view = recentered_view(base, dets, args.view_size)
+                    dets, candidate, record = evaluate_view(pano, refined_view, args.view_size)
+                    view_records.append(record)
+                    all_ids.update(int(d["id"]) for d in dets)
+                    if candidate:
+                        candidates.append(candidate)
+
+            # Fast path: reuse the previous board direction.  The final PnP is
+            # still measured from a full-resolution perspective image.
+            if not args.full_scan and tracked_view is not None:
+                dets, candidate, record = evaluate_view(pano, tracked_view, args.view_size)
+                view_records.append(record)
+                all_ids.update(int(d["id"]) for d in dets)
+                if candidate:
+                    candidates.append(candidate)
+                if len(dets) >= 2:
+                    updated = recentered_view(tracked_view, dets, args.view_size)
+                    heading_change = abs(updated.yaw - tracked_view.yaw) + abs(updated.pitch - tracked_view.pitch)
+                    tracked_view = updated
+                    if candidate is None or heading_change > 2.0:
+                        dets, candidate, record = evaluate_view(pano, tracked_view, args.view_size)
+                        view_records.append(record)
+                        all_ids.update(int(d["id"]) for d in dets)
+                        if candidate:
+                            candidates.append(candidate)
+
+            # Recovery path: cheap low-resolution global sweep, followed by one
+            # high-resolution recentered measurement.  Never use low-res PnP as
+            # the reported pose.
+            if not candidates:
+                coarse: list[tuple[View, list[dict]]] = []
+                for view in views:
+                    dets, _unused, record = evaluate_view(pano, view, search_size)
+                    record["pose"] = None
+                    view_records.append(record)
+                    coarse.append((view, dets))
+                    all_ids.update(int(d["id"]) for d in dets)
+                base, dets = max(coarse, key=lambda item: len(item[1]))
+                if len(dets) >= 2:
+                    tracked_view = recentered_view(base, dets, search_size)
+                    dets, candidate, record = evaluate_view(pano, tracked_view, args.view_size)
+                    view_records.append(record)
+                    all_ids.update(int(d["id"]) for d in dets)
+                    if candidate:
+                        candidates.append(candidate)
+
             for tag_id in all_ids:
                 seen[tag_id] += 1
             pose = choose_pose(candidates)
             quality = "insufficient_tags"
             filtered = None
             jump = None
-            if pose:
+            if pose and np.isfinite(pose.xyz).all() and math.isfinite(pose.rmse):
                 quality = "valid"
                 filtered = pose.xyz.copy()
                 rmses.append(pose.rmse)
@@ -432,7 +610,7 @@ def main() -> int:
                     jumps.append(jump)
                     if dt > 0 and jump / dt > args.max_speed:
                         quality = "jump_rejected"
-                        filtered = previous[1].copy()
+                        filtered = None
                 if quality == "valid":
                     previous = (timestamp, filtered.copy())
                     valid += 1
@@ -516,6 +694,8 @@ def main() -> int:
         "rows": args.rows,
         "cols": args.cols,
         "first_id": args.first_id,
+        "pnp_points": args.pnp_points,
+        "pnp_solver": args.pnp_solver,
         "official_stitched_panorama": args.official_stitched,
         "measurement_grade_camera_model": False,
         "accuracy_label": "APPROXIMATE / DEMO-GRADE",
