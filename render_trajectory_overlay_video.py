@@ -38,6 +38,10 @@ def parse_args() -> argparse.Namespace:
         "--reference-frame", choices=("board", "start"), default="board",
         help="board: absolute AprilGrid frame; start: first valid camera pose is XYZ/RPY zero",
     )
+    parser.add_argument(
+        "--state-label",
+        help="override TRACKED/PREDICTED state text (for example FUSED/ESTIMATED)",
+    )
     parser.add_argument("--start", type=float, default=0.0)
     parser.add_argument("--duration", type=float)
     return parser.parse_args()
@@ -604,6 +608,8 @@ def main() -> int:
         canvas = np.zeros((*canvas_size, 3), dtype=np.uint8)
         canvas[:640, :1280] = cv2.resize(frame, (1280, 640), interpolation=cv2.INTER_AREA)
         pose, state, opacity = sample_pose(data, now, args.prediction_max_age)
+        if args.state_label:
+            state = args.state_label
         position = None if pose is None else pose[:3]
         orientation = None if pose is None else pose[3:6]
         history.append((now, None if position is None else position.copy()))
