@@ -56,13 +56,14 @@ uv run python osmo_360_offline.py work/input/stitched.mp4 \
 - `relative_coordinates.png`：3D/XY/XZ/YZ、起终点和 AprilGrid 原点
 - `processor.log`
 
-## 三段真实轨迹 Demo
+## 四段真实轨迹 Demo
 
-仓库保留三段小体积演示视频及对应的坐标、汇总和轨迹图。原始 OSV、
+仓库保留四段小体积演示视频及对应的坐标、汇总和轨迹图。原始 OSV、
 PanoForge 中间全景、remap、逐帧检测明细和缓存均不上传。
 
 | Demo | 有效位姿 | 中位 RMSE | 视频 | 数据与轨迹图 |
 | --- | ---: | ---: | --- | --- |
+| 8 | 43/53（81.1%） | 0.404 px | [MP4](sessions/8-trajectory/8_trajectory_overlay.mp4) | [CSV](sessions/8-trajectory/pose.csv) · [JSON](sessions/8-trajectory/summary.json) · [PNG](sessions/8-trajectory/relative_coordinates.png) |
 | round | 36/54（66.7%） | 0.392 px | [MP4](sessions/round-trajectory/round_trajectory_overlay.mp4) | [CSV](sessions/round-trajectory/pose.csv) · [JSON](sessions/round-trajectory/summary.json) · [PNG](sessions/round-trajectory/relative_coordinates.png) |
 | round2 | 1/32（3.1%） | 0.779 px | [MP4](sessions/round2-trajectory/round2_trajectory_overlay.mp4) | [CSV](sessions/round2-trajectory/pose.csv) · [JSON](sessions/round2-trajectory/summary.json) · [PNG](sessions/round2-trajectory/relative_coordinates.png) |
 | w | 30/37（81.1%） | 0.723 px | [MP4](sessions/w-trajectory/w_trajectory_overlay.mp4) | [CSV](sessions/w-trajectory/pose.csv) · [JSON](sessions/w-trajectory/summary.json) · [PNG](sessions/w-trajectory/relative_coordinates.png) |
@@ -70,6 +71,10 @@ PanoForge 中间全景、remap、逐帧检测明细和缓存均不上传。
 ### 视频预览
 
 下方动画会在 GitHub 页面内自动播放；点击动画可打开对应的原始 MP4 文件。
+
+#### 8
+
+[![8 轨迹 Demo 动画](sessions/8-trajectory/video_preview.gif)](sessions/8-trajectory/8_trajectory_overlay.mp4)
 
 #### round
 
