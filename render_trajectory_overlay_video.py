@@ -22,6 +22,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ffmpeg", type=Path, required=True)
     parser.add_argument("--fps", type=float, default=20.0)
     parser.add_argument("--smooth", type=float, default=0.55)
+    parser.add_argument("--median-window", type=int, default=1)
+    parser.add_argument("--filter", choices=("ema", "kalman"), default="ema")
+    parser.add_argument("--kalman-measurement-noise", type=float, default=0.04)
+    parser.add_argument("--kalman-accel-noise", type=float, default=0.8)
+    parser.add_argument("--kalman-angle-noise", type=float, default=2.0)
+    parser.add_argument("--kalman-angular-accel-noise", type=float, default=30.0)
     parser.add_argument("--tail-seconds", type=float, default=2.0)
     parser.add_argument("--prediction-max-age", type=float, default=0.32)
     parser.add_argument("--start", type=float, default=0.0)
@@ -29,7 +35,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_and_filter(path: Path, smooth: float) -> np.ndarray:
+def load_and_filter(path: Path, smooth: float, median_window: int = 1) -> np.ndarray:
     poses = []
     with path.open(encoding="utf-8", newline="") as handle:
         for row in csv.DictReader(handle):
@@ -40,9 +46,35 @@ def load_and_filter(path: Path, smooth: float) -> np.ndarray:
                         float(row["camera_x_m"]),
                         float(row["camera_y_m"]),
                         float(row["camera_z_m"]),
+                        float(row["roll_deg"]),
+                        float(row["pitch_deg"]),
+                        float(row["yaw_deg"]),
                     ]
                 )
     data = np.asarray(poses, dtype=np.float64)
+    if not len(data):
+        raise ValueError("pose CSV has no valid 6DoF samples")
+    # Euler angles must be continuous before median/EMA/Kalman filtering so a
+    # +179 -> -179 degree wrap is not mistaken for a 358 degree rotation.
+    breaks = np.flatnonzero(np.diff(data[:, 0]) > 0.65) + 1
+    for segment in np.split(np.arange(len(data)), breaks):
+        data[segment, 4:7] = np.degrees(
+            np.unwrap(np.radians(data[segment, 4:7]), axis=0)
+        )
+    median_window = max(1, int(median_window))
+    if median_window % 2 == 0:
+        median_window += 1
+    if median_window > 1:
+        # Offline centered median removes isolated planar-PnP spikes. Never let
+        # the window cross a long detection gap.
+        source = data[:, 1:].copy()
+        breaks = np.flatnonzero(np.diff(data[:, 0]) > 0.65) + 1
+        for segment in np.split(np.arange(len(data)), breaks):
+            radius = median_window // 2
+            for index in segment:
+                lo = max(int(segment[0]), index - radius)
+                hi = min(int(segment[-1]) + 1, index + radius + 1)
+                data[index, 1:] = np.median(source[lo:hi], axis=0)
     alpha = 1.0 - smooth
     for index in range(1, len(data)):
         if data[index, 0] - data[index - 1, 0] <= 0.65:
@@ -50,6 +82,87 @@ def load_and_filter(path: Path, smooth: float) -> np.ndarray:
                 data[index, 1:] - data[index - 1, 1:]
             )
     return data
+
+
+def kalman_rts_filter(
+    data: np.ndarray,
+    measurement_noise: float,
+    accel_noise: float,
+    angle_noise: float = 2.0,
+    angular_accel_noise: float = 30.0,
+) -> np.ndarray:
+    """Offline 6DoF constant-velocity Kalman filter followed by RTS smoothing.
+
+    Long observation gaps are separate segments so the smoother never invents
+    a connection across a lost AprilGrid interval.
+    """
+    result = data.copy()
+    breaks = np.flatnonzero(np.diff(data[:, 0]) > 0.65) + 1
+    for indices in np.split(np.arange(len(data)), breaks):
+        if not len(indices):
+            continue
+        count = len(indices)
+        dimensions = data.shape[1] - 1
+        if dimensions != 6:
+            raise ValueError("expected XYZ + roll/pitch/yaw samples")
+        measurement_std = np.array(
+            [measurement_noise] * 3 + [angle_noise] * 3, dtype=np.float64
+        )
+        acceleration_std = np.array(
+            [accel_noise] * 3 + [angular_accel_noise] * 3, dtype=np.float64
+        )
+        filtered_x: list[np.ndarray] = []
+        filtered_p: list[np.ndarray] = []
+        predicted_x: list[np.ndarray] = []
+        predicted_p: list[np.ndarray] = []
+        transitions: list[np.ndarray] = []
+        state = np.r_[data[indices[0], 1:], np.zeros(dimensions)]
+        velocity_std = np.array([0.5] * 3 + [30.0] * 3)
+        covariance = np.diag(np.r_[measurement_std**2, velocity_std**2])
+        h = np.c_[np.eye(dimensions), np.zeros((dimensions, dimensions))]
+        r = np.diag(measurement_std**2)
+        for local, index in enumerate(indices):
+            if local == 0:
+                f = np.eye(dimensions * 2)
+                prior_state, prior_covariance = state.copy(), covariance.copy()
+            else:
+                dt = float(data[index, 0] - data[indices[local - 1], 0])
+                f = np.eye(dimensions * 2)
+                f[:dimensions, dimensions:] = np.eye(dimensions) * dt
+                q = np.zeros((dimensions * 2, dimensions * 2))
+                spectral_density = np.diag(acceleration_std**2)
+                q[:dimensions, :dimensions] = spectral_density * dt**3 / 3.0
+                q[:dimensions, dimensions:] = spectral_density * dt**2 / 2.0
+                q[dimensions:, :dimensions] = spectral_density * dt**2 / 2.0
+                q[dimensions:, dimensions:] = spectral_density * dt
+                prior_state = f @ state
+                prior_covariance = f @ covariance @ f.T + q
+            innovation = data[index, 1:] - h @ prior_state
+            innovation_covariance = h @ prior_covariance @ h.T + r
+            gain = np.linalg.solve(innovation_covariance, h @ prior_covariance).T
+            state = prior_state + gain @ innovation
+            covariance = (np.eye(dimensions * 2) - gain @ h) @ prior_covariance
+            predicted_x.append(prior_state)
+            predicted_p.append(prior_covariance)
+            filtered_x.append(state.copy())
+            filtered_p.append(covariance.copy())
+            transitions.append(f)
+        smoothed_x = [value.copy() for value in filtered_x]
+        smoothed_p = [value.copy() for value in filtered_p]
+        for local in range(count - 2, -1, -1):
+            f = transitions[local + 1]
+            smoother_gain = np.linalg.solve(
+                predicted_p[local + 1], f @ filtered_p[local]
+            ).T
+            smoothed_x[local] = filtered_x[local] + smoother_gain @ (
+                smoothed_x[local + 1] - predicted_x[local + 1]
+            )
+            smoothed_p[local] = filtered_p[local] + smoother_gain @ (
+                smoothed_p[local + 1] - predicted_p[local + 1]
+            ) @ smoother_gain.T
+        for index, state in zip(indices, smoothed_x):
+            result[index, 1:] = state[:dimensions]
+    return result
 
 
 def sample_pose(
@@ -69,12 +182,13 @@ def sample_pose(
             return previous[1:] * (1.0 - u) + following[1:] * u, "TRACKED", 1.0
     age = now - previous[0]
     if age <= prediction_max_age:
-        velocity = np.zeros(3)
+        velocity = np.zeros(data.shape[1] - 1)
         if right >= 2:
             prior = data[right - 2]
             dt = previous[0] - prior[0]
             if 0 < dt <= 0.65:
-                velocity = np.clip((previous[1:] - prior[1:]) / dt, -0.8, 0.8)
+                limits = np.array([0.8, 0.8, 0.8, 90.0, 90.0, 90.0])
+                velocity = np.clip((previous[1:] - prior[1:]) / dt, -limits, limits)
         opacity = max(0.0, 1.0 - age / prediction_max_age)
         return previous[1:] + velocity * age, "PREDICTED", opacity
     return None, "SEARCHING", 0.0
@@ -100,6 +214,40 @@ class Projector:
         return int(round(pixel[0])), int(round(pixel[1]))
 
 
+def rpy_to_rotation(rpy_deg: np.ndarray) -> np.ndarray:
+    roll, pitch, yaw = np.radians(rpy_deg)
+    rx = np.array(
+        [[1, 0, 0], [0, np.cos(roll), -np.sin(roll)], [0, np.sin(roll), np.cos(roll)]]
+    )
+    ry = np.array(
+        [[np.cos(pitch), 0, np.sin(pitch)], [0, 1, 0], [-np.sin(pitch), 0, np.cos(pitch)]]
+    )
+    rz = np.array(
+        [[np.cos(yaw), -np.sin(yaw), 0], [np.sin(yaw), np.cos(yaw), 0], [0, 0, 1]]
+    )
+    return rz @ ry @ rx
+
+
+def draw_pose_axes(
+    canvas: np.ndarray,
+    projector: Projector,
+    position: np.ndarray,
+    rpy_deg: np.ndarray,
+    axis_length: float = 0.12,
+) -> None:
+    origin = projector(position)
+    rotation = rpy_to_rotation(rpy_deg)
+    colors = ((40, 55, 245), (70, 220, 90), (245, 110, 55))  # X red, Y green, Z blue
+    labels = ("X", "Y", "Z")
+    for axis, color, label in zip(np.eye(3), colors, labels):
+        endpoint = projector(position + rotation @ axis * axis_length)
+        cv2.arrowedLine(canvas, origin, endpoint, color, 3, cv2.LINE_AA, tipLength=0.22)
+        cv2.putText(
+            canvas, label, (endpoint[0] + 3, endpoint[1] - 3),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.42, color, 1, cv2.LINE_AA,
+        )
+
+
 def blend_rect(image: np.ndarray, rect: tuple[int, int, int, int], opacity: float) -> None:
     x, y, w, h = rect
     roi = image[y : y + h, x : x + w]
@@ -112,11 +260,13 @@ def draw_hud(
     projector: Projector,
     history: deque,
     current: np.ndarray | None,
+    current_rpy: np.ndarray | None,
     state: str,
     opacity: float,
     now: float,
     duration: float,
     progress_ratio: float,
+    filter_label: str,
 ) -> None:
     panel = (842, 26, 410, 394)
     blend_rect(canvas, panel, 0.68)
@@ -153,6 +303,8 @@ def draw_hud(
         cv2.addWeighted(overlay, 0.16 * opacity, canvas, 1.0 - 0.16 * opacity, 0, canvas)
         cv2.circle(canvas, point, 7, (255, 205, 84), -1, cv2.LINE_AA)
         cv2.circle(canvas, point, 9, (245, 246, 248), 1, cv2.LINE_AA)
+        if current_rpy is not None:
+            draw_pose_axes(canvas, projector, current, current_rpy)
 
     state_color = (93, 215, 139) if state == "TRACKED" else (72, 174, 240) if state in {"PREDICTED", "ENTERING"} else (128, 139, 154)
     cv2.circle(canvas, (865, 390), 5, state_color, -1, cv2.LINE_AA)
@@ -162,15 +314,29 @@ def draw_hud(
     cv2.putText(canvas, f"{now:05.2f} s", (28, 678), cv2.FONT_HERSHEY_SIMPLEX, 0.78, (244, 247, 250), 2, cv2.LINE_AA)
     if current is not None:
         coords = f"X {current[0]:+.3f} m    Y {current[1]:+.3f} m    Z {current[2]:+.3f} m"
-        cv2.putText(canvas, coords, (205, 678), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (210, 220, 230), 1, cv2.LINE_AA)
-    cv2.putText(canvas, "adaptive IPPE | 55% smoothing", (886, 678), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (157, 171, 188), 1, cv2.LINE_AA)
+        cv2.putText(canvas, coords, (205, 669), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (210, 220, 230), 1, cv2.LINE_AA)
+    if current_rpy is not None:
+        wrapped = (current_rpy + 180.0) % 360.0 - 180.0
+        angles = f"R {wrapped[0]:+.1f} deg    P {wrapped[1]:+.1f} deg    Y {wrapped[2]:+.1f} deg"
+        cv2.putText(canvas, angles, (205, 699), cv2.FONT_HERSHEY_SIMPLEX, 0.49, (166, 183, 202), 1, cv2.LINE_AA)
+    cv2.putText(canvas, f"adaptive IPPE | {filter_label}", (886, 678), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (157, 171, 188), 1, cv2.LINE_AA)
     cv2.line(canvas, (0, 714), (1280, 714), (43, 51, 61), 4)
     cv2.line(canvas, (0, 714), (int(1280 * np.clip(progress_ratio, 0.0, 1.0)), 714), (245, 185, 56), 4)
 
 
 def main() -> int:
     args = parse_args()
-    data = load_and_filter(args.pose_csv, args.smooth)
+    if args.filter == "kalman":
+        data = load_and_filter(args.pose_csv, 0.0, args.median_window)
+        data = kalman_rts_filter(
+            data,
+            args.kalman_measurement_noise,
+            args.kalman_accel_noise,
+            args.kalman_angle_noise,
+            args.kalman_angular_accel_noise,
+        )
+    else:
+        data = load_and_filter(args.pose_csv, args.smooth, args.median_window)
     capture = cv2.VideoCapture(str(args.video), cv2.CAP_FFMPEG)
     if not capture.isOpened():
         raise SystemExit("cannot open video")
@@ -183,7 +349,7 @@ def main() -> int:
         source_duration - start_time,
     )
     end_time = start_time + output_duration
-    projector = Projector(data[:, 1:], (862, 94, 368, 276))
+    projector = Projector(data[:, 1:4], (862, 94, 368, 276))
     history: deque[tuple[float, np.ndarray | None]] = deque()
     temporary = args.output.with_suffix(".visual.tmp.mp4")
     temporary.parent.mkdir(parents=True, exist_ok=True)
@@ -212,13 +378,16 @@ def main() -> int:
             continue
         canvas = np.zeros((720, 1280, 3), dtype=np.uint8)
         canvas[:640] = cv2.resize(frame, (1280, 640), interpolation=cv2.INTER_AREA)
-        position, state, opacity = sample_pose(data, now, args.prediction_max_age)
+        pose, state, opacity = sample_pose(data, now, args.prediction_max_age)
+        position = None if pose is None else pose[:3]
+        orientation = None if pose is None else pose[3:6]
         history.append((now, None if position is None else position.copy()))
         while history and now - history[0][0] > args.tail_seconds:
             history.popleft()
         draw_hud(
-            canvas, projector, history, position, state, opacity, now,
+            canvas, projector, history, position, orientation, state, opacity, now,
             output_duration, local_time / output_duration,
+            "Kalman + RTS" if args.filter == "kalman" else f"{args.smooth * 100:.0f}% smoothing",
         )
         assert encode.stdin is not None
         encode.stdin.write(canvas.tobytes())

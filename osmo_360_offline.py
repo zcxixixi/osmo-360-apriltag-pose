@@ -22,12 +22,12 @@ from pathlib import Path
 import cv2
 import matplotlib
 import numpy as np
-import py360convert
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from osmo_apriltag_demo import Grid, rotation_to_rpy
+from projection_backends import ProjectionRequest, make_projection_backend
 
 LOG = logging.getLogger("osmo360.offline")
 STOP = False
@@ -147,6 +147,80 @@ def detect_view(
             }
         )
     return found
+
+
+def track_view_detections(
+    previous_image: np.ndarray,
+    current_image: np.ndarray,
+    previous_detections: list[dict],
+    max_forward_backward_error: float = 1.5,
+) -> list[dict]:
+    """Track known AprilTag corners into the next perspective frame.
+
+    Each tag is retained only when all four corners survive a forward/backward
+    Lucas-Kanade consistency check. IDs and board coordinates come from the
+    last decoded frame; only image coordinates are predicted.
+    """
+    if not previous_detections:
+        return []
+    previous_gray = cv2.cvtColor(previous_image, cv2.COLOR_BGR2GRAY)
+    current_gray = cv2.cvtColor(current_image, cv2.COLOR_BGR2GRAY)
+    points = np.concatenate(
+        [detection["corners_px"] for detection in previous_detections]
+    ).astype(np.float32).reshape(-1, 1, 2)
+    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01)
+    predicted, forward_status, _error = cv2.calcOpticalFlowPyrLK(
+        previous_gray,
+        current_gray,
+        points,
+        None,
+        winSize=(31, 31),
+        maxLevel=3,
+        criteria=criteria,
+    )
+    if predicted is None or forward_status is None:
+        return []
+    returned, backward_status, _back_error = cv2.calcOpticalFlowPyrLK(
+        current_gray,
+        previous_gray,
+        predicted,
+        None,
+        winSize=(31, 31),
+        maxLevel=3,
+        criteria=criteria,
+    )
+    if returned is None or backward_status is None:
+        return []
+    forward_backward = np.linalg.norm(
+        returned.reshape(-1, 2) - points.reshape(-1, 2), axis=1
+    )
+    good = (
+        forward_status.ravel().astype(bool)
+        & backward_status.ravel().astype(bool)
+        & np.isfinite(predicted.reshape(-1, 2)).all(axis=1)
+        & (forward_backward <= max_forward_backward_error)
+    )
+    tracked: list[dict] = []
+    predicted = predicted.reshape(-1, 2)
+    for index, detection in enumerate(previous_detections):
+        corner_slice = slice(index * 4, index * 4 + 4)
+        if not good[corner_slice].all():
+            continue
+        corners = predicted[corner_slice].astype(np.float32)
+        height, width = current_gray.shape
+        if (
+            np.any(corners[:, 0] < 0)
+            or np.any(corners[:, 0] >= width)
+            or np.any(corners[:, 1] < 0)
+            or np.any(corners[:, 1] >= height)
+        ):
+            continue
+        updated = detection.copy()
+        updated["corners_px"] = corners
+        updated["center_px"] = corners.mean(axis=0)
+        updated["area_px2"] = abs(float(cv2.contourArea(corners)))
+        tracked.append(updated)
+    return tracked
 
 
 def solve_view(
@@ -380,12 +454,39 @@ def parse_args() -> argparse.Namespace:
         help="reliable production mode: scan all high-resolution views",
     )
     p.add_argument(
+        "--temporal-flow",
+        action="store_true",
+        help="track decoded tag corners between periodic AprilTag detections",
+    )
+    p.add_argument(
+        "--redetect-interval",
+        type=int,
+        default=5,
+        help="decode tags again after this many optical-flow frames",
+    )
+    p.add_argument(
+        "--global-refresh-interval",
+        type=int,
+        default=60,
+        help="force a global view scan after this many tracked frames",
+    )
+    p.add_argument(
         "--horizontal-step-deg", type=int, default=30,
         help="yaw spacing between perspective views (default: 30)",
     )
     p.add_argument(
         "--horizontal-fov-deg", type=float, default=110.0,
         help="horizontal FOV of perspective views (default: 110)",
+    )
+    p.add_argument(
+        "--focused-yaws",
+        help="comma-separated yaw views for a known scene; skips unused views",
+    )
+    p.add_argument(
+        "--projection-backend",
+        choices=("cpu", "cuda"),
+        default="cpu",
+        help="panorama projection backend; CUDA requires the gpu extra",
     )
     p.add_argument(
         "--max-speed",
@@ -413,6 +514,8 @@ def main() -> int:
         or args.max_rmse_px <= 0
         or args.view_size < 160
         or (args.max_processed_frames is not None and args.max_processed_frames <= 0)
+        or args.redetect_interval <= 0
+        or args.global_refresh_interval <= 0
         or args.horizontal_step_deg <= 0
         or 360 % args.horizontal_step_deg != 0
         or not 30.0 <= args.horizontal_fov_deg < 180.0
@@ -445,28 +548,56 @@ def main() -> int:
     if width != 2 * height:
         LOG.error("expected 2:1 equirectangular input, got %dx%d", width, height)
         return 3
+    try:
+        projection_backend = make_projection_backend(args.projection_backend)
+    except RuntimeError as exc:
+        LOG.error("cannot initialize %s projection: %s", args.projection_backend, exc)
+        return 4
+    LOG.info("projection backend: %s", projection_backend.name)
     step = max(1, round(source_fps / args.sample_fps)) if source_fps > 0 else 1
     grid = Grid(args.rows, args.cols, args.tag_size, args.spacing, args.first_id)
     detector = make_detector()
     views = make_views(args.horizontal_step_deg, args.horizontal_fov_deg)
+    if args.focused_yaws:
+        try:
+            focused = [float(value) for value in args.focused_yaws.split(",")]
+        except ValueError as exc:
+            raise SystemExit("invalid --focused-yaws") from exc
+        if not focused or any(not -180.0 <= yaw < 180.0 for yaw in focused):
+            raise SystemExit("invalid --focused-yaws")
+        views = tuple(
+            View(f"h{yaw:+04.0f}", yaw, 0.0, args.horizontal_fov_deg)
+            for yaw in focused
+        )
     seen = Counter()
     rmses: list[float] = []
     jumps: list[float] = []
     processed = valid = frame_no = 0
     previous: tuple[float, np.ndarray] | None = None
     tracked_view: View | None = None
+    temporal_image: np.ndarray | None = None
+    temporal_detections: list[dict] = []
+    temporal_age = 0
     search_size = min(960, args.view_size)
+    candidate_sources: list[tuple[Pose, View, np.ndarray, list[dict]]] = []
 
-    def evaluate_view(pano: np.ndarray, view: View, size: int) -> tuple[list[dict], Pose | None, dict]:
-        perspective = py360convert.e2p(
-            pano, fov_deg=view.fov, u_deg=view.yaw, v_deg=view.pitch,
-            out_hw=(size, size), mode="bilinear",
-        )
+    def evaluate_view(
+        pano: np.ndarray,
+        view: View,
+        size: int,
+        perspective: np.ndarray | None = None,
+    ) -> tuple[list[dict], Pose | None, dict]:
+        if perspective is None:
+            perspective = projection_backend.project_many(
+                pano, [ProjectionRequest(view.yaw, view.pitch, view.fov, size)]
+            )[0]
         detections = detect_view(perspective, detector, grid)
         pose = solve_view(
             detections, view, size, args.min_tags, args.max_rmse_px,
             args.pnp_points, args.pnp_solver,
         )
+        if pose is not None:
+            candidate_sources.append((pose, view, perspective, detections))
         record = {
             "view": asdict(view),
             "size": size,
@@ -480,6 +611,18 @@ def main() -> int:
             },
         }
         return detections, pose, record
+
+    def evaluate_views(
+        pano: np.ndarray, selected_views: tuple[View, ...], size: int
+    ) -> list[tuple[View, list[dict], Pose | None, dict]]:
+        perspectives = projection_backend.project_many(
+            pano,
+            [ProjectionRequest(view.yaw, view.pitch, view.fov, size) for view in selected_views],
+        )
+        return [
+            (view, *evaluate_view(pano, view, size, perspective))
+            for view, perspective in zip(selected_views, perspectives)
+        ]
 
     def recentered_view(base: View, detections: list[dict], size: int) -> View:
         centers = np.asarray([d["center_px"] for d in detections], dtype=float)
@@ -534,13 +677,99 @@ def main() -> int:
             all_ids: set[int] = set()
             view_records: list[dict] = []
             candidates: list[Pose] = []
+            candidate_sources = []
 
-            # Reliable production path: high-resolution overlapping views plus
-            # one board-centered refinement. It is slower but maximizes measured poses.
-            if args.full_scan:
+            temporal_success = False
+            force_global_refresh = args.temporal_flow and (
+                processed == 1
+                or (processed - 1) % args.global_refresh_interval == 0
+            )
+            if (
+                args.temporal_flow
+                and not force_global_refresh
+                and tracked_view is not None
+                and temporal_image is not None
+                and temporal_detections
+            ):
+                perspective = projection_backend.project_many(
+                    pano,
+                    [
+                        ProjectionRequest(
+                            tracked_view.yaw,
+                            tracked_view.pitch,
+                            tracked_view.fov,
+                            args.view_size,
+                        )
+                    ],
+                )[0]
+                if temporal_age >= args.redetect_interval:
+                    dets = detect_view(perspective, detector, grid)
+                    tracking_mode = "redetected"
+                    next_temporal_age = 0
+                else:
+                    dets = track_view_detections(
+                        temporal_image, perspective, temporal_detections
+                    )
+                    tracking_mode = "optical_flow"
+                    next_temporal_age = temporal_age + 1
+                candidate = solve_view(
+                    dets,
+                    tracked_view,
+                    args.view_size,
+                    args.min_tags,
+                    args.max_rmse_px,
+                    args.pnp_points,
+                    args.pnp_solver,
+                )
+                all_ids.update(int(d["id"]) for d in dets)
+                view_records.append(
+                    {
+                        "view": asdict(tracked_view),
+                        "size": args.view_size,
+                        "tracking_mode": tracking_mode,
+                        "detections": [
+                            {
+                                "id": d["id"],
+                                "corners_px": d["corners_px"].round(2).tolist(),
+                            }
+                            for d in dets
+                        ],
+                        "pose": None
+                        if candidate is None
+                        else {
+                            "xyz": candidate.xyz.tolist(),
+                            "rpy": candidate.rpy,
+                            "inliers": candidate.inliers,
+                            "rmse": candidate.rmse,
+                        },
+                    }
+                )
+                if candidate is not None:
+                    candidates.append(candidate)
+                    candidate_sources.append(
+                        (candidate, tracked_view, perspective, dets)
+                    )
+                    temporal_image = perspective
+                    temporal_detections = dets
+                    temporal_age = next_temporal_age
+                    temporal_success = True
+                else:
+                    tracked_view = None
+                    temporal_image = None
+                    temporal_detections = []
+                    temporal_age = 0
+
+            # Global measurement path and immediate fallback when temporal
+            # tracking has not locked or has just failed.
+            run_full_scan = (
+                not temporal_success
+                and args.full_scan
+            )
+            if run_full_scan:
                 coarse: list[tuple[View, list[dict]]] = []
-                for view in views:
-                    dets, candidate, record = evaluate_view(pano, view, args.view_size)
+                for view, dets, candidate, record in evaluate_views(
+                    pano, views, args.view_size
+                ):
                     view_records.append(record)
                     coarse.append((view, dets))
                     all_ids.update(int(d["id"]) for d in dets)
@@ -554,10 +783,32 @@ def main() -> int:
                     all_ids.update(int(d["id"]) for d in dets)
                     if candidate:
                         candidates.append(candidate)
+                        tracked_view = refined_view
+                if candidates and tracked_view is None:
+                    selected = choose_pose(candidates)
+                    selected_coarse = next(
+                        (
+                            (view, detections)
+                            for view, detections in coarse
+                            if selected is not None and view.name == selected.view
+                        ),
+                        None,
+                    )
+                    if selected_coarse is not None:
+                        selected_view, selected_detections = selected_coarse
+                        tracked_view = (
+                            recentered_view(
+                                selected_view, selected_detections, args.view_size
+                            )
+                            if len(selected_detections) >= 2
+                            else selected_view
+                        )
+                if not candidates:
+                    tracked_view = None
 
             # Fast path: reuse the previous board direction.  The final PnP is
             # still measured from a full-resolution perspective image.
-            if not args.full_scan and tracked_view is not None:
+            if not temporal_success and not run_full_scan and tracked_view is not None:
                 dets, candidate, record = evaluate_view(pano, tracked_view, args.view_size)
                 view_records.append(record)
                 all_ids.update(int(d["id"]) for d in dets)
@@ -579,24 +830,40 @@ def main() -> int:
             # the reported pose.
             if not candidates:
                 coarse: list[tuple[View, list[dict]]] = []
-                for view in views:
-                    dets, _unused, record = evaluate_view(pano, view, search_size)
+                for view, dets, _unused, record in evaluate_views(
+                    pano, views, search_size
+                ):
                     record["pose"] = None
                     view_records.append(record)
                     coarse.append((view, dets))
                     all_ids.update(int(d["id"]) for d in dets)
                 base, dets = max(coarse, key=lambda item: len(item[1]))
                 if len(dets) >= 2:
-                    tracked_view = recentered_view(base, dets, search_size)
-                    dets, candidate, record = evaluate_view(pano, tracked_view, args.view_size)
+                    recovery_view = recentered_view(base, dets, search_size)
+                    dets, candidate, record = evaluate_view(pano, recovery_view, args.view_size)
                     view_records.append(record)
                     all_ids.update(int(d["id"]) for d in dets)
                     if candidate:
                         candidates.append(candidate)
+                        tracked_view = recovery_view
+                    elif args.full_scan:
+                        tracked_view = None
 
             for tag_id in all_ids:
                 seen[tag_id] += 1
             pose = choose_pose(candidates)
+            if args.temporal_flow and pose is not None and not temporal_success:
+                source = next(
+                    (item for item in candidate_sources if item[0] is pose), None
+                )
+                if source is not None:
+                    _pose, tracked_view, temporal_image, temporal_detections = source
+                    temporal_age = 0
+            elif args.temporal_flow and pose is None:
+                tracked_view = None
+                temporal_image = None
+                temporal_detections = []
+                temporal_age = 0
             quality = "insufficient_tags"
             filtered = None
             jump = None
@@ -696,6 +963,10 @@ def main() -> int:
         "first_id": args.first_id,
         "pnp_points": args.pnp_points,
         "pnp_solver": args.pnp_solver,
+        "projection_backend": projection_backend.name,
+        "temporal_flow": args.temporal_flow,
+        "redetect_interval": args.redetect_interval,
+        "global_refresh_interval": args.global_refresh_interval,
         "official_stitched_panorama": args.official_stitched,
         "measurement_grade_camera_model": False,
         "accuracy_label": "APPROXIMATE / DEMO-GRADE",
