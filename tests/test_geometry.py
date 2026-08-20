@@ -2,7 +2,14 @@ import cv2
 import numpy as np
 import pytest
 
-from osmo_360_offline import View, pose_view_to_panorama, view_to_panorama_rotation
+from osmo_360_offline import (
+    _BODY_TO_PANORAMA,
+    View,
+    pose_view_to_panorama,
+    propagate_view_with_imu,
+    quaternion_to_rotation,
+    view_to_panorama_rotation,
+)
 from osmo_apriltag_demo import Grid
 
 
@@ -27,6 +34,27 @@ def test_forward_ray_matches_view_heading():
     np.testing.assert_allclose(
         view_to_panorama_rotation(90, 0) @ [0, 0, 1], [1, 0, 0], atol=1e-12
     )
+
+
+def test_imu_view_propagation_preserves_world_facing_basis():
+    previous = np.array([1.0, 0.0, 0.0, 0.0])
+    angle = np.radians(37.0)
+    current = np.array([np.cos(angle / 2), 0.0, np.sin(angle / 2), 0.0])
+    view = View("tracked", 42.0, -18.0, 85.0, 23.0)
+    propagated = propagate_view_with_imu(view, previous, current)
+    previous_world_basis = (
+        quaternion_to_rotation(previous)
+        @ _BODY_TO_PANORAMA.T
+        @ view_to_panorama_rotation(view.yaw, view.pitch, view.roll)
+    )
+    current_world_basis = (
+        quaternion_to_rotation(current)
+        @ _BODY_TO_PANORAMA.T
+        @ view_to_panorama_rotation(
+            propagated.yaw, propagated.pitch, propagated.roll
+        )
+    )
+    np.testing.assert_allclose(current_world_basis, previous_world_basis, atol=1e-9)
     np.testing.assert_allclose(
         view_to_panorama_rotation(0, 90) @ [0, 0, 1], [0, -1, 0], atol=1e-12
     )

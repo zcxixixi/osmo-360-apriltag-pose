@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Protocol, Sequence
 
@@ -17,6 +18,7 @@ class ProjectionRequest:
     pitch: float
     fov: float
     size: int
+    roll: float = 0.0
 
 
 class ProjectionBackend(Protocol):
@@ -40,6 +42,7 @@ class CpuProjectionBackend:
                 u_deg=request.yaw,
                 v_deg=request.pitch,
                 out_hw=(request.size, request.size),
+                in_rot_deg=request.roll,
                 mode="bilinear",
             )
             for request in requests
@@ -65,9 +68,13 @@ class CudaProjectionBackend:
         cp.arange(1, dtype=cp.float32).sum().get()
         self.cp = cp
         self.map_coordinates = map_coordinates
-        self._coordinate_cache: dict[
+        self._coordinate_cache: OrderedDict[
             tuple[int, int, ProjectionRequest], tuple[object, object]
-        ] = {}
+        ] = OrderedDict()
+        # IMU-guided views change slightly every frame. Bounding this cache
+        # prevents their 1440x1440 coordinate maps from exhausting VRAM while
+        # retaining the recurring global-scan views.
+        self._max_cached_coordinates = 48
 
     def _coordinates(
         self, in_h: int, in_w: int, request: ProjectionRequest
@@ -75,6 +82,7 @@ class CudaProjectionBackend:
         key = (in_h, in_w, request)
         cached = self._coordinate_cache.get(key)
         if cached is not None:
+            self._coordinate_cache.move_to_end(key)
             return cached
         # Order 2 keeps py360convert's floating-point maps instead of converting
         # them to OpenCV's CPU-only fixed-point representation. Coordinates do
@@ -84,7 +92,7 @@ class CudaProjectionBackend:
             math.radians(request.fov),
             -math.radians(request.yaw),
             math.radians(request.pitch),
-            0.0,
+            math.radians(request.roll),
             in_h,
             in_w,
             request.size,
@@ -94,6 +102,9 @@ class CudaProjectionBackend:
         coord_y = self.cp.asarray(sampler._coor_y, dtype=self.cp.float32).squeeze()
         coord_x = self.cp.asarray(sampler._coor_x, dtype=self.cp.float32).squeeze()
         self._coordinate_cache[key] = (coord_y, coord_x)
+        self._coordinate_cache.move_to_end(key)
+        while len(self._coordinate_cache) > self._max_cached_coordinates:
+            self._coordinate_cache.popitem(last=False)
         return coord_y, coord_x
 
     def _pad(self, pano: object) -> object:

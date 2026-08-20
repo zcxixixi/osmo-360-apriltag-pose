@@ -25,6 +25,7 @@ import numpy as np
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from scipy.spatial.transform import Rotation
 
 from osmo_apriltag_demo import Grid, rotation_to_rpy
 from projection_backends import ProjectionRequest, make_projection_backend
@@ -39,6 +40,72 @@ class View:
     yaw: float
     pitch: float
     fov: float = 100.0
+    roll: float = 0.0
+
+
+# PanoForge's factory-calibrated DJI convention, converted to this module's
+# OpenCV panorama axes (x right, y down, z forward). DJI quaternions rotate
+# body vectors into the world frame.
+_BODY_TO_PANORAMA = np.array(
+    [[0.0, 0.0, -1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float64
+)
+
+
+def quaternion_to_rotation(quaternion: np.ndarray) -> np.ndarray:
+    """Return a body-to-world rotation for a DJI [w, x, y, z] quaternion."""
+    q = np.asarray(quaternion, dtype=np.float64).reshape(4)
+    norm = float(np.linalg.norm(q))
+    if not math.isfinite(norm) or norm < 1e-12:
+        raise ValueError("invalid quaternion")
+    w, x, y, z = q / norm
+    return np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+        ],
+        dtype=np.float64,
+    )
+
+
+def propagate_view_with_imu(
+    view: View, previous_quaternion: np.ndarray, current_quaternion: np.ndarray
+) -> View:
+    """Keep a static world-facing perspective basis stable during rotation."""
+    previous_basis = view_to_panorama_rotation(view.yaw, view.pitch, view.roll)
+    body_to_world_previous = quaternion_to_rotation(previous_quaternion)
+    body_to_world_current = quaternion_to_rotation(current_quaternion)
+    current_basis = (
+        _BODY_TO_PANORAMA
+        @ body_to_world_current.T
+        @ body_to_world_previous
+        @ _BODY_TO_PANORAMA.T
+        @ previous_basis
+    )
+    yaw, pitch, roll = Rotation.from_matrix(current_basis).as_euler(
+        "YXZ", degrees=True
+    )
+    return View(
+        view.name,
+        ((yaw + 180.0) % 360.0) - 180.0,
+        float(np.clip(pitch, -85, 85)),
+        view.fov,
+        ((roll + 180.0) % 360.0) - 180.0,
+    )
+
+
+def load_imu_quaternions(path: Path | None) -> dict[int, np.ndarray]:
+    """Load PanoForge's per-source-frame DJI quaternion export."""
+    if path is None:
+        return {}
+    result: dict[int, np.ndarray] = {}
+    with path.open(newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            result[int(row["frame"])] = np.array(
+                [float(row[key]) for key in ("qw", "qx", "qy", "qz")],
+                dtype=np.float64,
+            )
+    return result
 
 
 # Overlap is intentional: a tag near a cardinal-view edge gets another chance.
@@ -68,13 +135,15 @@ class Pose:
     ids: list[int]
 
 
-def view_to_panorama_rotation(yaw_deg: float, pitch_deg: float) -> np.ndarray:
+def view_to_panorama_rotation(
+    yaw_deg: float, pitch_deg: float, roll_deg: float = 0.0
+) -> np.ndarray:
     """Rotation from OpenCV perspective axes into panorama camera axes.
 
     Axes are x right, y down, z forward. Positive yaw looks right and positive
     pitch looks up, matching py360convert's e2p convention.
     """
-    yaw, pitch = np.radians([yaw_deg, pitch_deg])
+    yaw, pitch, roll = np.radians([yaw_deg, pitch_deg, roll_deg])
     ry = np.array(
         [[np.cos(yaw), 0, np.sin(yaw)], [0, 1, 0], [-np.sin(yaw), 0, np.cos(yaw)]]
     )
@@ -85,7 +154,10 @@ def view_to_panorama_rotation(yaw_deg: float, pitch_deg: float) -> np.ndarray:
             [0, np.sin(pitch), np.cos(pitch)],
         ]
     )
-    return ry @ rx
+    rz = np.array(
+        [[np.cos(roll), -np.sin(roll), 0], [np.sin(roll), np.cos(roll), 0], [0, 0, 1]]
+    )
+    return ry @ rx @ rz
 
 
 def pose_view_to_panorama(
@@ -93,7 +165,7 @@ def pose_view_to_panorama(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Convert board->view PnP output to camera pose in the board frame."""
     board_to_view, _ = cv2.Rodrigues(np.asarray(rvec, dtype=np.float64))
-    view_to_pano = view_to_panorama_rotation(view.yaw, view.pitch)
+    view_to_pano = view_to_panorama_rotation(view.yaw, view.pitch, view.roll)
     board_to_pano = view_to_pano @ board_to_view
     board_origin_pano = view_to_pano @ np.asarray(tvec, dtype=np.float64).reshape(3, 1)
     pano_to_board = board_to_pano.T
@@ -459,6 +531,11 @@ def parse_args() -> argparse.Namespace:
         help="track decoded tag corners between periodic AprilTag detections",
     )
     p.add_argument(
+        "--imu-csv",
+        type=Path,
+        help="PanoForge imu_perframe.csv; guides the tracked view during rotation",
+    )
+    p.add_argument(
         "--redetect-interval",
         type=int,
         default=5,
@@ -557,6 +634,9 @@ def main() -> int:
     step = max(1, round(source_fps / args.sample_fps)) if source_fps > 0 else 1
     grid = Grid(args.rows, args.cols, args.tag_size, args.spacing, args.first_id)
     detector = make_detector()
+    imu_quaternions = load_imu_quaternions(args.imu_csv)
+    if args.imu_csv:
+        LOG.info("loaded %d per-frame IMU orientations", len(imu_quaternions))
     views = make_views(args.horizontal_step_deg, args.horizontal_fov_deg)
     if args.focused_yaws:
         try:
@@ -578,6 +658,7 @@ def main() -> int:
     temporal_image: np.ndarray | None = None
     temporal_detections: list[dict] = []
     temporal_age = 0
+    tracked_quaternion: np.ndarray | None = None
     search_size = min(960, args.view_size)
     candidate_sources: list[tuple[Pose, View, np.ndarray, list[dict]]] = []
 
@@ -589,7 +670,7 @@ def main() -> int:
     ) -> tuple[list[dict], Pose | None, dict]:
         if perspective is None:
             perspective = projection_backend.project_many(
-                pano, [ProjectionRequest(view.yaw, view.pitch, view.fov, size)]
+                pano, [ProjectionRequest(view.yaw, view.pitch, view.fov, size, view.roll)]
             )[0]
         detections = detect_view(perspective, detector, grid)
         pose = solve_view(
@@ -617,7 +698,10 @@ def main() -> int:
     ) -> list[tuple[View, list[dict], Pose | None, dict]]:
         perspectives = projection_backend.project_many(
             pano,
-            [ProjectionRequest(view.yaw, view.pitch, view.fov, size) for view in selected_views],
+            [
+                ProjectionRequest(view.yaw, view.pitch, view.fov, size, view.roll)
+                for view in selected_views
+            ],
         )
         return [
             (view, *evaluate_view(pano, view, size, perspective))
@@ -636,6 +720,7 @@ def main() -> int:
             "tracked", ((yaw + 180.0) % 360.0) - 180.0,
             float(np.clip(pitch, -85.0, 85.0)),
             float(np.clip(max(angular_span * 1.8, 70.0), 70.0, 100.0)),
+            base.roll,
         )
 
     csv_fields = [
@@ -679,6 +764,17 @@ def main() -> int:
             candidates: list[Pose] = []
             candidate_sources = []
 
+            current_quaternion = imu_quaternions.get(frame_no)
+            if (
+                tracked_view is not None
+                and tracked_quaternion is not None
+                and current_quaternion is not None
+            ):
+                tracked_view = propagate_view_with_imu(
+                    tracked_view, tracked_quaternion, current_quaternion
+                )
+                tracked_quaternion = current_quaternion
+
             temporal_success = False
             force_global_refresh = args.temporal_flow and (
                 processed == 1
@@ -686,7 +782,6 @@ def main() -> int:
             )
             if (
                 args.temporal_flow
-                and not force_global_refresh
                 and tracked_view is not None
                 and temporal_image is not None
                 and temporal_detections
@@ -699,6 +794,7 @@ def main() -> int:
                             tracked_view.pitch,
                             tracked_view.fov,
                             args.view_size,
+                            tracked_view.roll,
                         )
                     ],
                 )[0]
@@ -706,21 +802,53 @@ def main() -> int:
                     dets = detect_view(perspective, detector, grid)
                     tracking_mode = "redetected"
                     next_temporal_age = 0
+                    candidate = solve_view(
+                        dets,
+                        tracked_view,
+                        args.view_size,
+                        args.min_tags,
+                        args.max_rmse_px,
+                        args.pnp_points,
+                        args.pnp_solver,
+                    )
+                    # A blurred frame may be impossible to decode even though
+                    # its already-identified corners remain trackable. Do not
+                    # throw away a healthy track merely because the periodic
+                    # decoder misses; LK still has forward/backward checks and
+                    # the resulting pose must pass the normal PnP/RMSE gates.
+                    if candidate is None:
+                        flowed = track_view_detections(
+                            temporal_image, perspective, temporal_detections
+                        )
+                        flow_candidate = solve_view(
+                            flowed,
+                            tracked_view,
+                            args.view_size,
+                            args.min_tags,
+                            args.max_rmse_px,
+                            args.pnp_points,
+                            args.pnp_solver,
+                        )
+                        if flow_candidate is not None:
+                            dets = flowed
+                            candidate = flow_candidate
+                            tracking_mode = "redetect_fallback_flow"
+                            next_temporal_age = temporal_age + 1
                 else:
                     dets = track_view_detections(
                         temporal_image, perspective, temporal_detections
                     )
                     tracking_mode = "optical_flow"
                     next_temporal_age = temporal_age + 1
-                candidate = solve_view(
-                    dets,
-                    tracked_view,
-                    args.view_size,
-                    args.min_tags,
-                    args.max_rmse_px,
-                    args.pnp_points,
-                    args.pnp_solver,
-                )
+                    candidate = solve_view(
+                        dets,
+                        tracked_view,
+                        args.view_size,
+                        args.min_tags,
+                        args.max_rmse_px,
+                        args.pnp_points,
+                        args.pnp_solver,
+                    )
                 all_ids.update(int(d["id"]) for d in dets)
                 view_records.append(
                     {
@@ -754,7 +882,6 @@ def main() -> int:
                     temporal_age = next_temporal_age
                     temporal_success = True
                 else:
-                    tracked_view = None
                     temporal_image = None
                     temporal_detections = []
                     temporal_age = 0
@@ -762,13 +889,16 @@ def main() -> int:
             # Global measurement path and immediate fallback when temporal
             # tracking has not locked or has just failed.
             run_full_scan = (
-                not temporal_success
+                (not temporal_success or force_global_refresh)
                 and args.full_scan
             )
             if run_full_scan:
                 coarse: list[tuple[View, list[dict]]] = []
+                scan_views = views
+                if tracked_view is not None and current_quaternion is not None:
+                    scan_views = (*views, tracked_view)
                 for view, dets, candidate, record in evaluate_views(
-                    pano, views, args.view_size
+                    pano, scan_views, args.view_size
                 ):
                     view_records.append(record)
                     coarse.append((view, dets))
@@ -784,6 +914,7 @@ def main() -> int:
                     if candidate:
                         candidates.append(candidate)
                         tracked_view = refined_view
+                        tracked_quaternion = current_quaternion
                 if candidates and tracked_view is None:
                     selected = choose_pose(candidates)
                     selected_coarse = next(
@@ -803,8 +934,10 @@ def main() -> int:
                             if len(selected_detections) >= 2
                             else selected_view
                         )
+                        tracked_quaternion = current_quaternion
                 if not candidates:
                     tracked_view = None
+                    tracked_quaternion = None
 
             # Fast path: reuse the previous board direction.  The final PnP is
             # still measured from a full-resolution perspective image.
@@ -818,6 +951,7 @@ def main() -> int:
                     updated = recentered_view(tracked_view, dets, args.view_size)
                     heading_change = abs(updated.yaw - tracked_view.yaw) + abs(updated.pitch - tracked_view.pitch)
                     tracked_view = updated
+                    tracked_quaternion = current_quaternion
                     if candidate is None or heading_change > 2.0:
                         dets, candidate, record = evaluate_view(pano, tracked_view, args.view_size)
                         view_records.append(record)
@@ -846,8 +980,10 @@ def main() -> int:
                     if candidate:
                         candidates.append(candidate)
                         tracked_view = recovery_view
+                        tracked_quaternion = current_quaternion
                     elif args.full_scan:
                         tracked_view = None
+                        tracked_quaternion = None
 
             for tag_id in all_ids:
                 seen[tag_id] += 1
@@ -859,8 +995,10 @@ def main() -> int:
                 if source is not None:
                     _pose, tracked_view, temporal_image, temporal_detections = source
                     temporal_age = 0
+                    tracked_quaternion = current_quaternion
             elif args.temporal_flow and pose is None:
                 tracked_view = None
+                tracked_quaternion = None
                 temporal_image = None
                 temporal_detections = []
                 temporal_age = 0
@@ -965,6 +1103,7 @@ def main() -> int:
         "pnp_solver": args.pnp_solver,
         "projection_backend": projection_backend.name,
         "temporal_flow": args.temporal_flow,
+        "imu_guided_view": bool(imu_quaternions),
         "redetect_interval": args.redetect_interval,
         "global_refresh_interval": args.global_refresh_interval,
         "official_stitched_panorama": args.official_stitched,
