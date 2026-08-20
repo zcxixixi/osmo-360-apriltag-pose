@@ -30,6 +30,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kalman-angular-accel-noise", type=float, default=30.0)
     parser.add_argument("--tail-seconds", type=float, default=2.0)
     parser.add_argument("--prediction-max-age", type=float, default=0.32)
+    parser.add_argument(
+        "--layout", choices=("overlay", "analysis"), default="overlay",
+        help="overlay: compact HUD; analysis: split-screen full trajectory and large 6DoF axes",
+    )
     parser.add_argument("--start", type=float, default=0.0)
     parser.add_argument("--duration", type=float)
     return parser.parse_args()
@@ -345,6 +349,92 @@ def draw_hud(
     cv2.line(canvas, (0, 714), (int(1280 * np.clip(progress_ratio, 0.0, 1.0)), 714), (245, 185, 56), 4)
 
 
+def _nice_grid_step(span: float) -> float:
+    """Return a readable metric grid step for the current trajectory extent."""
+    target = max(span / 5.0, 1e-3)
+    exponent = 10.0 ** math.floor(math.log10(target))
+    normalized = target / exponent
+    multiplier = 1.0 if normalized <= 1.0 else 2.0 if normalized <= 2.0 else 5.0
+    return multiplier * exponent
+
+
+def draw_analysis_hud(
+    canvas: np.ndarray,
+    projector: Projector,
+    history: deque,
+    current: np.ndarray | None,
+    current_rpy: np.ndarray | None,
+    state: str,
+    opacity: float,
+    now: float,
+    duration: float,
+    progress_ratio: float,
+    filter_label: str,
+    xyz_bounds: tuple[np.ndarray, np.ndarray],
+    axis_length: float,
+) -> None:
+    """Large split-screen visualization intended for trajectory inspection."""
+    panel_x = 1280
+    canvas[:, panel_x:] = (20, 24, 30)
+    cv2.line(canvas, (panel_x, 0), (panel_x, 720), (72, 82, 96), 2, cv2.LINE_AA)
+    cv2.putText(canvas, "ROBOT CAMERA 6DoF", (1312, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.82, (240, 244, 248), 2, cv2.LINE_AA)
+    cv2.putText(canvas, "FULL TRACK IN APRILGRID / WORLD FRAME", (1312, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (151, 170, 190), 1, cv2.LINE_AA)
+
+    low, high = xyz_bounds
+    x_step = _nice_grid_step(float(high[0] - low[0]))
+    y_step = _nice_grid_step(float(high[1] - low[1]))
+    x0 = math.floor(low[0] / x_step) * x_step
+    x1 = math.ceil(high[0] / x_step) * x_step
+    y0 = math.floor(low[1] / y_step) * y_step
+    y1 = math.ceil(high[1] / y_step) * y_step
+    for x_value in np.arange(x0, x1 + x_step * 0.5, x_step):
+        a = projector(np.array([x_value, y0, 0.0]))
+        b = projector(np.array([x_value, y1, 0.0]))
+        cv2.line(canvas, a, b, (48, 56, 67), 1, cv2.LINE_AA)
+        cv2.putText(canvas, f"{x_value:+.2f}", (a[0] - 14, a[1] + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (111, 126, 143), 1, cv2.LINE_AA)
+    for y_value in np.arange(y0, y1 + y_step * 0.5, y_step):
+        a = projector(np.array([x0, y_value, 0.0]))
+        b = projector(np.array([x1, y_value, 0.0]))
+        cv2.line(canvas, a, b, (48, 56, 67), 1, cv2.LINE_AA)
+
+    draw_board_axes(canvas, projector, axis_length=axis_length)
+    samples = list(history)
+    first_point = next((p for _, p in samples if p is not None), None)
+    if first_point is not None:
+        start_px = projector(first_point)
+        cv2.circle(canvas, start_px, 7, (92, 220, 130), -1, cv2.LINE_AA)
+        cv2.putText(canvas, "START", (start_px[0] + 9, start_px[1] - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (92, 220, 130), 1, cv2.LINE_AA)
+    for index in range(1, len(samples)):
+        t0, p0 = samples[index - 1]
+        t1, p1 = samples[index]
+        if p0 is None or p1 is None or t1 - t0 > 0.12:
+            continue
+        cv2.line(canvas, projector(p0), projector(p1), (242, 180, 62), 4, cv2.LINE_AA)
+
+    if current is not None:
+        point = projector(current)
+        cv2.circle(canvas, point, 12, (255, 210, 80), 2, cv2.LINE_AA)
+        cv2.circle(canvas, point, 5, (255, 238, 176), -1, cv2.LINE_AA)
+        if current_rpy is not None:
+            draw_pose_axes(canvas, projector, current, current_rpy, axis_length=axis_length)
+
+    state_color = (93, 215, 139) if state == "TRACKED" else (72, 174, 240) if state in {"PREDICTED", "ENTERING"} else (128, 139, 154)
+    cv2.circle(canvas, (1318, 602), 6, state_color, -1, cv2.LINE_AA)
+    cv2.putText(canvas, state, (1332, 609), cv2.FONT_HERSHEY_SIMPLEX, 0.56, state_color, 1, cv2.LINE_AA)
+    if current is not None:
+        cv2.putText(canvas, f"POSITION  X {current[0]:+.3f}  Y {current[1]:+.3f}  Z {current[2]:+.3f} m", (1312, 640), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (220, 228, 237), 1, cv2.LINE_AA)
+    if current_rpy is not None:
+        wrapped = (current_rpy + 180.0) % 360.0 - 180.0
+        cv2.putText(canvas, f"ATTITUDE  R {wrapped[0]:+.1f}  P {wrapped[1]:+.1f}  Y {wrapped[2]:+.1f} deg", (1312, 670), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (177, 195, 214), 1, cv2.LINE_AA)
+    cv2.putText(canvas, f"{now:05.2f} / {duration:05.2f} s   |   {filter_label}", (1312, 704), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (135, 151, 169), 1, cv2.LINE_AA)
+
+    # Video-side legend and progress bar.
+    cv2.rectangle(canvas, (0, 640), (1280, 720), (18, 22, 28), -1)
+    cv2.putText(canvas, "X red   Y green   Z blue   |   fixed board axes: Xb/Yb/Zb   moving camera axes: Xc/Yc/Zc", (28, 680), cv2.FONT_HERSHEY_SIMPLEX, 0.51, (203, 214, 225), 1, cv2.LINE_AA)
+    cv2.line(canvas, (0, 714), (1280, 714), (43, 51, 61), 4)
+    cv2.line(canvas, (0, 714), (int(1280 * np.clip(progress_ratio, 0.0, 1.0)), 714), (245, 185, 56), 4)
+
+
 def main() -> int:
     args = parse_args()
     if args.filter == "kalman":
@@ -370,19 +460,33 @@ def main() -> int:
         source_duration - start_time,
     )
     end_time = start_time + output_duration
-    board_reference = np.vstack(
-        [np.zeros((1, 3)), np.eye(3) * 0.18]
+    xyz = data[:, 1:4]
+    xyz_low = np.minimum(xyz.min(axis=0), np.zeros(3))
+    xyz_high = np.maximum(xyz.max(axis=0), np.zeros(3))
+    xyz_span = np.maximum(xyz_high - xyz_low, 1e-3)
+    axis_length = float(np.clip(np.max(xyz_span) * 0.16, 0.10, 0.24))
+    board_reference = np.vstack([np.zeros((1, 3)), np.eye(3) * axis_length])
+    fit_low = xyz_low - axis_length * 0.65
+    fit_high = xyz_high + axis_length * 0.65
+    fit_corners = np.asarray(
+        [[x, y, z] for x in (fit_low[0], fit_high[0])
+         for y in (fit_low[1], fit_high[1]) for z in (fit_low[2], fit_high[2])],
+        dtype=np.float64,
     )
-    projector = Projector(
-        np.vstack([data[:, 1:4], board_reference]), (862, 94, 368, 276)
-    )
+    if args.layout == "analysis":
+        projector_rect = (1312, 92, 576, 480)
+        canvas_size = (720, 1920)
+    else:
+        projector_rect = (862, 94, 368, 276)
+        canvas_size = (720, 1280)
+    projector = Projector(np.vstack([xyz, board_reference, fit_corners]), projector_rect)
     history: deque[tuple[float, np.ndarray | None]] = deque()
     temporary = args.output.with_suffix(".visual.tmp.mp4")
     temporary.parent.mkdir(parents=True, exist_ok=True)
     encode = subprocess.Popen(
         [
             str(args.ffmpeg), "-v", "error", "-f", "rawvideo", "-pix_fmt", "bgr24",
-            "-s", "1280x720", "-r", str(args.fps), "-i", "-", "-an", "-c:v", "libx264",
+            "-s", f"{canvas_size[1]}x{canvas_size[0]}", "-r", str(args.fps), "-i", "-", "-an", "-c:v", "libx264",
             "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
             "-y", str(temporary),
         ],
@@ -402,19 +506,27 @@ def main() -> int:
         local_time = now - start_time
         if local_time + 1e-6 < output_index / args.fps:
             continue
-        canvas = np.zeros((720, 1280, 3), dtype=np.uint8)
-        canvas[:640] = cv2.resize(frame, (1280, 640), interpolation=cv2.INTER_AREA)
+        canvas = np.zeros((*canvas_size, 3), dtype=np.uint8)
+        canvas[:640, :1280] = cv2.resize(frame, (1280, 640), interpolation=cv2.INTER_AREA)
         pose, state, opacity = sample_pose(data, now, args.prediction_max_age)
         position = None if pose is None else pose[:3]
         orientation = None if pose is None else pose[3:6]
         history.append((now, None if position is None else position.copy()))
-        while history and now - history[0][0] > args.tail_seconds:
-            history.popleft()
-        draw_hud(
-            canvas, projector, history, position, orientation, state, opacity, now,
-            output_duration, local_time / output_duration,
-            "Kalman + RTS" if args.filter == "kalman" else f"{args.smooth * 100:.0f}% smoothing",
-        )
+        if args.layout == "overlay":
+            while history and now - history[0][0] > args.tail_seconds:
+                history.popleft()
+        filter_label = "Kalman + RTS" if args.filter == "kalman" else f"{args.smooth * 100:.0f}% smoothing"
+        if args.layout == "analysis":
+            draw_analysis_hud(
+                canvas, projector, history, position, orientation, state, opacity, now,
+                output_duration, local_time / output_duration, filter_label,
+                (xyz_low, xyz_high), axis_length,
+            )
+        else:
+            draw_hud(
+                canvas, projector, history, position, orientation, state, opacity, now,
+                output_duration, local_time / output_duration, filter_label,
+            )
         assert encode.stdin is not None
         encode.stdin.write(canvas.tobytes())
         output_index += 1
