@@ -34,6 +34,10 @@ def parse_args() -> argparse.Namespace:
         "--layout", choices=("overlay", "analysis"), default="overlay",
         help="overlay: compact HUD; analysis: split-screen full trajectory and large 6DoF axes",
     )
+    parser.add_argument(
+        "--reference-frame", choices=("board", "start"), default="board",
+        help="board: absolute AprilGrid frame; start: first valid camera pose is XYZ/RPY zero",
+    )
     parser.add_argument("--start", type=float, default=0.0)
     parser.add_argument("--duration", type=float)
     return parser.parse_args()
@@ -232,6 +236,33 @@ def rpy_to_rotation(rpy_deg: np.ndarray) -> np.ndarray:
     return rz @ ry @ rx
 
 
+def rotation_to_rpy(rotation: np.ndarray) -> np.ndarray:
+    """Return ZYX roll/pitch/yaw angles in degrees for a rotation matrix."""
+    sy = math.hypot(rotation[0, 0], rotation[1, 0])
+    if sy >= 1e-8:
+        roll = math.atan2(rotation[2, 1], rotation[2, 2])
+        pitch = math.atan2(-rotation[2, 0], sy)
+        yaw = math.atan2(rotation[1, 0], rotation[0, 0])
+    else:
+        roll = math.atan2(-rotation[1, 2], rotation[1, 1])
+        pitch = math.atan2(-rotation[2, 0], sy)
+        yaw = 0.0
+    return np.degrees([roll, pitch, yaw])
+
+
+def make_start_relative(data: np.ndarray) -> np.ndarray:
+    """Express every camera pose in the first valid camera pose frame."""
+    result = data.copy()
+    start_position = data[0, 1:4].copy()
+    start_rotation = rpy_to_rotation(data[0, 4:7])
+    board_to_start = start_rotation.T
+    for index in range(len(result)):
+        current_rotation = rpy_to_rotation(data[index, 4:7])
+        result[index, 1:4] = board_to_start @ (data[index, 1:4] - start_position)
+        result[index, 4:7] = rotation_to_rpy(board_to_start @ current_rotation)
+    return result
+
+
 def draw_pose_axes(
     canvas: np.ndarray,
     projector: Projector,
@@ -256,12 +287,13 @@ def draw_board_axes(
     canvas: np.ndarray,
     projector: Projector,
     axis_length: float = 0.18,
+    frame_suffix: str = "b",
 ) -> None:
     """Draw the fixed AprilGrid/board frame used by position and orientation."""
     origin_3d = np.zeros(3, dtype=np.float64)
     origin = projector(origin_3d)
     colors = ((40, 55, 245), (70, 220, 90), (245, 110, 55))
-    labels = ("Xb", "Yb", "Zb")
+    labels = (f"X{frame_suffix}", f"Y{frame_suffix}", f"Z{frame_suffix}")
     cv2.circle(canvas, origin, 4, (225, 230, 236), -1, cv2.LINE_AA)
     for axis, color, label in zip(np.eye(3), colors, labels):
         endpoint = projector(origin_3d + axis * axis_length)
@@ -276,8 +308,11 @@ def draw_frame_transform(
     canvas: np.ndarray,
     projector: Projector,
     camera_position: np.ndarray,
+    reference_name: str = "board",
 ) -> None:
     """Connect board and camera frames with the translation in board axes."""
+    if float(np.linalg.norm(camera_position)) < 1e-4:
+        return
     x, y, z = camera_position
     points = (
         np.array([0.0, 0.0, 0.0]),
@@ -315,7 +350,7 @@ def draw_frame_transform(
         (board_px[1] + camera_px[1]) // 2,
     )
     cv2.putText(
-        canvas, "T board->camera", (transform_midpoint[0] + 7, transform_midpoint[1] + 16),
+        canvas, f"T {reference_name}->camera", (transform_midpoint[0] + 7, transform_midpoint[1] + 16),
         cv2.FONT_HERSHEY_SIMPLEX, 0.38, (202, 211, 222), 1, cv2.LINE_AA,
     )
 
@@ -339,12 +374,14 @@ def draw_hud(
     duration: float,
     progress_ratio: float,
     filter_label: str,
+    reference_frame: str,
 ) -> None:
     panel = (842, 26, 410, 394)
     blend_rect(canvas, panel, 0.68)
     cv2.rectangle(canvas, (panel[0], panel[1]), (panel[0] + panel[2], panel[1] + panel[3]), (82, 92, 106), 1, cv2.LINE_AA)
     cv2.putText(canvas, "6DoF CAMERA POSE", (862, 57), cv2.FONT_HERSHEY_SIMPLEX, 0.60, (235, 240, 246), 1, cv2.LINE_AA)
-    cv2.putText(canvas, "board frame + camera frame", (862, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (157, 171, 188), 1, cv2.LINE_AA)
+    reference_label = "start frame" if reference_frame == "start" else "board frame"
+    cv2.putText(canvas, f"{reference_label} + camera frame", (862, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (157, 171, 188), 1, cv2.LINE_AA)
 
     grid_points = []
     for x_value in np.linspace(-0.7, 0.45, 6):
@@ -355,7 +392,7 @@ def draw_hud(
         a = projector(np.array([-0.70, y_value, 0.0]))
         b = projector(np.array([0.45, y_value, 0.0]))
         cv2.line(canvas, a, b, (62, 72, 84), 1, cv2.LINE_AA)
-    draw_board_axes(canvas, projector)
+    draw_board_axes(canvas, projector, frame_suffix="s" if reference_frame == "start" else "b")
 
     samples = list(history)
     for index in range(1, len(samples)):
@@ -369,7 +406,7 @@ def draw_hud(
         cv2.line(canvas, projector(p0), projector(p1), color, max(1, int(4 * strength)), cv2.LINE_AA)
 
     if current is not None:
-        draw_frame_transform(canvas, projector, current)
+        draw_frame_transform(canvas, projector, current, reference_name=reference_frame)
         point = projector(current)
         halo = int(14 + 5 * math.sin(now * 6.0) ** 2)
         overlay = canvas.copy()
@@ -421,13 +458,15 @@ def draw_analysis_hud(
     filter_label: str,
     xyz_bounds: tuple[np.ndarray, np.ndarray],
     axis_length: float,
+    reference_frame: str,
 ) -> None:
     """Large split-screen visualization intended for trajectory inspection."""
     panel_x = 1280
     canvas[:, panel_x:] = (20, 24, 30)
     cv2.line(canvas, (panel_x, 0), (panel_x, 720), (72, 82, 96), 2, cv2.LINE_AA)
     cv2.putText(canvas, "ROBOT CAMERA 6DoF", (1312, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.82, (240, 244, 248), 2, cv2.LINE_AA)
-    cv2.putText(canvas, "FULL TRACK IN APRILGRID / WORLD FRAME", (1312, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (151, 170, 190), 1, cv2.LINE_AA)
+    subtitle = "FULL TRACK RELATIVE TO START POSE" if reference_frame == "start" else "FULL TRACK IN APRILGRID / WORLD FRAME"
+    cv2.putText(canvas, subtitle, (1312, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (151, 170, 190), 1, cv2.LINE_AA)
 
     low, high = xyz_bounds
     x_step = _nice_grid_step(float(high[0] - low[0]))
@@ -446,7 +485,10 @@ def draw_analysis_hud(
         b = projector(np.array([x1, y_value, 0.0]))
         cv2.line(canvas, a, b, (48, 56, 67), 1, cv2.LINE_AA)
 
-    draw_board_axes(canvas, projector, axis_length=axis_length)
+    draw_board_axes(
+        canvas, projector, axis_length=axis_length,
+        frame_suffix="s" if reference_frame == "start" else "b",
+    )
     samples = list(history)
     first_point = next((p for _, p in samples if p is not None), None)
     if first_point is not None:
@@ -461,7 +503,7 @@ def draw_analysis_hud(
         cv2.line(canvas, projector(p0), projector(p1), (242, 180, 62), 4, cv2.LINE_AA)
 
     if current is not None:
-        draw_frame_transform(canvas, projector, current)
+        draw_frame_transform(canvas, projector, current, reference_name=reference_frame)
         point = projector(current)
         cv2.circle(canvas, point, 12, (255, 210, 80), 2, cv2.LINE_AA)
         cv2.circle(canvas, point, 5, (255, 238, 176), -1, cv2.LINE_AA)
@@ -480,7 +522,8 @@ def draw_analysis_hud(
 
     # Video-side legend and progress bar.
     cv2.rectangle(canvas, (0, 640), (1280, 720), (18, 22, 28), -1)
-    cv2.putText(canvas, "X red   Y green   Z blue   |   fixed board axes: Xb/Yb/Zb   moving camera axes: Xc/Yc/Zc", (28, 680), cv2.FONT_HERSHEY_SIMPLEX, 0.51, (203, 214, 225), 1, cv2.LINE_AA)
+    fixed_axes = "start axes: Xs/Ys/Zs" if reference_frame == "start" else "board axes: Xb/Yb/Zb"
+    cv2.putText(canvas, f"X red   Y green   Z blue   |   fixed {fixed_axes}   moving camera axes: Xc/Yc/Zc", (28, 680), cv2.FONT_HERSHEY_SIMPLEX, 0.51, (203, 214, 225), 1, cv2.LINE_AA)
     cv2.line(canvas, (0, 714), (1280, 714), (43, 51, 61), 4)
     cv2.line(canvas, (0, 714), (int(1280 * np.clip(progress_ratio, 0.0, 1.0)), 714), (245, 185, 56), 4)
 
@@ -498,6 +541,8 @@ def main() -> int:
         )
     else:
         data = load_and_filter(args.pose_csv, args.smooth, args.median_window)
+    if args.reference_frame == "start":
+        data = make_start_relative(data)
     capture = cv2.VideoCapture(str(args.video), cv2.CAP_FFMPEG)
     if not capture.isOpened():
         raise SystemExit("cannot open video")
@@ -570,12 +615,13 @@ def main() -> int:
             draw_analysis_hud(
                 canvas, projector, history, position, orientation, state, opacity, now,
                 output_duration, local_time / output_duration, filter_label,
-                (xyz_low, xyz_high), axis_length,
+                (xyz_low, xyz_high), axis_length, args.reference_frame,
             )
         else:
             draw_hud(
                 canvas, projector, history, position, orientation, state, opacity, now,
                 output_duration, local_time / output_duration, filter_label,
+                args.reference_frame,
             )
         assert encode.stdin is not None
         encode.stdin.write(canvas.tobytes())
