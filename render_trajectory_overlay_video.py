@@ -272,6 +272,54 @@ def draw_board_axes(
         )
 
 
+def draw_frame_transform(
+    canvas: np.ndarray,
+    projector: Projector,
+    camera_position: np.ndarray,
+) -> None:
+    """Connect board and camera frames with the translation in board axes."""
+    x, y, z = camera_position
+    points = (
+        np.array([0.0, 0.0, 0.0]),
+        np.array([x, 0.0, 0.0]),
+        np.array([x, y, 0.0]),
+        np.array([x, y, z]),
+    )
+    colors = ((40, 55, 245), (70, 220, 90), (245, 110, 55))
+    labels = (f"dX {x:+.2f}m", f"dY {y:+.2f}m", f"dZ {z:+.2f}m")
+    for start, end, color, label in zip(points[:-1], points[1:], colors, labels):
+        p0, p1 = projector(start), projector(end)
+        cv2.arrowedLine(canvas, p0, p1, color, 2, cv2.LINE_AA, tipLength=0.08)
+        midpoint = ((p0[0] + p1[0]) // 2, (p0[1] + p1[1]) // 2)
+        cv2.putText(
+            canvas, label, (midpoint[0] + 5, midpoint[1] - 5),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.36, color, 1, cv2.LINE_AA,
+        )
+    board_px, camera_px = projector(points[0]), projector(points[-1])
+    # A neutral direct link makes the complete board->camera transform obvious;
+    # colored component legs above explain how its translation is composed.
+    for index in range(0, 20, 2):
+        a = index / 20.0
+        b = min((index + 1) / 20.0, 1.0)
+        q0 = (
+            int(board_px[0] + (camera_px[0] - board_px[0]) * a),
+            int(board_px[1] + (camera_px[1] - board_px[1]) * a),
+        )
+        q1 = (
+            int(board_px[0] + (camera_px[0] - board_px[0]) * b),
+            int(board_px[1] + (camera_px[1] - board_px[1]) * b),
+        )
+        cv2.line(canvas, q0, q1, (202, 211, 222), 1, cv2.LINE_AA)
+    transform_midpoint = (
+        (board_px[0] + camera_px[0]) // 2,
+        (board_px[1] + camera_px[1]) // 2,
+    )
+    cv2.putText(
+        canvas, "T board->camera", (transform_midpoint[0] + 7, transform_midpoint[1] + 16),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (202, 211, 222), 1, cv2.LINE_AA,
+    )
+
+
 def blend_rect(image: np.ndarray, rect: tuple[int, int, int, int], opacity: float) -> None:
     x, y, w, h = rect
     roi = image[y : y + h, x : x + w]
@@ -321,6 +369,7 @@ def draw_hud(
         cv2.line(canvas, projector(p0), projector(p1), color, max(1, int(4 * strength)), cv2.LINE_AA)
 
     if current is not None:
+        draw_frame_transform(canvas, projector, current)
         point = projector(current)
         halo = int(14 + 5 * math.sin(now * 6.0) ** 2)
         overlay = canvas.copy()
@@ -412,6 +461,7 @@ def draw_analysis_hud(
         cv2.line(canvas, projector(p0), projector(p1), (242, 180, 62), 4, cv2.LINE_AA)
 
     if current is not None:
+        draw_frame_transform(canvas, projector, current)
         point = projector(current)
         cv2.circle(canvas, point, 12, (255, 210, 80), 2, cv2.LINE_AA)
         cv2.circle(canvas, point, 5, (255, 238, 176), -1, cv2.LINE_AA)
