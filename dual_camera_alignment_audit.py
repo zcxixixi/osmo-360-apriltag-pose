@@ -332,6 +332,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--capture-pair-id", help="existing UUIDv4; generated when omitted")
     parser.add_argument("--initial-time-offset", type=float, default=0.0)
     parser.add_argument("--search-radius", type=float, default=3.0)
+    parser.add_argument(
+        "--fixed-time-offset", type=float,
+        help="skip trajectory correlation and use an externally measured offset",
+    )
+    parser.add_argument(
+        "--external-sync-correlation", type=float, default=1.0,
+        help="quality score for --fixed-time-offset (for example audio correlation)",
+    )
+    parser.add_argument(
+        "--external-sync-uncertainty", type=float, default=0.001,
+        help="seconds of uncertainty for --fixed-time-offset",
+    )
     parser.add_argument("--max-interpolation-gap", type=float, default=0.10)
     parser.add_argument("--min-alignment-samples", type=int, default=30)
     parser.add_argument("--max-position-p95-m", type=float, default=0.05)
@@ -353,9 +365,25 @@ def main() -> int:
         pair_id = uuid4_text(args.capture_pair_id)
         left = load_trajectory(args.left_trajectory)
         right = load_trajectory(args.right_trajectory)
-        offset, correlation, uncertainty, components, offset_curve = estimate_time_offset(
-            left, right, args.initial_time_offset, args.search_radius
-        )
+        if args.fixed_time_offset is None:
+            offset, correlation, uncertainty, components, offset_curve = estimate_time_offset(
+                left, right, args.initial_time_offset, args.search_radius
+            )
+            sync_method = "trajectory_motion_correlation"
+        else:
+            if not (-1.0 <= args.external_sync_correlation <= 1.0):
+                raise ValueError("external sync correlation must be within [-1, 1]")
+            if args.external_sync_uncertainty < 0:
+                raise ValueError("external sync uncertainty must be non-negative")
+            offset = args.fixed_time_offset
+            correlation = args.external_sync_correlation
+            uncertainty = args.external_sync_uncertainty
+            components = {
+                "linear_correlation": None,
+                "angular_correlation": None,
+            }
+            offset_curve = [(offset, correlation)]
+            sync_method = "external_fixed_offset"
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
@@ -419,6 +447,7 @@ def main() -> int:
         "right": {**right_identity, "trajectory": str(args.right_trajectory.resolve())},
         "time_alignment": {
             "definition": "right_timestamp = left_timestamp + offset_s",
+            "method": sync_method,
             "offset_s": offset, "correlation": correlation,
             "uncertainty_s": uncertainty, **components,
         },
