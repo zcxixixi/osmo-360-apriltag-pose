@@ -31,6 +31,12 @@ def test_camera_detection_accepts_stitched_panorama(monkeypatch, tmp_path: Path)
     assert camera_to_dataset.detect_source(tmp_path / "stitched.mp4")[0] == "panorama"
 
 
+def test_auto_projection_is_deferred_to_camera_profile(monkeypatch):
+    monkeypatch.setattr(camera_to_dataset, "cuda_available", lambda: True)
+    assert camera_to_dataset.backend("auto") == "auto"
+    assert camera_to_dataset.backend("cpu") == "cpu"
+
+
 def test_first_pose_coordinate_frame_is_identity():
     origin = np.array([1.2, -0.4, 0.8, 10.0, -7.0, 35.0])
     position, rotation = relative_pose(origin.copy(), origin)

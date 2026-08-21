@@ -39,16 +39,62 @@ LOG = logging.getLogger("osmo360.offline")
 STOP = False
 
 
+CAMERA_MODELS = ("auto", "dji-osmo-360", "insta360-x6", "generic")
+
+
+def infer_camera_model(path: Path, width: int, height: int, requested: str) -> str:
+    """Choose a conservative processing profile from the export name and size."""
+    if requested != "auto":
+        return requested
+    name = path.name.lower()
+    if "insta360" in name or "_no_flowstate" in name or (
+        name.startswith("vid_") and width >= 6000
+    ):
+        return "insta360-x6"
+    if "osmo" in name or name.startswith("cam_") or path.suffix.lower() == ".osv":
+        return "dji-osmo-360"
+    if width >= 7000 and width == 2 * height:
+        return "insta360-x6"
+    if width <= 4096 and width == 2 * height:
+        return "dji-osmo-360"
+    return "generic"
+
+
+def resolve_decoder(requested: str, camera_model: str) -> str:
+    """Resolve decoding independently from projection acceleration.
+
+    Downloading NVDEC frames back to BGR is slower than OpenCV/FFmpeg CPU
+    decoding on the validated DJI 3K and Insta360 X6 8K exports. Keep NVDEC as
+    an explicit experiment until a zero-copy detector path is available.
+    """
+    if requested != "auto":
+        return requested
+    if camera_model in ("dji-osmo-360", "insta360-x6", "generic"):
+        return "cpu"
+    raise ValueError(f"unknown camera model: {camera_model}")
+
+
+def resolve_projection(requested: str, camera_model: str, width: int) -> str:
+    """Select the measured fastest projection path for the input profile."""
+    if requested != "auto":
+        return requested
+    if camera_model == "dji-osmo-360" and width <= 4096:
+        return "cpu"
+    return "cuda"
+
+
 class VideoReader:
     """Sequential OpenCV-compatible reader with optional NVIDIA NVDEC.
 
     NVDEC performs HEVC entropy decoding on the GPU. Frames are downloaded as
-    BGR because AprilTag still runs on the CPU. Auto mode validates CUDA first
-    and falls back to OpenCV without changing frame timestamps or pixels used
-    by the pose pipeline.
+    BGR because AprilTag still runs on the CPU. It is opt-in: measured auto
+    profiles use CPU decoding until the rest of the pipeline can stay on-GPU.
     """
 
-    def __init__(self, path: Path, decoder: str, ffmpeg_bin: Path | None):
+    def __init__(
+        self, path: Path, decoder: str, ffmpeg_bin: Path | None,
+        requested_camera_model: str = "auto",
+    ):
         self.path = path
         self.decoder = "cpu"
         self._process: subprocess.Popen | None = None
@@ -61,13 +107,17 @@ class VideoReader:
         self.fps = float(probe.get(cv2.CAP_PROP_FPS))
         self.frame_count = int(probe.get(cv2.CAP_PROP_FRAME_COUNT))
         probe.release()
-        if decoder in ("auto", "nvdec") and ffmpeg_bin is not None:
+        self.camera_model = infer_camera_model(
+            path, self.width, self.height, requested_camera_model
+        )
+        selected_decoder = resolve_decoder(decoder, self.camera_model)
+        if selected_decoder == "nvdec":
+            if ffmpeg_bin is None:
+                raise RuntimeError("NVDEC requested but no FFmpeg binary is available")
             if self._start_nvdec(ffmpeg_bin):
                 self.decoder = "nvdec"
                 return
-            if decoder == "nvdec":
-                raise RuntimeError("NVDEC requested but CUDA decode validation failed")
-            LOG.warning("NVDEC unavailable; falling back to OpenCV CPU decode")
+            raise RuntimeError("NVDEC requested but CUDA decode validation failed")
         self._capture = cv2.VideoCapture(str(path), cv2.CAP_FFMPEG)
         if not self._capture.isOpened():
             raise RuntimeError(f"cannot open input: {path}")
@@ -735,11 +785,15 @@ def parse_args() -> argparse.Namespace:
         "--projection-backend",
         choices=("auto", "cpu", "cuda"),
         default="auto",
-        help="panorama projection backend (default: CUDA with CPU fallback)",
+        help="projection backend (auto: DJI 3K CPU; X6/high-resolution CUDA)",
     )
     p.add_argument(
         "--decoder", choices=("auto", "cpu", "nvdec"), default="auto",
-        help="video decoder (default: NVIDIA NVDEC with CPU fallback)",
+        help="video decoder (auto: measured-safe CPU; NVDEC remains opt-in)",
+    )
+    p.add_argument(
+        "--camera-model", choices=CAMERA_MODELS, default="auto",
+        help="processing profile; auto infers DJI Osmo 360, Insta360 X6, or generic",
     )
     p.add_argument(
         "--ffmpeg-bin", type=Path,
@@ -806,18 +860,25 @@ def main() -> int:
             Path(shutil.which("ffmpeg")) if shutil.which("ffmpeg") else None
         )
     try:
-        cap = VideoReader(args.input, args.decoder, ffmpeg_bin)
+        cap = VideoReader(
+            args.input, args.decoder, ffmpeg_bin,
+            requested_camera_model=args.camera_model,
+        )
     except RuntimeError as exc:
         LOG.error("cannot initialize video decoder: %s", exc)
         return 2
     width, height = cap.width, cap.height
     source_fps = cap.fps
     total = cap.frame_count
+    camera_model = cap.camera_model
+    LOG.info("camera processing profile: %s", camera_model)
     LOG.info("video decoder: %s", cap.decoder)
     if width != 2 * height:
         LOG.error("expected 2:1 equirectangular input, got %dx%d", width, height)
         return 3
-    projection_name = "cuda" if args.projection_backend == "auto" else args.projection_backend
+    projection_name = resolve_projection(
+        args.projection_backend, camera_model, width
+    )
     try:
         projection_backend = make_projection_backend(projection_name)
     except RuntimeError as exc:
@@ -1404,6 +1465,9 @@ def main() -> int:
         "pnp_points": args.pnp_points,
         "pnp_solver": args.pnp_solver,
         "projection_backend": projection_backend.name,
+        "camera_model": camera_model,
+        "requested_decoder": args.decoder,
+        "requested_projection_backend": args.projection_backend,
         "video_decoder": cap.decoder,
         "scan_workers": args.scan_workers,
         "temporal_flow": args.temporal_flow,

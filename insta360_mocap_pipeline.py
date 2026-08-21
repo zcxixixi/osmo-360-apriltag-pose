@@ -107,6 +107,7 @@ def vision_command(args: argparse.Namespace, video: Path, paths: PipelinePaths, 
         "--global-refresh-interval", str(args.global_refresh_interval),
         "--global-search-size", str(args.global_search_size),
         "--recovery-scan-interval", str(args.recovery_scan_interval),
+        "--camera-model", "insta360-x6",
         "--decoder", args.decoder, "--scan-workers", str(args.scan_workers),
         "--horizontal-step-deg", "30", "--horizontal-fov-deg", "125",
         "--projection-backend", backend, "--max-speed", str(args.max_speed),
@@ -123,7 +124,6 @@ def evaluation_command(args: argparse.Namespace, motive: Path, paths: PipelinePa
         "--search-radius", str(args.time_search_radius),
         "--calibration-fraction", str(args.calibration_fraction),
         "--min-tags", "2", "--min-test-samples", str(args.min_test_samples),
-        "--include-optical-flow",
     ]
 
 

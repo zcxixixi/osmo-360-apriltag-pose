@@ -55,10 +55,11 @@ def test_pipeline_commands_preserve_formal_evaluation_contract(tmp_path: Path):
     assert vision[vision.index("--projection-backend") + 1] == "cuda"
     assert "--temporal-flow" in vision
     assert vision[vision.index("--redetect-interval") + 1] == "3"
+    assert vision[vision.index("--camera-model") + 1] == "insta360-x6"
     assert vision[vision.index("--decoder") + 1] == "auto"
     assert vision[vision.index("--scan-workers") + 1] == "4"
     assert evaluation[evaluation.index("--calibration-fraction") + 1] == "0.3"
-    assert "--include-optical-flow" in evaluation
+    assert "--include-optical-flow" not in evaluation
     assert evaluation[evaluation.index("--min-test-samples") + 1] == "200"
     assert render[render.index("--gripper-mesh-dir") + 1] == str(DEFAULT_GRIPPER_MESHES)
     assert render[render.index("--output-fps") + 1] == "25.0"

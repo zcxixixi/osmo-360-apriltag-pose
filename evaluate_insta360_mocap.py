@@ -567,8 +567,17 @@ def main() -> int:
     recovery_test = test & np.asarray([
         int(frame) in recovery_frames for frame in visual_matched.frames
     ])
-    publishable = correlation >= 0.80 and uncertainty <= 0.020 and int(test.sum()) >= args.min_test_samples
+    publishable = (
+        not args.include_optical_flow
+        and correlation >= 0.80
+        and uncertainty <= 0.020
+        and int(test.sum()) >= args.min_test_samples
+    )
     failed_requirements = []
+    if args.include_optical_flow:
+        failed_requirements.append(
+            "optical-flow samples enabled; metrics are diagnostic, not formal accuracy"
+        )
     if correlation < 0.80:
         failed_requirements.append("combined linear/angular motion correlation below 0.80")
     if uncertainty > 0.020:
@@ -614,7 +623,8 @@ def main() -> int:
             "position_m": stats(position_all[recovery_test]),
             "orientation_deg": stats(orientation_all[recovery_test]),
         },
-        "visual_direct_pose_samples": int(len(visual.times)),
+        "visual_direct_pose_samples": int(visual_quality["direct_multi_tag_frames"]),
+        "visual_accepted_pose_samples": int(len(visual.times)),
         "requirements": {"min_correlation": 0.80, "max_sync_uncertainty_s": 0.020, "min_test_samples": args.min_test_samples},
     }
     (args.output_dir / "mocap_evaluation.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

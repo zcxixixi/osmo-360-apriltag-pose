@@ -101,8 +101,7 @@ def backend(requested: str) -> str:
     available = cuda_available()
     if requested == "cuda" and not available:
         raise SystemExit("CUDA requested but no CuPy CUDA device is available")
-    if requested == "auto":
-        return "cuda" if available else "cpu"
+    # Preserve auto so the tracker can select by camera profile and resolution.
     return requested
 
 
@@ -205,6 +204,11 @@ def main() -> int:
     preview = run_dir / "preview/trajectory_gripper_6dof.mp4"
     dataset = run_dir / "dataset"
     projection_backend = backend(args.projection_backend)
+    camera_profile = {
+        "dji": "dji-osmo-360",
+        "insta360": "insta360-x6",
+        "panorama": "auto",
+    }[camera]
 
     video_streams = [
         stream for stream in probe.get("streams", []) if stream.get("codec_type") == "video"
@@ -238,6 +242,7 @@ def main() -> int:
         "--max-rmse-px", str(args.max_rmse_px), "--max-speed", "10",
         "--full-scan", "--temporal-flow", "--redetect-interval", "5",
         "--recovery-scan-interval", "3", "--global-refresh-interval", "60",
+        "--camera-model", camera_profile,
         "--projection-backend", projection_backend, "--official-stitched",
         "--output-dir", str(run_dir), "--session-name", "visual",
     ]

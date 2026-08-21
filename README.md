@@ -180,7 +180,8 @@ uv sync --extra gpu
 ### 分阶段手动运行
 
 ```bash
-# 默认高速安全模式：NVDEC/CUDA 自动回退、4路全局扫描、50 fps双向LK、每3帧重解码
+# 机型自适应模式：DJI 3K 使用 CPU 解码/投影，X6 8K 使用 CPU 解码/CUDA 投影
+# 两者均使用4路全局扫描、50 fps双向LK、每3帧重解码；NVDEC可显式试验
 # 配置中包含 130 → 131 → 129 → 128 的实际排列
 uv run python osmo_360_offline.py input.mp4 \
   --tag-map mocap-evaluation/config/insta360_x6_tag_map.json \
@@ -188,17 +189,16 @@ uv run python osmo_360_offline.py input.mp4 \
   --view-size 1440 --max-rmse-px 8 --global-search-size 720 \
   --horizontal-fov-deg 125 --max-speed 10 --official-stitched
 
-# 前30%求刚体→相机外参，后70%独立统计；显式审计direct+optical_flow
+# 前30%求刚体→相机外参，后70%独立统计；正式精度只接受direct
 uv run python evaluate_insta360_mocap.py session/pose.csv motive.csv \
-  --output-dir evaluation-result --initial-time-offset -3.852 \
-  --include-optical-flow
+  --output-dir evaluation-result --initial-time-offset -3.852
 
 # 生成带 MEASURED / LOST / RECOVERED 审计状态的同步视频
 uv run python render_mocap_comparison.py input.mp4 session/pose.csv evaluation-result \
   --output evaluation-result/comparison.mp4
 ```
 
-只有线速度/角速度综合相关性不低于 0.80、时间偏移不确定度不高于20 ms、且测试段匹配不少于200帧时，报告才标记为 `FORMAL_ACCURACY`；否则所有误差只标记为 `DIAGNOSTIC_ONLY`。默认正式管线会同时评估 `direct` 与经过双向一致性检查的 `optical_flow`，报告仍单列直接解码覆盖率。使用 `--no-temporal-flow --decoder cpu --scan-workers 1` 可复现逐帧CPU基线。
+只有线速度/角速度综合相关性不低于 0.80、时间偏移不确定度不高于20 ms、且测试段直接双 Tag 匹配不少于200帧时，报告才标记为 `FORMAL_ACCURACY`；否则所有误差只标记为 `DIAGNOSTIC_ONLY`。`optical_flow` 只用于连续轨迹和可视化；即使手动使用 `--include-optical-flow`，评估也会强制标记为诊断结果。可通过 `--camera-model`、`--decoder` 和 `--projection-backend` 覆盖自动策略。
 
 ## 注意
 
