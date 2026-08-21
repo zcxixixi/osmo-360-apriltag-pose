@@ -7,9 +7,10 @@ import argparse
 import csv
 import json
 import math
+import subprocess
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import matplotlib
@@ -36,6 +37,51 @@ class SampledTrajectory:
     rotations: Rotation
     valid: np.ndarray
     nearest_indices: np.ndarray
+
+
+@dataclass(frozen=True)
+class CaptureInterval:
+    start: datetime
+    duration_s: float
+
+    @property
+    def end(self) -> datetime:
+        return self.start + timedelta(seconds=self.duration_s)
+
+
+def capture_overlap_s(left: CaptureInterval, right: CaptureInterval) -> float:
+    """Return wall-clock overlap; non-positive means the recordings are not a pair."""
+    return (min(left.end, right.end) - max(left.start, right.start)).total_seconds()
+
+
+def probe_capture_interval(path: Path) -> CaptureInterval:
+    """Read camera recording UTC start and duration from its original container."""
+    ffprobe = (
+        Path(__file__).resolve().parent
+        / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffprobe"
+    )
+    if not ffprobe.is_file():
+        raise ValueError(f"missing bundled ffprobe: {ffprobe}")
+    process = subprocess.run(
+        [str(ffprobe), "-v", "error", "-show_entries",
+         "stream=duration:stream_tags=creation_time", "-of", "json", str(path)],
+        capture_output=True, text=True, timeout=60, check=False,
+    )
+    if process.returncode:
+        raise ValueError(f"ffprobe failed for {path}: {process.stderr.strip()[:300]}")
+    streams = json.loads(process.stdout).get("streams", [])
+    starts = [
+        stream.get("tags", {}).get("creation_time") for stream in streams
+        if stream.get("tags", {}).get("creation_time")
+    ]
+    durations = [
+        float(stream["duration"]) for stream in streams
+        if stream.get("duration") not in (None, "N/A")
+    ]
+    if not starts or not durations:
+        raise ValueError(f"source has no creation_time/duration metadata: {path}")
+    start = datetime.fromisoformat(starts[0].replace("Z", "+00:00"))
+    return CaptureInterval(start, max(durations))
 
 
 def uuid4_text(value: str | None = None) -> str:
@@ -259,6 +305,42 @@ def estimate_spatial_alignment(
     return right_to_left_rotation, translation, mask
 
 
+def estimate_rigid_camera_extrinsic(
+    left_positions: np.ndarray, left_rotations: Rotation,
+    right_positions: np.ndarray, right_rotations: Rotation,
+    eligible: np.ndarray,
+) -> tuple[Rotation, np.ndarray, np.ndarray]:
+    """Estimate fixed ``T_left_right`` for two cameras on one rigid body."""
+    mask = eligible.copy()
+    if mask.sum() < 10:
+        raise ValueError("fewer than 10 synchronized poses for rigid extrinsic alignment")
+    for _ in range(5):
+        left_to_right_rotation = (left_rotations[mask].inv() * right_rotations[mask]).mean()
+        baseline_samples = left_rotations[mask].inv().apply(
+            right_positions[mask] - left_positions[mask]
+        )
+        baseline = np.median(baseline_samples, axis=0)
+        reconstructed_rotations = right_rotations * left_to_right_rotation.inv()
+        reconstructed_positions = right_positions - reconstructed_rotations.apply(baseline)
+        position_error = np.linalg.norm(left_positions - reconstructed_positions, axis=1)
+        orientation_error = np.degrees(
+            (left_rotations.inv() * reconstructed_rotations).magnitude()
+        )
+        position_med = np.median(position_error[mask])
+        position_mad = np.median(np.abs(position_error[mask] - position_med))
+        angle_med = np.median(orientation_error[mask])
+        angle_mad = np.median(np.abs(orientation_error[mask] - angle_med))
+        refined = eligible & (
+            position_error <= max(position_med + 4.0 * 1.4826 * position_mad, 0.002)
+        ) & (
+            orientation_error <= max(angle_med + 4.0 * 1.4826 * angle_mad, 0.2)
+        )
+        if refined.sum() < 10 or np.array_equal(refined, mask):
+            break
+        mask = refined
+    return left_to_right_rotation, baseline, mask
+
+
 def _stats(values: np.ndarray) -> dict[str, float | int | None]:
     values = values[np.isfinite(values)]
     if not len(values):
@@ -328,6 +410,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("left_trajectory", type=Path)
     parser.add_argument("right_video", type=Path)
     parser.add_argument("right_trajectory", type=Path)
+    parser.add_argument(
+        "--left-source", type=Path,
+        help="original camera container for wall-clock pairing audit",
+    )
+    parser.add_argument(
+        "--right-source", type=Path,
+        help="original camera container for wall-clock pairing audit",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--capture-pair-id", help="existing UUIDv4; generated when omitted")
     parser.add_argument("--initial-time-offset", type=float, default=0.0)
@@ -345,6 +435,11 @@ def parse_args() -> argparse.Namespace:
         help="seconds of uncertainty for --fixed-time-offset",
     )
     parser.add_argument("--max-interpolation-gap", type=float, default=0.10)
+    parser.add_argument(
+        "--alignment-model", choices=("rigid-rig", "world-frame"),
+        default="rigid-rig",
+        help="rigid-rig estimates a fixed camera-to-camera extrinsic; world-frame left-multiplies coordinates",
+    )
     parser.add_argument("--min-alignment-samples", type=int, default=30)
     parser.add_argument("--max-position-p95-m", type=float, default=0.05)
     parser.add_argument("--max-orientation-p95-deg", type=float, default=5.0)
@@ -361,8 +456,23 @@ def main() -> int:
             raise SystemExit(f"missing input: {path}")
     if args.search_radius <= 0 or args.max_interpolation_gap <= 0:
         raise SystemExit("invalid synchronization parameters")
+    if (args.left_source is None) != (args.right_source is None):
+        raise SystemExit("--left-source and --right-source must be supplied together")
     try:
         pair_id = uuid4_text(args.capture_pair_id)
+        if args.left_source is not None and args.right_source is not None:
+            for source in (args.left_source, args.right_source):
+                if not source.is_file():
+                    raise ValueError(f"missing original source: {source}")
+            left_capture = probe_capture_interval(args.left_source)
+            right_capture = probe_capture_interval(args.right_source)
+            overlap = capture_overlap_s(left_capture, right_capture)
+            if overlap <= 0:
+                raise ValueError(
+                    "recordings do not overlap in wall-clock time: "
+                    f"left={left_capture.start.isoformat()}..{left_capture.end.isoformat()}, "
+                    f"right={right_capture.start.isoformat()}..{right_capture.end.isoformat()}"
+                )
         left = load_trajectory(args.left_trajectory)
         right = load_trajectory(args.right_trajectory)
         if args.fixed_time_offset is None:
@@ -394,15 +504,31 @@ def main() -> int:
     fit_source = "both_direct" if both_direct.sum() >= args.min_alignment_samples else "all_valid"
     eligible = both_direct if fit_source == "both_direct" else matched
     try:
-        rotation, translation, inliers = estimate_spatial_alignment(
-            left.positions, left.rotations,
-            sampled.positions, sampled.rotations, eligible,
-        )
+        if args.alignment_model == "rigid-rig":
+            rotation, translation, inliers = estimate_rigid_camera_extrinsic(
+                left.positions, left.rotations,
+                sampled.positions, sampled.rotations, eligible,
+            )
+        else:
+            rotation, translation, inliers = estimate_spatial_alignment(
+                left.positions, left.rotations,
+                sampled.positions, sampled.rotations, eligible,
+            )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
-    aligned_positions = rotation.apply(sampled.positions[matched]) + translation
-    aligned_rotations = rotation * sampled.rotations[matched]
+    if args.alignment_model == "rigid-rig":
+        aligned_rotations = sampled.rotations[matched] * rotation.inv()
+        aligned_positions = (
+            sampled.positions[matched] - aligned_rotations.apply(translation)
+        )
+        alignment_definition = "T_board_right = T_board_left * T_left_right"
+        matrix_name = "T_left_right"
+    else:
+        aligned_positions = rotation.apply(sampled.positions[matched]) + translation
+        aligned_rotations = rotation * sampled.rotations[matched]
+        alignment_definition = "pose_left = T_left_from_right * pose_right"
+        matrix_name = "T_left_from_right"
     left_positions = left.positions[matched]
     left_rotations = left.rotations[matched]
     position_error = np.linalg.norm(left_positions - aligned_positions, axis=1)
@@ -452,8 +578,9 @@ def main() -> int:
             "uncertainty_s": uncertainty, **components,
         },
         "spatial_alignment": {
-            "definition": "pose_left = T_left_from_right * pose_right",
-            "T_left_from_right": matrix.tolist(),
+            "model": args.alignment_model,
+            "definition": alignment_definition,
+            matrix_name: matrix.tolist(),
             "translation_m": translation.tolist(),
             "rotation_xyzw": rotation.as_quat().tolist(),
             "fit_source": fit_source,

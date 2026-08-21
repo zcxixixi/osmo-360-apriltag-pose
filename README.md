@@ -141,21 +141,25 @@ dataset/
 
 ## 双相机配对与坐标对齐审核
 
-输入左右两台相机的视频及6DoF CSV，以左相机为参考坐标系，自动估计时间偏移和 `T_left_from_right`：
+输入左右两台相机的视频及6DoF CSV，以左相机为参考坐标系，自动估计时间偏移和刚性安装外参 `T_left_right`：
 
 ```bash
 ./dual-camera-align-audit \
   left.mp4 left/annotations/trajectory_6dof.csv \
   right.mp4 right/annotations/trajectory_6dof.csv \
+  --left-source left_original.OSV \
+  --right-source right_original.OSV \
   --output-dir dual-camera-pairs/capture-001
 ```
 
 工具会生成一个共享的 UUIDv4 `capture_pair_id`，并额外为左右视频生成独立 `asset_id`。同一个 `capture_pair_id` 会写入配对清单、审核报告、资产 sidecar 和逐帧合并 CSV，用于明确两个视频属于同一次同步采集。复算时可使用 `--capture-pair-id <UUIDv4>` 保持配对身份不变。
 
+建议始终传入两路原始容器。工具会读取相机写入的 `creation_time` 和时长，先验证两段录像在绝对时间上确实重叠；不重叠的顺序录像会被直接拒绝，音频或运动曲线的偶然高相关不能绕过这项检查。
+
 主要输出：
 
 - `capture_pair.json`：双视频配对关系和共享 UUIDv4；
-- `alignment_report.json`：时间偏移、同步可信度、右→左 SE(3) 和审核结果；
+- `alignment_report.json`：时间偏移、同步可信度、左右相机刚性外参和审核结果；
 - `aligned_trajectories.csv`：左轨迹、右原始轨迹、右对齐轨迹和逐帧残差；
 - `alignment_audit.png`：同一左坐标系中的两条轨迹及位置/姿态误差；
 - `left_asset.json` / `right_asset.json`：可随视频一起交付的身份 sidecar。

@@ -1,12 +1,16 @@
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 
 from dual_camera_alignment_audit import (
+    CaptureInterval,
     Trajectory,
     at_most,
+    capture_overlap_s,
+    estimate_rigid_camera_extrinsic,
     estimate_spatial_alignment,
     estimate_time_offset,
     sample_trajectory,
@@ -43,6 +47,18 @@ def test_uuid4_is_generated_and_validated():
     assert uuid4_text(supplied) == supplied
 
 
+def test_capture_overlap_rejects_sequential_recordings():
+    left = CaptureInterval(datetime(2026, 8, 21, 8, 57, 55, tzinfo=timezone.utc), 25.15)
+    right = CaptureInterval(datetime(2026, 8, 21, 8, 54, 50, tzinfo=timezone.utc), 19.59)
+    assert capture_overlap_s(left, right) < 0
+
+
+def test_capture_overlap_accepts_simultaneous_recordings():
+    left = CaptureInterval(datetime(2026, 8, 21, 8, 57, 55, tzinfo=timezone.utc), 25.15)
+    right = CaptureInterval(datetime(2026, 8, 21, 8, 57, 56, tzinfo=timezone.utc), 19.59)
+    assert capture_overlap_s(left, right) == 19.59
+
+
 def test_twenty_ms_uncertainty_boundary_is_numerically_stable():
     uncertainty = 0.020000000000000018
     assert at_most(uncertainty, 0.020)
@@ -75,3 +91,25 @@ def test_time_and_right_to_left_coordinate_alignment():
     assert inliers.sum() > 700
     np.testing.assert_allclose(recovered_rotation.as_matrix(), right_to_left.as_matrix(), atol=2e-3)
     np.testing.assert_allclose(recovered_translation, translation, atol=2e-3)
+
+
+def test_fixed_rigid_camera_extrinsic_is_right_multiplied():
+    times = np.arange(0.0, 12.0, 1 / 30)
+    left_positions, left_rotations = motion(times)
+    left_to_right = Rotation.from_euler("xyz", [4, 15, -3], degrees=True)
+    baseline = np.asarray([0.18, -0.025, 0.04])
+    right_rotations = left_rotations * left_to_right
+    right_positions = left_positions + left_rotations.apply(baseline)
+    eligible = np.ones(len(times), dtype=bool)
+
+    recovered_rotation, recovered_baseline, inliers = estimate_rigid_camera_extrinsic(
+        left_positions, left_rotations, right_positions, right_rotations, eligible
+    )
+    reconstructed_rotations = right_rotations * recovered_rotation.inv()
+    reconstructed_positions = right_positions - reconstructed_rotations.apply(recovered_baseline)
+
+    assert inliers.all()
+    np.testing.assert_allclose(recovered_rotation.as_matrix(), left_to_right.as_matrix(), atol=1e-8)
+    np.testing.assert_allclose(recovered_baseline, baseline, atol=1e-8)
+    np.testing.assert_allclose(reconstructed_positions, left_positions, atol=1e-8)
+    np.testing.assert_allclose(reconstructed_rotations.as_matrix(), left_rotations.as_matrix(), atol=1e-8)
