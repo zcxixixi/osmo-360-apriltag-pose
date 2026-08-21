@@ -27,6 +27,7 @@ class Grid:
     tag_size: float
     spacing_ratio: float
     first_id: int = 0
+    id_order: str = "column-major"
 
     @property
     def pitch(self) -> float:
@@ -44,8 +45,14 @@ class Grid:
         index = tag_id - self.first_id
         if index < 0 or index >= self.rows * self.cols:
             return None
-        # Kalibr AprilGrid IDs advance down each column, then move right.
-        col, row = divmod(index, self.rows)
+        if self.id_order == "column-major":
+            # Kalibr AprilGrid IDs advance down each column, then move right.
+            col, row = divmod(index, self.rows)
+        elif self.id_order == "row-major":
+            # Wall-panel PDFs advance left-to-right, then top-to-bottom.
+            row, col = divmod(index, self.cols)
+        else:
+            raise ValueError(f"unsupported AprilGrid ID order: {self.id_order}")
         x0 = col * self.pitch - self.width / 2.0
         y0 = self.height / 2.0 - row * self.pitch
         s = self.tag_size

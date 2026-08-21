@@ -609,6 +609,22 @@ def choose_pose(candidates: list[Pose]) -> Pose | None:
     return min(candidates, key=lambda p: (p.rmse, -p.inliers))
 
 
+def choose_scout_base(
+    coarse: list[tuple[View, list[dict], Pose | None]],
+) -> tuple[View, list[dict], Pose | None]:
+    """Select the recovery bearing by geometric validity before tag count.
+
+    A wide edge view can decode many tags while being too distorted for PnP.
+    Prefer any scout direction that already has a valid low-resolution pose;
+    only fall back to raw tag count when no direction is geometrically valid.
+    The scout pose remains bearing-only and is never published as a measurement.
+    """
+    solved = [item for item in coarse if item[2] is not None]
+    if solved:
+        return min(solved, key=lambda item: (item[2].rmse, -item[2].inliers))  # type: ignore[union-attr]
+    return max(coarse, key=lambda item: len(item[1]))
+
+
 def _finite_stats(values: Iterable[float]) -> dict[str, float | None]:
     data = np.asarray([v for v in values if math.isfinite(v)], dtype=float)
     if not len(data):
@@ -706,6 +722,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--rows", type=int, default=6)
     p.add_argument("--cols", type=int, default=6)
     p.add_argument("--first-id", type=int, default=0)
+    p.add_argument(
+        "--grid-id-order", choices=("column-major", "row-major"),
+        default="column-major",
+        help="ID layout: Kalibr column-major or printed wall-panel row-major",
+    )
     p.add_argument(
         "--tag-map", type=Path,
         help="JSON explicit non-contiguous tag map; overrides rows/cols/first-id geometry",
@@ -894,7 +915,10 @@ def main() -> int:
         expected_ids = grid.expected_ids
         LOG.info("loaded explicit tag map %s with IDs %s", args.tag_map, expected_ids)
     else:
-        grid = Grid(args.rows, args.cols, args.tag_size, args.spacing, args.first_id)
+        grid = Grid(
+            args.rows, args.cols, args.tag_size, args.spacing,
+            args.first_id, args.grid_id_order,
+        )
         expected_ids = list(range(args.first_id, args.first_id + args.rows * args.cols))
     detector = make_detector()
     scan_executor = ThreadPoolExecutor(
@@ -1214,7 +1238,7 @@ def main() -> int:
                 )
             )
             if run_full_scan:
-                coarse: list[tuple[View, list[dict]]] = []
+                coarse: list[tuple[View, list[dict], Pose | None]] = []
                 scan_views = views
                 if tracked_view is not None and current_quaternion is not None:
                     scan_views = (*views, tracked_view)
@@ -1222,7 +1246,7 @@ def main() -> int:
                     pano, scan_views, search_size
                 ):
                     view_records.append(record)
-                    coarse.append((view, dets))
+                    coarse.append((view, dets, coarse_candidate))
                     all_ids.update(int(d["id"]) for d in dets)
                     if search_size == args.view_size and coarse_candidate:
                         candidates.append(coarse_candidate)
@@ -1230,7 +1254,7 @@ def main() -> int:
                         # Low-resolution PnP only locates a direction; never
                         # report it as the final measurement.
                         record["pose"] = None
-                base, scout_detections = max(coarse, key=lambda item: len(item[1]))
+                base, scout_detections, _scout_pose = choose_scout_base(coarse)
                 if len(scout_detections) >= 2:
                     # If scouting was low-resolution, first obtain a canonical
                     # full-resolution measurement. Then always try one centered
@@ -1300,7 +1324,7 @@ def main() -> int:
                     selected_coarse = next(
                         (
                             (view, detections)
-                            for view, detections in coarse
+                            for view, detections, _coarse_pose in coarse
                             if selected is not None and view.name == selected.view
                         ),
                         None,
@@ -1461,6 +1485,7 @@ def main() -> int:
         "rows": None if isinstance(grid, IndependentTagMap) else args.rows,
         "cols": None if isinstance(grid, IndependentTagMap) else args.cols,
         "first_id": None if isinstance(grid, IndependentTagMap) else args.first_id,
+        "grid_id_order": None if isinstance(grid, IndependentTagMap) else args.grid_id_order,
         "tag_map": str(args.tag_map.resolve()) if args.tag_map else None,
         "pnp_points": args.pnp_points,
         "pnp_solver": args.pnp_solver,

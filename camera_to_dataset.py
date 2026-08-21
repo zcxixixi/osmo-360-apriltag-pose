@@ -32,6 +32,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rows", type=int, default=6)
     parser.add_argument("--cols", type=int, default=6)
     parser.add_argument("--first-id", type=int, default=0)
+    parser.add_argument(
+        "--grid-id-order", choices=("column-major", "row-major"),
+        default="column-major",
+    )
     parser.add_argument("--sample-fps", type=float, default=60.0)
     parser.add_argument("--view-size", type=int, default=1440)
     parser.add_argument("--global-search-size", type=int, default=720)
@@ -151,6 +155,7 @@ def main() -> int:
         "rows": args.rows,
         "cols": args.cols,
         "first_id": args.first_id,
+        "grid_id_order": args.grid_id_order,
         "sample_fps": args.sample_fps,
         "view_size": args.view_size,
         "global_search_size": args.global_search_size,
@@ -253,6 +258,7 @@ def main() -> int:
         track.extend((
             "--tag-size", str(args.tag_size), "--spacing", str(args.spacing),
             "--rows", str(args.rows), "--cols", str(args.cols), "--first-id", str(args.first_id),
+            "--grid-id-order", args.grid_id_order,
             "--min-tags", "4", "--pnp-points", "centers", "--pnp-solver", "ippe",
         ))
     imu_csv = sensor_metadata / "imu_perframe.csv"
