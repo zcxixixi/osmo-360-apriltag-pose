@@ -53,13 +53,54 @@
 ## 快速开始
 
 ```bash
-sudo apt install ffmpeg
+sudo apt install ffmpeg gstreamer1.0-tools gstreamer1.0-libav gstreamer1.0-plugins-ugly
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 git clone https://github.com/zcxixixi/osmo-360-apriltag-pose.git
 cd osmo-360-apriltag-pose
 uv sync --extra test
 ```
+
+### 原始视频一键生成数据集
+
+DJI Osmo 360 的 `.OSV` 可以直接作为输入。入口会自动识别相机，调用本地
+PanoForge 从 `djmd` 提取工厂标定和 IMU，把两路鱼眼做真实 remap + 接缝融合，
+再解算逐帧 6DoF 并打包数据集。不会通过修改扩展名伪装成已拼接视频。
+
+```bash
+./camera-to-dataset /path/to/CAM_xxx_D.OSV \
+  --run-name robot-motion-001
+```
+
+默认 AprilGrid 是 6×6、黑色编码区 88 mm、间距比例 0.30。使用四个独立大
+Tag 时传入明确地图，不能自动猜测实际尺寸和安装位置：
+
+```bash
+./camera-to-dataset /path/to/CAM_xxx_D.OSV \
+  --tag-map mocap-evaluation/config/insta360_x6_tag_map.json \
+  --run-name four-tag-motion-001
+```
+
+输入识别规则：
+
+- `.OSV`：DJI 原始双鱼眼，执行 PanoForge 工厂标定拼接；
+- `.insv` / `.lrv`：识别为 Insta360 原始文件，并明确返回“等待官方 SDK”，
+  当前不会用通用投影生成近似结果；
+- 已经是 2:1 的 MP4：跳过原始鱼眼拼接，直接进入轨迹和数据集阶段。
+
+输出位于 `camera-datasets/<run-name>/dataset/`：
+
+- `media/panorama.mp4`：3840×1920 H.264 工厂标定全景；
+- `annotations/trajectory_6dof.csv`：直接测量、光流、短缺口恢复、预测和失锁状态，
+  同时包含板坐标系与“第一帧为原点”的 Kalman + RTS 位置/四元数；
+- `annotations/pose_direct.csv`、`detections.jsonl`：原始可审计视觉结果；
+- `calibration/`、`sensor/`：DJI 工厂标定和两档 IMU 数据；
+- `metadata.json`：数据集版本、坐标系、状态定义、输入身份和统计；
+- `previews/trajectory_overlay.mp4`：夹爪模型 6DoF 动画预览。
+
+加 `--extract-frames` 才会把采样帧另存为 JPEG；默认保留 MP4 + 时间戳 CSV，
+避免数据集无意义膨胀。小规模验证可加 `--max-processed-frames 60`，确认后去掉
+该参数跑全量。
 
 运行离线轨迹识别：
 
@@ -94,6 +135,67 @@ uv run python control_app.py
 - `summary.json`：有效率、RMSE 和整体统计
 - `relative_coordinates.png`：三维及平面轨迹图
 - `overlay.mp4`：真实视频与三维轨迹叠加结果
+
+## Insta360 X6 与 OptiTrack 真值评估
+
+项目支持非连续 AprilTag ID 的显式地图，并将视觉轨迹与 Motive 多行表头 CSV 做严格的留出集评估。单 Tag、光流和预测帧不会进入精度统计。
+
+### 一键运行（推荐）
+
+```bash
+uv sync --extra test
+# 可选：首次安装 CUDA 依赖体积较大
+uv sync --extra gpu
+
+./x6-mocap-evaluate \
+  /path/to/VID_NO_FLOWSTATE.mp4 \
+  /path/to/motive.csv \
+  --confirm-flowstate-off \
+  --run-name experiment-001
+```
+
+命令会依次执行：
+
+1. 50 fps 双 Tag 直接视觉解算；
+2. Motive 异常分支隔离与线/角速度时间同步；
+3. 前 30% 手眼外参标定、后 70% 冻结外参评估；
+4. Kalman 前向滤波 + RTS 后向平滑；
+5. OptiTrack/视觉双 CAD 夹爪 H.264 对比视频。
+
+默认输出到 `mocap-runs/<run-name>/`。再次执行同一命令会复用已经完成的阶段；使用 `--force` 重跑，或通过 `--from-stage evaluate` / `--from-stage render` 从指定阶段继续。`--dry-run` 只做预检查并打印实际命令。
+
+> `--confirm-flowstate-off` 是有意设置的保护开关。FlowState、方向锁定和地平线校正必须在 Insta360 Studio 导出时关闭，否则姿态评估无效。
+
+主要输出：
+
+- `visual/pose.csv`：50 fps 直接测量及 LOST 状态；
+- `evaluation/mocap_evaluation.json`：正式精度与质量门槛；
+- `evaluation/matched_errors.csv`：逐帧真值/视觉匹配；
+- `evaluation/optitrack_vs_visual_gripper_kalman_rts.mp4`：双夹爪对比视频；
+- `pipeline_manifest.json`：输入、参数、输出和最终指标；
+- `pipeline.log`：完整运行日志。
+
+夹爪 STL 已打包在 `assets/gripper/`，无需依赖外部 URDF 工程。
+
+### 分阶段手动运行
+
+```bash
+# 视觉直接测量；配置中包含 130 → 131 → 129 → 128 的实际排列
+uv run python osmo_360_offline.py input.mp4 \
+  --tag-map mocap-evaluation/config/insta360_x6_tag_map.json \
+  --sample-fps 50 --min-tags 2 --pnp-points corners --pnp-solver ippe \
+  --full-scan --view-size 1440 --max-rmse-px 8 --official-stitched
+
+# 前 30% 求刚体→相机外参，后 70% 独立统计
+uv run python evaluate_insta360_mocap.py session/pose.csv motive.csv \
+  --output-dir evaluation-result --initial-time-offset -3.852
+
+# 生成带 MEASURED / LOST / RECOVERED 审计状态的同步视频
+uv run python render_mocap_comparison.py input.mp4 session/pose.csv evaluation-result \
+  --output evaluation-result/comparison.mp4
+```
+
+只有线速度/角速度综合相关性不低于 0.80、时间偏移不确定度不高于 20 ms、且测试段直接双 Tag 匹配不少于 200 帧时，报告才标记为 `FORMAL_ACCURACY`；否则所有误差只标记为 `DIAGNOSTIC_ONLY`。
 
 ## 注意
 

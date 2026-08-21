@@ -124,6 +124,47 @@ def make_views(horizontal_step_deg: int = 30, horizontal_fov_deg: float = 110.0)
 DEFAULT_VIEWS = make_views()
 
 
+@dataclass(frozen=True)
+class IndependentTagMap:
+    """Measured non-contiguous AprilTag corners in one metric world frame."""
+
+    tags: dict[int, np.ndarray]
+    metadata: dict
+
+    @property
+    def expected_ids(self) -> list[int]:
+        return sorted(self.tags)
+
+    def corners(self, tag_id: int) -> np.ndarray | None:
+        corners = self.tags.get(tag_id)
+        return None if corners is None else corners.copy()
+
+    def center(self, tag_id: int) -> np.ndarray | None:
+        corners = self.corners(tag_id)
+        return None if corners is None else corners.mean(axis=0)
+
+
+def load_tag_map(path: Path) -> IndependentTagMap:
+    """Load an explicit per-ID 4x3 corner map in OpenCV marker order."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    entries = payload.get("tags")
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("tag map must contain a non-empty tags list")
+    tags: dict[int, np.ndarray] = {}
+    for entry in entries:
+        tag_id = int(entry["id"])
+        corners = np.asarray(entry["corners_m"], dtype=np.float32)
+        if corners.shape != (4, 3) or not np.isfinite(corners).all():
+            raise ValueError(f"tag {tag_id} corners_m must be finite 4x3 values")
+        if tag_id in tags:
+            raise ValueError(f"duplicate tag id {tag_id}")
+        edge_lengths = np.linalg.norm(np.roll(corners, -1, axis=0) - corners, axis=1)
+        if edge_lengths.min() <= 0 or edge_lengths.max() / edge_lengths.min() > 1.02:
+            raise ValueError(f"tag {tag_id} corners are not a square within 2%")
+        tags[tag_id] = corners
+    return IndependentTagMap(tags, {key: value for key, value in payload.items() if key != "tags"})
+
+
 @dataclass
 class Pose:
     xyz: np.ndarray
@@ -195,7 +236,8 @@ def make_detector() -> cv2.aruco.ArucoDetector:
 
 
 def detect_view(
-    image: np.ndarray, detector: cv2.aruco.ArucoDetector, grid: Grid
+    image: np.ndarray, detector: cv2.aruco.ArucoDetector,
+    grid: Grid | IndependentTagMap,
 ) -> list[dict]:
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     corners, ids, _rejected = detector.detectMarkers(gray)
@@ -331,7 +373,8 @@ def solve_view(
         # homography first, then let IPPE return both ambiguous pose solutions.
         homography_obj = obj[:, :2].astype(np.float64)
         _h, mask = cv2.findHomography(
-            homography_obj, img.astype(np.float64), cv2.RANSAC, 3.0,
+            homography_obj, img.astype(np.float64), cv2.RANSAC,
+            max(3.0, max_rmse_px),
             maxIters=2000, confidence=0.999,
         )
         if mask is None:
@@ -499,6 +542,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--rows", type=int, default=6)
     p.add_argument("--cols", type=int, default=6)
     p.add_argument("--first-id", type=int, default=0)
+    p.add_argument(
+        "--tag-map", type=Path,
+        help="JSON explicit non-contiguous tag map; overrides rows/cols/first-id geometry",
+    )
     p.add_argument("--sample-fps", type=float, default=5.0)
     p.add_argument("--output-dir", type=Path, default=Path("sessions"))
     p.add_argument("--min-tags", type=int, default=6)
@@ -545,7 +592,19 @@ def parse_args() -> argparse.Namespace:
         "--global-refresh-interval",
         type=int,
         default=60,
-        help="force a global view scan after this many tracked frames",
+        help="run a non-destructive global refresh after this many tracked frames",
+    )
+    p.add_argument(
+        "--recovery-scan-interval",
+        type=int,
+        default=10,
+        help="while lost, run the global sweep only every N frames",
+    )
+    p.add_argument(
+        "--global-search-size",
+        type=int,
+        default=720,
+        help="low-resolution global scout size; a hit is refined at --view-size",
     )
     p.add_argument(
         "--horizontal-step-deg", type=int, default=30,
@@ -587,12 +646,14 @@ def main() -> int:
         args.tag_size <= 0
         or args.spacing < 0
         or args.sample_fps <= 0
-        or args.min_tags < 4
+        or args.min_tags < (2 if args.tag_map else 4)
         or args.max_rmse_px <= 0
         or args.view_size < 160
         or (args.max_processed_frames is not None and args.max_processed_frames <= 0)
         or args.redetect_interval <= 0
         or args.global_refresh_interval <= 0
+        or args.recovery_scan_interval <= 0
+        or not 320 <= args.global_search_size <= args.view_size
         or args.horizontal_step_deg <= 0
         or 360 % args.horizontal_step_deg != 0
         or not 30.0 <= args.horizontal_fov_deg < 180.0
@@ -632,7 +693,13 @@ def main() -> int:
         return 4
     LOG.info("projection backend: %s", projection_backend.name)
     step = max(1, round(source_fps / args.sample_fps)) if source_fps > 0 else 1
-    grid = Grid(args.rows, args.cols, args.tag_size, args.spacing, args.first_id)
+    if args.tag_map:
+        grid = load_tag_map(args.tag_map)
+        expected_ids = grid.expected_ids
+        LOG.info("loaded explicit tag map %s with IDs %s", args.tag_map, expected_ids)
+    else:
+        grid = Grid(args.rows, args.cols, args.tag_size, args.spacing, args.first_id)
+        expected_ids = list(range(args.first_id, args.first_id + args.rows * args.cols))
     detector = make_detector()
     imu_quaternions = load_imu_quaternions(args.imu_csv)
     if args.imu_csv:
@@ -659,8 +726,10 @@ def main() -> int:
     temporal_detections: list[dict] = []
     temporal_age = 0
     tracked_quaternion: np.ndarray | None = None
-    search_size = min(960, args.view_size)
+    lost_frames = 0
+    search_size = min(args.global_search_size, args.view_size)
     candidate_sources: list[tuple[Pose, View, np.ndarray, list[dict]]] = []
+    candidate_measurements: dict[int, str] = {}
 
     def evaluate_view(
         pano: np.ndarray,
@@ -679,6 +748,7 @@ def main() -> int:
         )
         if pose is not None:
             candidate_sources.append((pose, view, perspective, detections))
+            candidate_measurements[id(pose)] = "direct"
         record = {
             "view": asdict(view),
             "size": size,
@@ -740,6 +810,7 @@ def main() -> int:
         "reprojection_rmse_px",
         "detected_ids",
         "selected_view",
+        "measurement_source",
         "quality_status",
     ]
     with (
@@ -763,6 +834,7 @@ def main() -> int:
             view_records: list[dict] = []
             candidates: list[Pose] = []
             candidate_sources = []
+            candidate_measurements = {}
 
             current_quaternion = imu_quaternions.get(frame_no)
             if (
@@ -877,6 +949,9 @@ def main() -> int:
                     candidate_sources.append(
                         (candidate, tracked_view, perspective, dets)
                     )
+                    candidate_measurements[id(candidate)] = (
+                        "direct" if tracking_mode == "redetected" else "optical_flow"
+                    )
                     temporal_image = perspective
                     temporal_detections = dets
                     temporal_age = next_temporal_age
@@ -888,32 +963,100 @@ def main() -> int:
 
             # Global measurement path and immediate fallback when temporal
             # tracking has not locked or has just failed.
-            run_full_scan = (
-                (not temporal_success or force_global_refresh)
-                and args.full_scan
+            # A high-resolution sweep on every lost frame was the dominant
+            # runtime cost. Scout globally at low resolution, periodically
+            # while lost, then refine only the best direction at full size.
+            # A scheduled refresh is non-destructive: failed refreshes never
+            # replace a healthy temporal track.
+            run_full_scan = args.full_scan and (
+                processed == 1
+                or force_global_refresh
+                or (
+                    not temporal_success
+                    and lost_frames % args.recovery_scan_interval == 0
+                )
             )
             if run_full_scan:
                 coarse: list[tuple[View, list[dict]]] = []
                 scan_views = views
                 if tracked_view is not None and current_quaternion is not None:
                     scan_views = (*views, tracked_view)
-                for view, dets, candidate, record in evaluate_views(
-                    pano, scan_views, args.view_size
+                for view, dets, coarse_candidate, record in evaluate_views(
+                    pano, scan_views, search_size
                 ):
                     view_records.append(record)
                     coarse.append((view, dets))
                     all_ids.update(int(d["id"]) for d in dets)
-                    if candidate:
-                        candidates.append(candidate)
-                base, dets = max(coarse, key=lambda item: len(item[1]))
-                if len(dets) >= 2:
-                    refined_view = recentered_view(base, dets, args.view_size)
-                    dets, candidate, record = evaluate_view(pano, refined_view, args.view_size)
-                    view_records.append(record)
-                    all_ids.update(int(d["id"]) for d in dets)
-                    if candidate:
-                        candidates.append(candidate)
-                        tracked_view = refined_view
+                    if search_size == args.view_size and coarse_candidate:
+                        candidates.append(coarse_candidate)
+                    else:
+                        # Low-resolution PnP only locates a direction; never
+                        # report it as the final measurement.
+                        record["pose"] = None
+                base, scout_detections = max(coarse, key=lambda item: len(item[1]))
+                if len(scout_detections) >= 2:
+                    # If scouting was low-resolution, first obtain a canonical
+                    # full-resolution measurement. Then always try one centered
+                    # refinement: centering is important for stable LK tracking,
+                    # while both candidates remain available for RMSE selection.
+                    dets = scout_detections
+                    if search_size != args.view_size:
+                        dets, candidate, record = evaluate_view(
+                            pano, base, args.view_size
+                        )
+                        view_records.append(record)
+                        all_ids.update(int(d["id"]) for d in dets)
+                        if candidate:
+                            candidates.append(candidate)
+                    if len(dets) >= 2:
+                        refined_view = recentered_view(base, dets, args.view_size)
+                        dets, candidate, record = evaluate_view(
+                            pano, refined_view, args.view_size
+                        )
+                        view_records.append(record)
+                        all_ids.update(int(d["id"]) for d in dets)
+                        if candidate:
+                            candidates.append(candidate)
+                            tracked_view = refined_view
+                            tracked_quaternion = current_quaternion
+                # A distant grid may yield only one decoded tag in a 110-degree
+                # scout even though a narrower crop contains enough pixels for
+                # PnP. Use that tag as a bearing, then search a small 3x3 local
+                # neighborhood at 60 degrees. This is only paid while lost.
+                if not candidates and scout_detections:
+                    anchor = recentered_view(base, scout_detections, search_size)
+                    local_views = tuple(
+                        View(
+                            f"recovery_{dyaw:+.0f}_{dpitch:+.0f}",
+                            ((anchor.yaw + dyaw + 180.0) % 360.0) - 180.0,
+                            float(np.clip(anchor.pitch + dpitch, -85.0, 85.0)),
+                            60.0,
+                            anchor.roll,
+                        )
+                        for dpitch in (-15.0, 0.0, 15.0)
+                        for dyaw in (-15.0, 0.0, 15.0)
+                    )
+                    local_results = evaluate_views(pano, local_views, args.view_size)
+                    for local_view, dets, candidate, record in local_results:
+                        view_records.append(record)
+                        all_ids.update(int(d["id"]) for d in dets)
+                        if candidate:
+                            candidates.append(candidate)
+                    if candidates:
+                        best_local = min(
+                            (
+                                (candidate, local_view, dets)
+                                for local_view, dets, candidate, _record in local_results
+                                if candidate is not None
+                            ),
+                            key=lambda item: item[0].rmse,
+                        )
+                        _candidate, local_view, dets = best_local
+                        tracked_view = (
+                            recentered_view(local_view, dets, args.view_size)
+                            if len(dets) >= 2
+                            else local_view
+                        )
                         tracked_quaternion = current_quaternion
                 if candidates and tracked_view is None:
                     selected = choose_pose(candidates)
@@ -935,9 +1078,6 @@ def main() -> int:
                             else selected_view
                         )
                         tracked_quaternion = current_quaternion
-                if not candidates:
-                    tracked_view = None
-                    tracked_quaternion = None
 
             # Fast path: reuse the previous board direction.  The final PnP is
             # still measured from a full-resolution perspective image.
@@ -962,32 +1102,10 @@ def main() -> int:
             # Recovery path: cheap low-resolution global sweep, followed by one
             # high-resolution recentered measurement.  Never use low-res PnP as
             # the reported pose.
-            if not candidates:
-                coarse: list[tuple[View, list[dict]]] = []
-                for view, dets, _unused, record in evaluate_views(
-                    pano, views, search_size
-                ):
-                    record["pose"] = None
-                    view_records.append(record)
-                    coarse.append((view, dets))
-                    all_ids.update(int(d["id"]) for d in dets)
-                base, dets = max(coarse, key=lambda item: len(item[1]))
-                if len(dets) >= 2:
-                    recovery_view = recentered_view(base, dets, search_size)
-                    dets, candidate, record = evaluate_view(pano, recovery_view, args.view_size)
-                    view_records.append(record)
-                    all_ids.update(int(d["id"]) for d in dets)
-                    if candidate:
-                        candidates.append(candidate)
-                        tracked_view = recovery_view
-                        tracked_quaternion = current_quaternion
-                    elif args.full_scan:
-                        tracked_view = None
-                        tracked_quaternion = None
-
             for tag_id in all_ids:
                 seen[tag_id] += 1
             pose = choose_pose(candidates)
+            measurement_source = candidate_measurements.get(id(pose), "") if pose else ""
             if args.temporal_flow and pose is not None and not temporal_success:
                 source = next(
                     (item for item in candidate_sources if item[0] is pose), None
@@ -997,8 +1115,8 @@ def main() -> int:
                     temporal_age = 0
                     tracked_quaternion = current_quaternion
             elif args.temporal_flow and pose is None:
-                tracked_view = None
-                tracked_quaternion = None
+                # Keep the last board direction so IMU can continue propagating
+                # a cheap local search through blur. Only LK image state is lost.
                 temporal_image = None
                 temporal_detections = []
                 temporal_age = 0
@@ -1019,12 +1137,14 @@ def main() -> int:
                 if quality == "valid":
                     previous = (timestamp, filtered.copy())
                     valid += 1
+            lost_frames = 0 if quality == "valid" else lost_frames + 1
             row = dict.fromkeys(csv_fields, "")
             row.update(
                 frame=frame_no,
                 timestamp=f"{timestamp:.6f}",
                 detected_tag_count=len(all_ids),
                 detected_ids=" ".join(map(str, sorted(all_ids))),
+                measurement_source=measurement_source,
                 quality_status=quality,
             )
             if pose:
@@ -1055,6 +1175,7 @@ def main() -> int:
                         "detected_ids": sorted(all_ids),
                         "views": view_records,
                         "selected_view": pose.view if pose else None,
+                        "measurement_source": measurement_source,
                         "quality_status": quality,
                         "jump_m": jump,
                     }
@@ -1081,7 +1202,7 @@ def main() -> int:
                 )
             frame_no += 1
     cap.release()
-    expected = list(range(args.first_id, args.first_id + args.rows * args.cols))
+    expected = expected_ids
     summary = {
         "input": str(args.input.resolve()),
         "total_frames": total,
@@ -1094,11 +1215,15 @@ def main() -> int:
         "tag_coverage_ratio": len(set(expected) & set(seen)) / len(expected),
         "reprojection_rmse_px": _finite_stats(rmses),
         "adjacent_coordinate_jump_m": _finite_stats(jumps),
-        "tag_size_m": args.tag_size,
-        "spacing_ratio": args.spacing,
-        "rows": args.rows,
-        "cols": args.cols,
-        "first_id": args.first_id,
+        "tag_size_m": (
+            grid.metadata.get("tag_size_m")
+            if isinstance(grid, IndependentTagMap) else args.tag_size
+        ),
+        "spacing_ratio": None if isinstance(grid, IndependentTagMap) else args.spacing,
+        "rows": None if isinstance(grid, IndependentTagMap) else args.rows,
+        "cols": None if isinstance(grid, IndependentTagMap) else args.cols,
+        "first_id": None if isinstance(grid, IndependentTagMap) else args.first_id,
+        "tag_map": str(args.tag_map.resolve()) if args.tag_map else None,
         "pnp_points": args.pnp_points,
         "pnp_solver": args.pnp_solver,
         "projection_backend": projection_backend.name,

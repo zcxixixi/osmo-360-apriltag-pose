@@ -3,6 +3,13 @@ __pycache__/
 *.py[cod]
 work/
 sessions/
+camera-datasets/
+mocap-runs/
+mocap-evaluation/input/
+mocap-evaluation/preview/
+mocap-evaluation/results/
+mocap-evaluation/visual/
+demo-output/
 *.OSV
 *.osv
 *.LRF

@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
+import struct
 import subprocess
 from collections import deque
 from pathlib import Path
@@ -44,7 +46,55 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--start", type=float, default=0.0)
     parser.add_argument("--duration", type=float)
+    parser.add_argument("--claw-angle-csv", type=Path)
+    parser.add_argument("--claw-mesh-dir", type=Path)
+    parser.add_argument(
+        "--camera-to-gripper-json", type=Path,
+        help="fixed gripper-to-camera transform used to convert camera pose into gripper-base pose",
+    )
+    parser.add_argument("--audio-source", type=Path)
+    parser.add_argument("--video-fit", choices=("stretch", "contain"), default="stretch")
     return parser.parse_args()
+
+
+def load_claw_angles(path: Path) -> np.ndarray:
+    rows = []
+    with path.open(encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            rows.append([
+                float(row["time_s"]), float(row["opening_angle_deg"]),
+                float(row["joint1_deg"]), float(row["joint2_deg"]),
+                float(row.get("measured", "1")), float(row.get("confidence", "1")),
+            ])
+    if not rows:
+        raise ValueError("claw angle CSV has no samples")
+    return np.asarray(rows, dtype=np.float64)
+
+
+def sample_claw_angle(data: np.ndarray, now: float) -> tuple[np.ndarray, bool, float]:
+    index = int(np.clip(np.searchsorted(data[:, 0], now), 0, len(data) - 1))
+    if index and abs(data[index - 1, 0] - now) < abs(data[index, 0] - now):
+        index -= 1
+    values = np.array([np.interp(now, data[:, 0], data[:, column]) for column in (1, 2, 3)])
+    return values, bool(data[index, 4] >= 0.5), float(data[index, 5])
+
+
+def load_binary_stl(path: Path, triangle_budget: int = 950) -> np.ndarray:
+    raw = path.read_bytes()
+    count = struct.unpack_from("<I", raw, 80)[0]
+    dtype = np.dtype([("normal", "<f4", (3,)), ("vertices", "<f4", (3, 3)), ("attribute", "<u2")])
+    triangles = np.frombuffer(raw, dtype=dtype, offset=84, count=count)["vertices"].astype(np.float64)
+    if len(triangles) > triangle_budget:
+        triangles = triangles[::max(1, len(triangles) // triangle_budget)][:triangle_budget]
+    return triangles
+
+
+def load_claw_meshes(mesh_dir: Path) -> dict[str, np.ndarray]:
+    return {
+        "base": load_binary_stl(mesh_dir / "base_link.STL", 500),
+        "left": load_binary_stl(mesh_dir / "Link1.STL", 850),
+        "right": load_binary_stl(mesh_dir / "Link2.STL", 850),
+    }
 
 
 def load_and_filter(path: Path, smooth: float, median_window: int = 1) -> np.ndarray:
@@ -94,6 +144,53 @@ def load_and_filter(path: Path, smooth: float, median_window: int = 1) -> np.nda
                 data[index, 1:] - data[index - 1, 1:]
             )
     return data
+
+
+def load_pose_quality(path: Path) -> np.ndarray:
+    """Load every processed frame so rendered state labels remain auditable."""
+    rows = []
+    with path.open(encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            rows.append([float(row["timestamp"]), row["quality_status"] == "valid"])
+    if not rows:
+        raise ValueError("pose CSV has no quality samples")
+    return np.asarray(rows, dtype=np.float64)
+
+
+def measurement_state(quality: np.ndarray, now: float, fallback: str) -> str:
+    """Distinguish a decoded visual pose from interpolation and prediction."""
+    if fallback in {"SEARCHING", "PREDICTED", "ENTERING"}:
+        return fallback
+    index = int(np.clip(np.searchsorted(quality[:, 0], now), 0, len(quality) - 1))
+    if index and abs(quality[index - 1, 0] - now) < abs(quality[index, 0] - now):
+        index -= 1
+    nominal_dt = float(np.median(np.diff(quality[:, 0]))) if len(quality) > 1 else 0.02
+    if abs(quality[index, 0] - now) <= max(0.012, nominal_dt * 0.55):
+        return "VISUAL MEASURED" if quality[index, 1] >= 0.5 else "INTERPOLATED"
+    return "INTERPOLATED"
+
+
+def apply_gripper_extrinsic(data: np.ndarray, path: Path) -> np.ndarray:
+    """Convert board<-camera poses to board<-gripper-base poses."""
+    transform = json.loads(path.read_text(encoding="utf-8"))
+    rotation_camera_gripper = np.asarray(
+        transform["rotation_gripper_to_camera"], dtype=np.float64
+    )
+    translation_camera_gripper = np.asarray(
+        transform["translation_gripper_origin_in_camera_m"], dtype=np.float64
+    )
+    if rotation_camera_gripper.shape != (3, 3) or translation_camera_gripper.shape != (3,):
+        raise ValueError("invalid camera-to-gripper transform JSON")
+    result = data.copy()
+    for index in range(len(result)):
+        rotation_board_camera = rpy_to_rotation(data[index, 4:7])
+        result[index, 1:4] = (
+            data[index, 1:4] + rotation_board_camera @ translation_camera_gripper
+        )
+        result[index, 4:7] = rotation_to_rpy(
+            rotation_board_camera @ rotation_camera_gripper
+        )
+    return result
 
 
 def kalman_rts_filter(
@@ -273,11 +370,12 @@ def draw_pose_axes(
     position: np.ndarray,
     rpy_deg: np.ndarray,
     axis_length: float = 0.12,
+    frame_suffix: str = "c",
 ) -> None:
     origin = projector(position)
     rotation = rpy_to_rotation(rpy_deg)
     colors = ((40, 55, 245), (70, 220, 90), (245, 110, 55))  # X red, Y green, Z blue
-    labels = ("Xc", "Yc", "Zc")
+    labels = (f"X{frame_suffix}", f"Y{frame_suffix}", f"Z{frame_suffix}")
     for axis, color, label in zip(np.eye(3), colors, labels):
         endpoint = projector(position + rotation @ axis * axis_length)
         cv2.arrowedLine(canvas, origin, endpoint, color, 3, cv2.LINE_AA, tipLength=0.22)
@@ -285,6 +383,138 @@ def draw_pose_axes(
             canvas, label, (endpoint[0] + 3, endpoint[1] - 3),
             cv2.FONT_HERSHEY_SIMPLEX, 0.42, color, 1, cv2.LINE_AA,
         )
+
+
+def _rz_degrees(angle_deg: float) -> np.ndarray:
+    angle = math.radians(angle_deg)
+    c, s = math.cos(angle), math.sin(angle)
+    return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+
+
+def draw_claw_model(
+    canvas: np.ndarray,
+    projector: Projector,
+    position: np.ndarray,
+    rpy_deg: np.ndarray,
+    joint1_deg: float,
+    joint2_deg: float,
+    meshes: dict[str, np.ndarray],
+    model_scale: float = 1.0,
+) -> None:
+    """Draw the URDF meshes at the current gripper-base pose."""
+    base_rotation = rpy_to_rotation(rpy_deg)
+    pivots = {
+        "left": np.array([0.015, 0.01425, 0.01510]),
+        "right": np.array([0.015, -0.01425, 0.01570]),
+    }
+    colors = {
+        "base": (170, 178, 190),
+        "left": (82, 231, 126),
+        "right": (30, 218, 252),
+    }
+    angles = {"base": 0.0, "left": joint1_deg, "right": joint2_deg}
+    for name in ("base", "left", "right"):
+        local = meshes[name].copy()
+        if name != "base":
+            local = local @ _rz_degrees(angles[name]).T + pivots[name]
+        local *= model_scale
+        world = local @ base_rotation.T + position
+        color = colors[name]
+        # A sparse translucent wire surface stays legible over the metric grid.
+        overlay = canvas.copy()
+        for triangle in world:
+            polygon = np.array([projector(point) for point in triangle], np.int32)
+            cv2.fillConvexPoly(overlay, polygon, color, cv2.LINE_AA)
+        cv2.addWeighted(overlay, 0.10, canvas, 0.90, 0, canvas)
+        for triangle in world[::3]:
+            polygon = np.array([projector(point) for point in triangle], np.int32)
+            cv2.polylines(canvas, [polygon], True, color, 1, cv2.LINE_AA)
+
+    origin = projector(position)
+    cv2.circle(canvas, origin, 5, (245, 246, 248), -1, cv2.LINE_AA)
+    # Physical 24 mm black-code square at the measured CAD base location.
+    tag_local = np.array([
+        [-0.013, -0.012, 0.004], [0.011, -0.012, 0.004],
+        [0.011, 0.012, 0.004], [-0.013, 0.012, 0.004],
+    ]) * model_scale
+    tag_world = tag_local @ base_rotation.T + position
+    tag_polygon = np.array([projector(point) for point in tag_world], np.int32)
+    cv2.fillConvexPoly(canvas, tag_polygon, (28, 30, 34), cv2.LINE_AA)
+    cv2.polylines(canvas, [tag_polygon], True, (255, 72, 238), 2, cv2.LINE_AA)
+    tag_center = tuple(np.round(tag_polygon.mean(axis=0)).astype(int))
+    cv2.putText(canvas, "ID2", (tag_center[0] + 4, tag_center[1] - 4),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.30, (255, 105, 244), 1, cv2.LINE_AA)
+
+    # Make the fixed CAD relationship explicit instead of leaving the tag and
+    # moving links as two unrelated drawings.  ID2 is rigidly attached to the
+    # base; the two dashed legs terminate at the physical revolute axes.
+    tag_origin_local = np.array([-0.001, 0.0, 0.004]) * model_scale
+    tag_origin_world = tag_origin_local @ base_rotation.T + position
+    tag_origin_px = projector(tag_origin_world)
+    for name, colour in (("left", colors["left"]), ("right", colors["right"])):
+        pivot_local = pivots[name] * model_scale
+        pivot_world = pivot_local @ base_rotation.T + position
+        pivot_px = projector(pivot_world)
+        for dash in range(0, 12, 2):
+            a = dash / 12.0
+            b = min((dash + 1) / 12.0, 1.0)
+            p0 = tuple(np.round(np.asarray(tag_origin_px) * (1.0-a) + np.asarray(pivot_px) * a).astype(int))
+            p1 = tuple(np.round(np.asarray(tag_origin_px) * (1.0-b) + np.asarray(pivot_px) * b).astype(int))
+            cv2.line(canvas, p0, p1, colour, 1, cv2.LINE_AA)
+        cv2.circle(canvas, pivot_px, 3, colour, -1, cv2.LINE_AA)
+
+
+def draw_aprilgrid_anchor(canvas: np.ndarray, projector: Projector) -> None:
+    """Draw the measured 8x8 world anchor in the same metric frame as the claw."""
+    tag_size = 0.088
+    pitch = tag_size * 1.30
+    extent = 7 * pitch + tag_size
+    half = extent / 2.0
+    outline = np.array([
+        projector(np.array([-half, half, 0.0])),
+        projector(np.array([half, half, 0.0])),
+        projector(np.array([half, -half, 0.0])),
+        projector(np.array([-half, -half, 0.0])),
+    ], np.int32)
+    cv2.fillConvexPoly(canvas, outline, (25, 29, 35), cv2.LINE_AA)
+    cv2.polylines(canvas, [outline], True, (118, 134, 151), 2, cv2.LINE_AA)
+    for col in range(8):
+        for row in range(8):
+            x0 = col * pitch - half
+            y0 = half - row * pitch
+            square = np.array([
+                projector(np.array([x0, y0, 0.0])),
+                projector(np.array([x0 + tag_size, y0, 0.0])),
+                projector(np.array([x0 + tag_size, y0 - tag_size, 0.0])),
+                projector(np.array([x0, y0 - tag_size, 0.0])),
+            ], np.int32)
+            cv2.polylines(canvas, [square], True, (72, 82, 95), 1, cv2.LINE_AA)
+    label = projector(np.array([-half, half, 0.0]))
+    cv2.putText(canvas, "WORLD APRILGRID  ID 0-63", (label[0], label[1] - 8),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.34, (159, 176, 195), 1, cv2.LINE_AA)
+
+
+def draw_claw_model_inset(
+    canvas: np.ndarray,
+    rpy_deg: np.ndarray,
+    claw_values: np.ndarray,
+    meshes: dict[str, np.ndarray],
+) -> None:
+    """Large live URDF view in the right analysis panel."""
+    rect = (1320, 108, 560, 165)
+    cv2.rectangle(canvas, (rect[0], rect[1]), (rect[0] + rect[2], rect[1] + rect[3]),
+                  (48, 56, 67), 1, cv2.LINE_AA)
+    cv2.putText(canvas, "LIVE URDF GRIPPER", (1334, 130), cv2.FONT_HERSHEY_SIMPLEX,
+                0.42, (155, 174, 194), 1, cv2.LINE_AA)
+    cv2.putText(canvas, "TAG ID2 FIXED TO BASE  |  PIVOTS 28.5 mm", (1560, 130),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.34, (238, 105, 229), 1, cv2.LINE_AA)
+    extent = 0.17
+    fit = np.asarray([[x, y, z] for x in (-extent, extent)
+                      for y in (-extent, extent) for z in (-0.06, 0.14)], dtype=np.float64)
+    model_projector = Projector(fit, (1340, 136, 520, 122))
+    draw_claw_model(canvas, model_projector, np.zeros(3), rpy_deg,
+                    float(claw_values[1]), float(claw_values[2]), meshes, model_scale=3.15)
+    draw_pose_axes(canvas, model_projector, np.zeros(3), rpy_deg, axis_length=0.085)
 
 
 def draw_board_axes(
@@ -313,6 +543,7 @@ def draw_frame_transform(
     projector: Projector,
     camera_position: np.ndarray,
     reference_name: str = "board",
+    target_name: str = "camera",
 ) -> None:
     """Connect board and camera frames with the translation in board axes."""
     if float(np.linalg.norm(camera_position)) < 1e-4:
@@ -354,7 +585,7 @@ def draw_frame_transform(
         (board_px[1] + camera_px[1]) // 2,
     )
     cv2.putText(
-        canvas, f"T {reference_name}->camera", (transform_midpoint[0] + 7, transform_midpoint[1] + 16),
+        canvas, f"T {reference_name}->{target_name}", (transform_midpoint[0] + 7, transform_midpoint[1] + 16),
         cv2.FONT_HERSHEY_SIMPLEX, 0.38, (202, 211, 222), 1, cv2.LINE_AA,
     )
 
@@ -463,15 +694,25 @@ def draw_analysis_hud(
     xyz_bounds: tuple[np.ndarray, np.ndarray],
     axis_length: float,
     reference_frame: str,
+    claw_values: np.ndarray | None = None,
+    claw_measured: bool = False,
+    claw_confidence: float = 0.0,
+    claw_meshes: dict[str, np.ndarray] | None = None,
 ) -> None:
     """Large split-screen visualization intended for trajectory inspection."""
     panel_x = 1280
     canvas[:, panel_x:] = (20, 24, 30)
     cv2.line(canvas, (panel_x, 0), (panel_x, 720), (72, 82, 96), 2, cv2.LINE_AA)
-    cv2.putText(canvas, "ROBOT CAMERA 6DoF", (1312, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.82, (240, 244, 248), 2, cv2.LINE_AA)
+    title = "GRIPPER BASE 6DoF TRAJECTORY" if claw_values is not None else "ROBOT CAMERA 6DoF"
+    cv2.putText(canvas, title, (1312, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.76, (240, 244, 248), 2, cv2.LINE_AA)
     subtitle = "FULL TRACK RELATIVE TO START POSE" if reference_frame == "start" else "FULL TRACK IN APRILGRID / WORLD FRAME"
     cv2.putText(canvas, subtitle, (1312, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (151, 170, 190), 1, cv2.LINE_AA)
-
+    if claw_values is not None:
+        cv2.putText(
+            canvas, "TAG ID2 RIGID TO GRIPPER BASE  |  CAD PIVOTS 28.5 mm",
+            (1312, 88), cv2.FONT_HERSHEY_SIMPLEX, 0.34,
+            (226, 112, 220), 1, cv2.LINE_AA,
+        )
     low, high = xyz_bounds
     x_step = _nice_grid_step(float(high[0] - low[0]))
     y_step = _nice_grid_step(float(high[1] - low[1]))
@@ -488,6 +729,9 @@ def draw_analysis_hud(
         a = projector(np.array([x0, y_value, 0.0]))
         b = projector(np.array([x1, y_value, 0.0]))
         cv2.line(canvas, a, b, (48, 56, 67), 1, cv2.LINE_AA)
+
+    if reference_frame == "board":
+        draw_aprilgrid_anchor(canvas, projector)
 
     draw_board_axes(
         canvas, projector, axis_length=axis_length,
@@ -507,33 +751,55 @@ def draw_analysis_hud(
         cv2.line(canvas, projector(p0), projector(p1), (242, 180, 62), 4, cv2.LINE_AA)
 
     if current is not None:
-        draw_frame_transform(canvas, projector, current, reference_name=reference_frame)
+        draw_frame_transform(
+            canvas, projector, current, reference_name=reference_frame,
+            target_name="gripper" if claw_values is not None else "camera",
+        )
         point = projector(current)
         cv2.circle(canvas, point, 12, (255, 210, 80), 2, cv2.LINE_AA)
         cv2.circle(canvas, point, 5, (255, 238, 176), -1, cv2.LINE_AA)
         if current_rpy is not None:
-            draw_pose_axes(canvas, projector, current, current_rpy, axis_length=axis_length)
+            draw_pose_axes(
+                canvas, projector, current, current_rpy, axis_length=axis_length,
+                frame_suffix="g" if claw_values is not None else "c",
+            )
+            if claw_values is not None and claw_meshes is not None:
+                draw_claw_model(canvas, projector, current, current_rpy,
+                                float(claw_values[1]), float(claw_values[2]), claw_meshes)
 
-    state_color = (93, 215, 139) if state == "TRACKED" else (72, 174, 240) if state in {"PREDICTED", "ENTERING"} else (128, 139, 154)
-    cv2.circle(canvas, (1318, 602), 6, state_color, -1, cv2.LINE_AA)
-    cv2.putText(canvas, state, (1332, 609), cv2.FONT_HERSHEY_SIMPLEX, 0.56, state_color, 1, cv2.LINE_AA)
+    state_color = ((93, 215, 139) if state in {"TRACKED", "VISUAL MEASURED"}
+                   else (72, 174, 240) if state in {"PREDICTED", "ENTERING", "INTERPOLATED"}
+                   else (128, 139, 154))
+    cv2.circle(canvas, (1318, 578), 6, state_color, -1, cv2.LINE_AA)
+    cv2.putText(canvas, state, (1332, 585), cv2.FONT_HERSHEY_SIMPLEX, 0.56, state_color, 1, cv2.LINE_AA)
+    if claw_values is not None:
+        claw_state = "DOTS MEASURED" if claw_measured else "DOTS RECOVERED"
+        claw_color = (88, 224, 133) if claw_measured else (72, 174, 240)
+        cv2.putText(canvas, f"GRIPPER {claw_values[0]:5.1f} deg  {claw_state}  Q {claw_confidence:.2f}",
+                    (1312, 612), cv2.FONT_HERSHEY_SIMPLEX, 0.48, claw_color, 1, cv2.LINE_AA)
     if current is not None:
-        cv2.putText(canvas, f"POSITION  X {current[0]:+.3f}  Y {current[1]:+.3f}  Z {current[2]:+.3f} m", (1312, 640), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (220, 228, 237), 1, cv2.LINE_AA)
+        cv2.putText(canvas, f"POSITION  X {current[0]:+.3f}  Y {current[1]:+.3f}  Z {current[2]:+.3f} m", (1312, 642), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (220, 228, 237), 1, cv2.LINE_AA)
     if current_rpy is not None:
         wrapped = (current_rpy + 180.0) % 360.0 - 180.0
-        cv2.putText(canvas, f"ATTITUDE  R {wrapped[0]:+.1f}  P {wrapped[1]:+.1f}  Y {wrapped[2]:+.1f} deg", (1312, 670), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (177, 195, 214), 1, cv2.LINE_AA)
+        cv2.putText(canvas, f"ATTITUDE  R {wrapped[0]:+.1f}  P {wrapped[1]:+.1f}  Y {wrapped[2]:+.1f} deg", (1312, 672), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (177, 195, 214), 1, cv2.LINE_AA)
     cv2.putText(canvas, f"{now:05.2f} / {duration:05.2f} s   |   {filter_label}", (1312, 704), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (135, 151, 169), 1, cv2.LINE_AA)
 
     # Video-side legend and progress bar.
     cv2.rectangle(canvas, (0, 640), (1280, 720), (18, 22, 28), -1)
     fixed_axes = "start axes: Xs/Ys/Zs" if reference_frame == "start" else "board axes: Xb/Yb/Zb"
-    cv2.putText(canvas, f"X red   Y green   Z blue   |   fixed {fixed_axes}   moving camera axes: Xc/Yc/Zc", (28, 680), cv2.FONT_HERSHEY_SIMPLEX, 0.51, (203, 214, 225), 1, cv2.LINE_AA)
+    moving_axes = "gripper axes: Xg/Yg/Zg" if claw_values is not None else "camera axes: Xc/Yc/Zc"
+    cv2.putText(canvas, f"X red   Y green   Z blue   |   fixed {fixed_axes}   moving {moving_axes}", (28, 680), cv2.FONT_HERSHEY_SIMPLEX, 0.51, (203, 214, 225), 1, cv2.LINE_AA)
     cv2.line(canvas, (0, 714), (1280, 714), (43, 51, 61), 4)
     cv2.line(canvas, (0, 714), (int(1280 * np.clip(progress_ratio, 0.0, 1.0)), 714), (245, 185, 56), 4)
 
 
 def main() -> int:
     args = parse_args()
+    pose_quality = load_pose_quality(args.pose_csv)
+    claw_data = load_claw_angles(args.claw_angle_csv) if args.claw_angle_csv else None
+    claw_meshes = load_claw_meshes(args.claw_mesh_dir) if args.claw_mesh_dir else None
+    if (claw_data is None) != (claw_meshes is None):
+        raise ValueError("--claw-angle-csv and --claw-mesh-dir must be used together")
     if args.filter == "kalman":
         data = load_and_filter(args.pose_csv, 0.0, args.median_window)
         data = kalman_rts_filter(
@@ -545,6 +811,8 @@ def main() -> int:
         )
     else:
         data = load_and_filter(args.pose_csv, args.smooth, args.median_window)
+    if args.camera_to_gripper_json:
+        data = apply_gripper_extrinsic(data, args.camera_to_gripper_json)
     if args.reference_frame == "start":
         data = make_start_relative(data)
     capture = cv2.VideoCapture(str(args.video), cv2.CAP_FFMPEG)
@@ -565,6 +833,12 @@ def main() -> int:
     xyz_span = np.maximum(xyz_high - xyz_low, 1e-3)
     axis_length = float(np.clip(np.max(xyz_span) * 0.16, 0.10, 0.24))
     board_reference = np.vstack([np.zeros((1, 3)), np.eye(3) * axis_length])
+    if args.reference_frame == "board":
+        grid_half = (7 * 0.088 * 1.30 + 0.088) / 2.0
+        board_reference = np.vstack([
+            board_reference,
+            [[x, y, 0.0] for x in (-grid_half, grid_half) for y in (-grid_half, grid_half)],
+        ])
     fit_low = xyz_low - axis_length * 0.65
     fit_high = xyz_high + axis_length * 0.65
     fit_corners = np.asarray(
@@ -573,7 +847,10 @@ def main() -> int:
         dtype=np.float64,
     )
     if args.layout == "analysis":
-        projector_rect = (1312, 92, 576, 480)
+        # With a gripper model there is only one 3D view: the model lives in
+        # the trajectory coordinate system.  Give that unified view the full
+        # panel instead of duplicating the gripper in a separate inset.
+        projector_rect = (1312, 92, 576, 460) if claw_data is not None else (1312, 292, 576, 260)
         canvas_size = (720, 1920)
     else:
         projector_rect = (862, 94, 368, 276)
@@ -606,8 +883,31 @@ def main() -> int:
         if local_time + 1e-6 < output_index / args.fps:
             continue
         canvas = np.zeros((*canvas_size, 3), dtype=np.uint8)
-        canvas[:640, :1280] = cv2.resize(frame, (1280, 640), interpolation=cv2.INTER_AREA)
+        if args.video_fit == "contain":
+            source_h, source_w = frame.shape[:2]
+            scale = min(1280.0 / source_w, 640.0 / source_h)
+            fitted_w = max(1, int(round(source_w * scale)))
+            fitted_h = max(1, int(round(source_h * scale)))
+            fitted = cv2.resize(frame, (fitted_w, fitted_h), interpolation=cv2.INTER_AREA)
+            x0 = (1280 - fitted_w) // 2
+            y0 = (640 - fitted_h) // 2
+            canvas[y0:y0 + fitted_h, x0:x0 + fitted_w] = fitted
+        else:
+            canvas[:640, :1280] = cv2.resize(frame, (1280, 640), interpolation=cv2.INTER_AREA)
+        claw_values = None
+        claw_measured = False
+        claw_confidence = 0.0
+        if claw_data is not None:
+            claw_values, claw_measured, claw_confidence = sample_claw_angle(claw_data, now)
+            blend_rect(canvas, (24, 24, 555, 108), 0.72)
+            cv2.putText(canvas, f"GRIPPER OPENING  {claw_values[0]:5.1f} deg", (46, 70),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.88, (38, 232, 255), 2, cv2.LINE_AA)
+            label = "DOTS MEASURED" if claw_measured else "DOTS RECOVERED"
+            color = (88, 224, 133) if claw_measured else (72, 174, 240)
+            cv2.putText(canvas, f"J1 {claw_values[1]:+5.1f}  J2 {claw_values[2]:+5.1f} deg   {label}",
+                        (46, 108), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA)
         pose, state, opacity = sample_pose(data, now, args.prediction_max_age)
+        state = measurement_state(pose_quality, now, state)
         if args.state_label:
             state = args.state_label
         position = None if pose is None else pose[:3]
@@ -622,6 +922,7 @@ def main() -> int:
                 canvas, projector, history, position, orientation, state, opacity, now,
                 output_duration, local_time / output_duration, filter_label,
                 (xyz_low, xyz_high), axis_length, args.reference_frame,
+                claw_values, claw_measured, claw_confidence, claw_meshes,
             )
         else:
             draw_hud(
@@ -637,10 +938,11 @@ def main() -> int:
     encode.stdin.close()
     if encode.wait() != 0:
         raise SystemExit("video encoder failed")
+    audio_source = args.audio_source if args.audio_source is not None else args.video
     subprocess.run(
         [
             str(args.ffmpeg), "-v", "error", "-i", str(temporary), "-ss", str(start_time),
-            "-t", str(output_duration), "-i", str(args.video),
+            "-t", str(output_duration), "-i", str(audio_source),
             "-map", "0:v:0", "-map", "1:a?", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
             "-shortest", "-movflags", "+faststart", "-y", str(args.output),
         ],

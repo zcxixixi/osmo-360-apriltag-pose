@@ -657,6 +657,8 @@ dependencies = [
     { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "opencv-contrib-python" },
     { name = "py360convert" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
 
 [package.optional-dependencies]
@@ -676,6 +678,7 @@ requires-dist = [
     { name = "opencv-contrib-python", specifier = ">=4.10,<5" },
     { name = "py360convert", specifier = ">=1.0.4,<2" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3,<10" },
+    { name = "scipy", specifier = ">=1.13,<2" },
 ]
 provides-extras = ["test", "gpu"]
 
