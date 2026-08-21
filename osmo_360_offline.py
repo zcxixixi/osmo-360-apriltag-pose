@@ -12,9 +12,14 @@ import csv
 import json
 import logging
 import math
+import os
+import shutil
 import signal
+import subprocess
+import threading
 from collections import Counter
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -32,6 +37,115 @@ from projection_backends import ProjectionRequest, make_projection_backend
 
 LOG = logging.getLogger("osmo360.offline")
 STOP = False
+
+
+class VideoReader:
+    """Sequential OpenCV-compatible reader with optional NVIDIA NVDEC.
+
+    NVDEC performs HEVC entropy decoding on the GPU. Frames are downloaded as
+    BGR because AprilTag still runs on the CPU. Auto mode validates CUDA first
+    and falls back to OpenCV without changing frame timestamps or pixels used
+    by the pose pipeline.
+    """
+
+    def __init__(self, path: Path, decoder: str, ffmpeg_bin: Path | None):
+        self.path = path
+        self.decoder = "cpu"
+        self._process: subprocess.Popen | None = None
+        self._capture: cv2.VideoCapture | None = None
+        probe = cv2.VideoCapture(str(path), cv2.CAP_FFMPEG)
+        if not probe.isOpened():
+            raise RuntimeError(f"cannot open input: {path}")
+        self.width = int(probe.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.height = int(probe.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.fps = float(probe.get(cv2.CAP_PROP_FPS))
+        self.frame_count = int(probe.get(cv2.CAP_PROP_FRAME_COUNT))
+        probe.release()
+        if decoder in ("auto", "nvdec") and ffmpeg_bin is not None:
+            if self._start_nvdec(ffmpeg_bin):
+                self.decoder = "nvdec"
+                return
+            if decoder == "nvdec":
+                raise RuntimeError("NVDEC requested but CUDA decode validation failed")
+            LOG.warning("NVDEC unavailable; falling back to OpenCV CPU decode")
+        self._capture = cv2.VideoCapture(str(path), cv2.CAP_FFMPEG)
+        if not self._capture.isOpened():
+            raise RuntimeError(f"cannot open input: {path}")
+
+    def _start_nvdec(self, ffmpeg_bin: Path) -> bool:
+        ffprobe = ffmpeg_bin.with_name("ffprobe")
+        if not ffmpeg_bin.exists() or not ffprobe.exists():
+            return False
+        try:
+            pixel_format = subprocess.check_output(
+                [
+                    str(ffprobe), "-v", "error", "-select_streams", "v:0",
+                    "-show_entries", "stream=pix_fmt", "-of", "default=nw=1:nk=1",
+                    str(self.path),
+                ],
+                text=True,
+                timeout=15,
+            ).strip()
+            download_format = "p010le" if "10" in pixel_format else "nv12"
+            validation = subprocess.run(
+                [
+                    str(ffmpeg_bin), "-v", "error", "-hwaccel", "cuda",
+                    "-hwaccel_output_format", "cuda", "-i", str(self.path),
+                    "-map", "0:v:0", "-frames:v", "1", "-an", "-sn",
+                    "-vf", f"hwdownload,format={download_format}", "-f", "null", "-",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+            )
+            if validation.returncode:
+                return False
+            command = [
+                str(ffmpeg_bin), "-v", "error", "-hwaccel", "cuda",
+                "-hwaccel_output_format", "cuda", "-i", str(self.path),
+                "-map", "0:v:0", "-an", "-sn",
+                "-vf", f"hwdownload,format={download_format},format=bgr24",
+                "-pix_fmt", "bgr24", "-f", "rawvideo", "pipe:1",
+            ]
+            self._process = subprocess.Popen(
+                command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                bufsize=0,
+            )
+            return self._process.stdout is not None
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+    def is_opened(self) -> bool:
+        return self._process is not None or bool(
+            self._capture is not None and self._capture.isOpened()
+        )
+
+    def read(self) -> tuple[bool, np.ndarray | None]:
+        if self._capture is not None:
+            return self._capture.read()
+        if self._process is None or self._process.stdout is None:
+            return False, None
+        frame = np.empty((self.height, self.width, 3), dtype=np.uint8)
+        target = memoryview(frame).cast("B")
+        offset = 0
+        while offset < len(target):
+            count = self._process.stdout.readinto(target[offset:])
+            if not count:
+                return False, None
+            offset += count
+        return True, frame
+
+    def release(self) -> None:
+        if self._capture is not None:
+            self._capture.release()
+        if self._process is not None:
+            if self._process.stdout is not None:
+                self._process.stdout.close()
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
 
 
 @dataclass(frozen=True)
@@ -569,13 +683,12 @@ def parse_args() -> argparse.Namespace:
         help="stop after this many sampled frames (for small validation runs)",
     )
     p.add_argument(
-        "--full-scan", action="store_true",
-        help="reliable production mode: scan all high-resolution views",
+        "--full-scan", action=argparse.BooleanOptionalAction, default=True,
+        help="global recovery scan (enabled by default; use --no-full-scan for experiments)",
     )
     p.add_argument(
-        "--temporal-flow",
-        action="store_true",
-        help="track decoded tag corners between periodic AprilTag detections",
+        "--temporal-flow", action=argparse.BooleanOptionalAction, default=True,
+        help="bidirectional LK between periodic decodes (enabled by default)",
     )
     p.add_argument(
         "--imu-csv",
@@ -585,19 +698,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--redetect-interval",
         type=int,
-        default=5,
+        default=3,
         help="decode tags again after this many optical-flow frames",
     )
     p.add_argument(
         "--global-refresh-interval",
         type=int,
-        default=60,
+        default=150,
         help="run a non-destructive global refresh after this many tracked frames",
     )
     p.add_argument(
         "--recovery-scan-interval",
         type=int,
-        default=10,
+        default=15,
         help="while lost, run the global sweep only every N frames",
     )
     p.add_argument(
@@ -620,9 +733,21 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--projection-backend",
-        choices=("cpu", "cuda"),
-        default="cpu",
-        help="panorama projection backend; CUDA requires the gpu extra",
+        choices=("auto", "cpu", "cuda"),
+        default="auto",
+        help="panorama projection backend (default: CUDA with CPU fallback)",
+    )
+    p.add_argument(
+        "--decoder", choices=("auto", "cpu", "nvdec"), default="auto",
+        help="video decoder (default: NVIDIA NVDEC with CPU fallback)",
+    )
+    p.add_argument(
+        "--ffmpeg-bin", type=Path,
+        help="CUDA-enabled ffmpeg; defaults to bundled ffmpeg or PATH",
+    )
+    p.add_argument(
+        "--scan-workers", type=int, default=min(4, max(1, (os.cpu_count() or 4) // 4)),
+        help="parallel AprilTag workers for global views (default: up to 4)",
     )
     p.add_argument(
         "--max-speed",
@@ -653,6 +778,7 @@ def main() -> int:
         or args.redetect_interval <= 0
         or args.global_refresh_interval <= 0
         or args.recovery_scan_interval <= 0
+        or args.scan_workers <= 0
         or not 320 <= args.global_search_size <= args.view_size
         or args.horizontal_step_deg <= 0
         or 360 % args.horizontal_step_deg != 0
@@ -673,24 +799,33 @@ def main() -> int:
         ],
     )
     signal.signal(signal.SIGINT, lambda *_: globals().__setitem__("STOP", True))
-    cap = cv2.VideoCapture(str(args.input), cv2.CAP_FFMPEG)
-    if not cap.isOpened():
-        LOG.error("cannot open input: %s", args.input)
+    bundled_ffmpeg = Path("work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg")
+    ffmpeg_bin = args.ffmpeg_bin
+    if ffmpeg_bin is None:
+        ffmpeg_bin = bundled_ffmpeg if bundled_ffmpeg.exists() else (
+            Path(shutil.which("ffmpeg")) if shutil.which("ffmpeg") else None
+        )
+    try:
+        cap = VideoReader(args.input, args.decoder, ffmpeg_bin)
+    except RuntimeError as exc:
+        LOG.error("cannot initialize video decoder: %s", exc)
         return 2
-    width, height = (
-        int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-        int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-    )
-    source_fps = float(cap.get(cv2.CAP_PROP_FPS))
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    width, height = cap.width, cap.height
+    source_fps = cap.fps
+    total = cap.frame_count
+    LOG.info("video decoder: %s", cap.decoder)
     if width != 2 * height:
         LOG.error("expected 2:1 equirectangular input, got %dx%d", width, height)
         return 3
+    projection_name = "cuda" if args.projection_backend == "auto" else args.projection_backend
     try:
-        projection_backend = make_projection_backend(args.projection_backend)
+        projection_backend = make_projection_backend(projection_name)
     except RuntimeError as exc:
-        LOG.error("cannot initialize %s projection: %s", args.projection_backend, exc)
-        return 4
+        if args.projection_backend != "auto":
+            LOG.error("cannot initialize %s projection: %s", projection_name, exc)
+            return 4
+        LOG.warning("CUDA projection unavailable (%s); falling back to CPU", exc)
+        projection_backend = make_projection_backend("cpu")
     LOG.info("projection backend: %s", projection_backend.name)
     step = max(1, round(source_fps / args.sample_fps)) if source_fps > 0 else 1
     if args.tag_map:
@@ -701,6 +836,11 @@ def main() -> int:
         grid = Grid(args.rows, args.cols, args.tag_size, args.spacing, args.first_id)
         expected_ids = list(range(args.first_id, args.first_id + args.rows * args.cols))
     detector = make_detector()
+    scan_executor = ThreadPoolExecutor(
+        max_workers=args.scan_workers, thread_name_prefix="apriltag-scan"
+    )
+    scan_thread = threading.local()
+    LOG.info("global scan workers: %d", args.scan_workers)
     imu_quaternions = load_imu_quaternions(args.imu_csv)
     if args.imu_csv:
         LOG.info("loaded %d per-frame IMU orientations", len(imu_quaternions))
@@ -763,6 +903,33 @@ def main() -> int:
         }
         return detections, pose, record
 
+    def evaluate_projected(
+        item: tuple[View, np.ndarray, int],
+    ) -> tuple[View, np.ndarray, list[dict], Pose | None, dict]:
+        view, perspective, size = item
+        worker_detector = getattr(scan_thread, "detector", None)
+        if worker_detector is None:
+            worker_detector = make_detector()
+            scan_thread.detector = worker_detector
+        detections = detect_view(perspective, worker_detector, grid)
+        pose = solve_view(
+            detections, view, size, args.min_tags, args.max_rmse_px,
+            args.pnp_points, args.pnp_solver,
+        )
+        record = {
+            "view": asdict(view),
+            "size": size,
+            "detections": [
+                {"id": detection["id"], "corners_px": detection["corners_px"].round(2).tolist()}
+                for detection in detections
+            ],
+            "pose": None if pose is None else {
+                "xyz": pose.xyz.tolist(), "rpy": pose.rpy,
+                "inliers": pose.inliers, "rmse": pose.rmse,
+            },
+        }
+        return view, perspective, detections, pose, record
+
     def evaluate_views(
         pano: np.ndarray, selected_views: tuple[View, ...], size: int
     ) -> list[tuple[View, list[dict], Pose | None, dict]]:
@@ -773,10 +940,19 @@ def main() -> int:
                 for view in selected_views
             ],
         )
-        return [
-            (view, *evaluate_view(pano, view, size, perspective))
+        payload = [
+            (view, perspective, size)
             for view, perspective in zip(selected_views, perspectives)
         ]
+        results = list(scan_executor.map(evaluate_projected, payload))
+        output = []
+        # Aggregate shared candidate state deterministically in view order.
+        for view, perspective, detections, pose, record in results:
+            if pose is not None:
+                candidate_sources.append((pose, view, perspective, detections))
+                candidate_measurements[id(pose)] = "direct"
+            output.append((view, detections, pose, record))
+        return output
 
     def recentered_view(base: View, detections: list[dict], size: int) -> View:
         centers = np.asarray([d["center_px"] for d in detections], dtype=float)
@@ -1202,6 +1378,7 @@ def main() -> int:
                 )
             frame_no += 1
     cap.release()
+    scan_executor.shutdown(wait=True)
     expected = expected_ids
     summary = {
         "input": str(args.input.resolve()),
@@ -1227,6 +1404,8 @@ def main() -> int:
         "pnp_points": args.pnp_points,
         "pnp_solver": args.pnp_solver,
         "projection_backend": projection_backend.name,
+        "video_decoder": cap.decoder,
+        "scan_workers": args.scan_workers,
         "temporal_flow": args.temporal_flow,
         "imu_guided_view": bool(imu_quaternions),
         "redetect_interval": args.redetect_interval,

@@ -102,9 +102,12 @@ def vision_command(args: argparse.Namespace, video: Path, paths: PipelinePaths, 
         "--tag-map", str(args.tag_map), "--sample-fps", str(args.sample_fps),
         "--min-tags", "2", "--max-rmse-px", str(args.max_rmse_px),
         "--view-size", str(args.view_size), "--pnp-points", "corners",
-        "--pnp-solver", "ippe", "--full-scan",
+        "--pnp-solver", "ippe", "--full-scan", "--temporal-flow",
+        "--redetect-interval", str(args.redetect_interval),
+        "--global-refresh-interval", str(args.global_refresh_interval),
         "--global-search-size", str(args.global_search_size),
         "--recovery-scan-interval", str(args.recovery_scan_interval),
+        "--decoder", args.decoder, "--scan-workers", str(args.scan_workers),
         "--horizontal-step-deg", "30", "--horizontal-fov-deg", "125",
         "--projection-backend", backend, "--max-speed", str(args.max_speed),
         "--official-stitched", "--output-dir", str(paths.run_dir),
@@ -120,6 +123,7 @@ def evaluation_command(args: argparse.Namespace, motive: Path, paths: PipelinePa
         "--search-radius", str(args.time_search_radius),
         "--calibration-fraction", str(args.calibration_fraction),
         "--min-tags", "2", "--min-test-samples", str(args.min_test_samples),
+        "--include-optical-flow",
     ]
 
 
@@ -175,6 +179,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--view-size", type=int, default=1440)
     parser.add_argument("--global-search-size", type=int, default=720)
     parser.add_argument("--recovery-scan-interval", type=int, default=15)
+    parser.add_argument("--redetect-interval", type=int, default=3)
+    parser.add_argument("--global-refresh-interval", type=int, default=150)
+    parser.add_argument("--decoder", choices=("auto", "cpu", "nvdec"), default="auto")
+    parser.add_argument("--scan-workers", type=int, default=4)
     parser.add_argument("--max-rmse-px", type=float, default=8.0)
     parser.add_argument("--max-speed", type=float, default=10.0)
     parser.add_argument("--initial-time-offset", type=float, default=-3.852)
@@ -226,7 +234,9 @@ def main() -> int:
         "parameters": {
             key: getattr(args, key) for key in (
                 "sample_fps", "view_size", "global_search_size",
-                "recovery_scan_interval", "max_rmse_px", "max_speed",
+                "recovery_scan_interval", "redetect_interval",
+                "global_refresh_interval", "decoder", "scan_workers",
+                "max_rmse_px", "max_speed",
                 "initial_time_offset", "time_search_radius", "calibration_fraction",
                 "min_test_samples", "output_fps",
             )

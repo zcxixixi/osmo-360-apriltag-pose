@@ -19,6 +19,10 @@ def arguments() -> Namespace:
         view_size=1440,
         global_search_size=720,
         recovery_scan_interval=15,
+        redetect_interval=3,
+        global_refresh_interval=150,
+        decoder="auto",
+        scan_workers=4,
         max_speed=10.0,
         initial_time_offset=-3.852,
         time_search_radius=1.0,
@@ -49,8 +53,12 @@ def test_pipeline_commands_preserve_formal_evaluation_contract(tmp_path: Path):
     assert vision[vision.index("--sample-fps") + 1] == "50.0"
     assert vision[vision.index("--min-tags") + 1] == "2"
     assert vision[vision.index("--projection-backend") + 1] == "cuda"
-    assert "--temporal-flow" not in vision
+    assert "--temporal-flow" in vision
+    assert vision[vision.index("--redetect-interval") + 1] == "3"
+    assert vision[vision.index("--decoder") + 1] == "auto"
+    assert vision[vision.index("--scan-workers") + 1] == "4"
     assert evaluation[evaluation.index("--calibration-fraction") + 1] == "0.3"
+    assert "--include-optical-flow" in evaluation
     assert evaluation[evaluation.index("--min-test-samples") + 1] == "200"
     assert render[render.index("--gripper-mesh-dir") + 1] == str(DEFAULT_GRIPPER_MESHES)
     assert render[render.index("--output-fps") + 1] == "25.0"

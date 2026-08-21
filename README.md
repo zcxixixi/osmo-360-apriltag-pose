@@ -168,7 +168,7 @@ uv sync --extra gpu
 
 主要输出：
 
-- `visual/pose.csv`：50 fps 直接测量及 LOST 状态；
+- `visual/pose.csv`：50 fps 直接解码、双向光流测量及 LOST 状态（由 `measurement_source` 区分）；
 - `evaluation/mocap_evaluation.json`：正式精度与质量门槛；
 - `evaluation/matched_errors.csv`：逐帧真值/视觉匹配；
 - `evaluation/optitrack_vs_visual_gripper_kalman_rts.mp4`：双夹爪对比视频；
@@ -180,22 +180,25 @@ uv sync --extra gpu
 ### 分阶段手动运行
 
 ```bash
-# 视觉直接测量；配置中包含 130 → 131 → 129 → 128 的实际排列
+# 默认高速安全模式：NVDEC/CUDA 自动回退、4路全局扫描、50 fps双向LK、每3帧重解码
+# 配置中包含 130 → 131 → 129 → 128 的实际排列
 uv run python osmo_360_offline.py input.mp4 \
   --tag-map mocap-evaluation/config/insta360_x6_tag_map.json \
   --sample-fps 50 --min-tags 2 --pnp-points corners --pnp-solver ippe \
-  --full-scan --view-size 1440 --max-rmse-px 8 --official-stitched
+  --view-size 1440 --max-rmse-px 8 --global-search-size 720 \
+  --horizontal-fov-deg 125 --max-speed 10 --official-stitched
 
-# 前 30% 求刚体→相机外参，后 70% 独立统计
+# 前30%求刚体→相机外参，后70%独立统计；显式审计direct+optical_flow
 uv run python evaluate_insta360_mocap.py session/pose.csv motive.csv \
-  --output-dir evaluation-result --initial-time-offset -3.852
+  --output-dir evaluation-result --initial-time-offset -3.852 \
+  --include-optical-flow
 
 # 生成带 MEASURED / LOST / RECOVERED 审计状态的同步视频
 uv run python render_mocap_comparison.py input.mp4 session/pose.csv evaluation-result \
   --output evaluation-result/comparison.mp4
 ```
 
-只有线速度/角速度综合相关性不低于 0.80、时间偏移不确定度不高于 20 ms、且测试段直接双 Tag 匹配不少于 200 帧时，报告才标记为 `FORMAL_ACCURACY`；否则所有误差只标记为 `DIAGNOSTIC_ONLY`。
+只有线速度/角速度综合相关性不低于 0.80、时间偏移不确定度不高于20 ms、且测试段匹配不少于200帧时，报告才标记为 `FORMAL_ACCURACY`；否则所有误差只标记为 `DIAGNOSTIC_ONLY`。默认正式管线会同时评估 `direct` 与经过双向一致性检查的 `optical_flow`，报告仍单列直接解码覆盖率。使用 `--no-temporal-flow --decoder cpu --scan-workers 1` 可复现逐帧CPU基线。
 
 ## 注意
 

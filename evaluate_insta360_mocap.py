@@ -60,20 +60,25 @@ def _false_runs(mask: np.ndarray) -> list[tuple[int, int]]:
     return [(int(left), int(right - 1)) for left, right in changes.reshape(-1, 2)]
 
 
-def visual_audit(rows: list[dict[str, str]], min_tags: int) -> tuple[dict, set[int]]:
+def visual_audit(
+    rows: list[dict[str, str]], min_tags: int,
+    accepted_sources: tuple[str, ...] = ("", "direct"),
+) -> tuple[dict, set[int]]:
     times = np.asarray([float(row["timestamp"]) for row in rows], dtype=float)
-    direct = np.asarray([
+    geometrically_valid = np.asarray([
         row.get("quality_status") == "valid"
         and bool(row.get("camera_x_m"))
         and int(row.get("detected_tag_count") or 0) >= min_tags
-        and row.get("measurement_source", "direct") in ("", "direct")
         for row in rows
     ])
+    sources = np.asarray([row.get("measurement_source", "direct") for row in rows])
+    direct = geometrically_valid & np.isin(sources, ("", "direct"))
+    accepted = geometrically_valid & np.isin(sources, accepted_sources)
     nominal_dt = float(np.median(np.diff(times))) if len(times) > 1 else 0.0
-    lost_runs = _false_runs(direct)
+    lost_runs = _false_runs(accepted)
     durations = [times[right] - times[left] + nominal_dt for left, right in lost_runs]
     recovery_indices = {
-        right + 1 for left, right in lost_runs if right + 1 < len(rows) and direct[right + 1]
+        right + 1 for left, right in lost_runs if right + 1 < len(rows) and accepted[right + 1]
     }
     noninitial = [
         duration for (left, _right), duration in zip(lost_runs, durations) if left > 0
@@ -82,6 +87,9 @@ def visual_audit(rows: list[dict[str, str]], min_tags: int) -> tuple[dict, set[i
         "sampled_frames": int(len(rows)),
         "direct_multi_tag_frames": int(direct.sum()),
         "direct_coverage_ratio": float(direct.mean()) if len(direct) else 0.0,
+        "accepted_pose_frames": int(accepted.sum()),
+        "accepted_coverage_ratio": float(accepted.mean()) if len(accepted) else 0.0,
+        "accepted_measurement_sources": list(accepted_sources),
         "lost_intervals": int(len(lost_runs)),
         "longest_lost_s": float(max(durations, default=0.0)),
         "longest_lost_after_first_lock_s": float(max(noninitial, default=0.0)),
@@ -202,7 +210,10 @@ def write_normalized_mocap(path: Path, motive: MotiveData) -> None:
                 writer.writerow((int(motive.frames[index]), f"{motive.all_times[index]:.6f}", "", "", "", "", "", "", "", 0))
 
 
-def load_visual(path: Path, min_tags: int = 2) -> tuple[PoseSeries, list[dict[str, str]]]:
+def load_visual(
+    path: Path, min_tags: int = 2,
+    accepted_sources: tuple[str, ...] = ("", "direct"),
+) -> tuple[PoseSeries, list[dict[str, str]]]:
     with path.open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
     selected = [
@@ -210,7 +221,7 @@ def load_visual(path: Path, min_tags: int = 2) -> tuple[PoseSeries, list[dict[st
         if row.get("quality_status") == "valid"
         and row.get("camera_x_m")
         and int(row.get("detected_tag_count") or 0) >= min_tags
-        and row.get("measurement_source", "direct") in ("", "direct")
+        and row.get("measurement_source", "direct") in accepted_sources
     ]
     if len(selected) < 20:
         raise ValueError("fewer than 20 direct multi-tag visual poses")
@@ -500,13 +511,25 @@ def main() -> int:
     parser.add_argument("--calibration-fraction", type=float, default=0.30)
     parser.add_argument("--min-tags", type=int, default=2)
     parser.add_argument("--min-test-samples", type=int, default=200)
+    parser.add_argument(
+        "--include-optical-flow", action="store_true",
+        help="evaluate LK-tracked measurements in addition to direct decodes",
+    )
     args = parser.parse_args()
     if not 0.1 <= args.calibration_fraction <= 0.6:
         raise SystemExit("calibration fraction must be in 0.1..0.6")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    visual, visual_rows = load_visual(args.visual_csv, args.min_tags)
-    visual_quality, recovery_frames = visual_audit(visual_rows, args.min_tags)
+    accepted_sources = (
+        ("", "direct", "optical_flow")
+        if args.include_optical_flow else ("", "direct")
+    )
+    visual, visual_rows = load_visual(
+        args.visual_csv, args.min_tags, accepted_sources
+    )
+    visual_quality, recovery_frames = visual_audit(
+        visual_rows, args.min_tags, accepted_sources
+    )
     motive = parse_motive(args.motive_csv)
     write_normalized_mocap(args.output_dir / "mocap_normalized.csv", motive)
     offset, correlation, uncertainty, correlation_components, offset_curve = estimate_time_offset(
