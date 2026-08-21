@@ -139,6 +139,27 @@ dataset/
 
 只有运动相关性、同步不确定度和测试段直接双 Tag 样本数均满足门槛时，结果才标记为 `FORMAL_ACCURACY`。启用光流参与误差计算时会强制标记为 `DIAGNOSTIC_ONLY`。
 
+## 双相机配对与坐标对齐审核
+
+输入左右两台相机的视频及6DoF CSV，以左相机为参考坐标系，自动估计时间偏移和 `T_left_from_right`：
+
+```bash
+./dual-camera-align-audit \
+  left.mp4 left/annotations/trajectory_6dof.csv \
+  right.mp4 right/annotations/trajectory_6dof.csv \
+  --output-dir dual-camera-pairs/capture-001
+```
+
+工具会生成一个共享的 UUIDv4 `capture_pair_id`，并额外为左右视频生成独立 `asset_id`。同一个 `capture_pair_id` 会写入配对清单、审核报告、资产 sidecar 和逐帧合并 CSV，用于明确两个视频属于同一次同步采集。复算时可使用 `--capture-pair-id <UUIDv4>` 保持配对身份不变。
+
+主要输出：
+
+- `capture_pair.json`：双视频配对关系和共享 UUIDv4；
+- `alignment_report.json`：时间偏移、同步可信度、右→左 SE(3) 和审核结果；
+- `aligned_trajectories.csv`：左轨迹、右原始轨迹、右对齐轨迹和逐帧残差；
+- `alignment_audit.png`：同一左坐标系中的两条轨迹及位置/姿态误差；
+- `left_asset.json` / `right_asset.json`：可随视频一起交付的身份 sidecar。
+
 ## 运维与复现
 
 - `--dry-run`：检查输入并打印将执行的命令；
