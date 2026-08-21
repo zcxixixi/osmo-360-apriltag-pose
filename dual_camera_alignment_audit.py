@@ -418,6 +418,10 @@ def parse_args() -> argparse.Namespace:
         "--right-source", type=Path,
         help="original camera container for wall-clock pairing audit",
     )
+    parser.add_argument(
+        "--require-wall-clock-overlap", action="store_true",
+        help="reject non-overlapping creation_time metadata (only for clock-synchronized cameras)",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--capture-pair-id", help="existing UUIDv4; generated when omitted")
     parser.add_argument("--initial-time-offset", type=float, default=0.0)
@@ -468,10 +472,16 @@ def main() -> int:
             right_capture = probe_capture_interval(args.right_source)
             overlap = capture_overlap_s(left_capture, right_capture)
             if overlap <= 0:
-                raise ValueError(
+                message = (
                     "recordings do not overlap in wall-clock time: "
                     f"left={left_capture.start.isoformat()}..{left_capture.end.isoformat()}, "
                     f"right={right_capture.start.isoformat()}..{right_capture.end.isoformat()}"
+                )
+                if args.require_wall_clock_overlap:
+                    raise ValueError(message)
+                print(
+                    "WARNING: " + message
+                    + "; camera clocks may be unsynchronized, continuing with signal-based sync",
                 )
         left = load_trajectory(args.left_trajectory)
         right = load_trajectory(args.right_trajectory)
