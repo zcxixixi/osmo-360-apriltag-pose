@@ -1,0 +1,44 @@
+{
+  "schema_version": "osmo-gripper-hardware-model/1.0",
+  "model": "DJI Osmo 360",
+  "official_camera_body_dimensions_mm": [61.0, 36.3, 81.0],
+  "official_source": "https://www.dji.com/360/specs",
+  "frames": {
+    "base_link": {
+      "description": "URDF root; +X points from the two pivots toward the fingertips, +Y spans the jaws, +Z is normal to the gripper plane"
+    },
+    "tcp": {
+      "translation_in_base_m": [0.1356, 0.0, 0.0101],
+      "quaternion_in_base_xyzw": [0.0, 0.0, 0.0, 1.0],
+      "status": "CAD derived; user physically confirmed approximately"
+    },
+    "pivot_midpoint": {
+      "translation_in_base_m": [0.015, 0.0, 0.0154],
+      "pivot_spacing_mm": 28.5
+    }
+  },
+  "nominal_closed_joint_deg": [-37.3514, 36.8178],
+  "mounts": {
+    "left": {
+      "camera_origin_in_base_m": [-0.0037191275, -0.0165884597, 0.0834498696],
+      "camera_quaternion_in_base_xyzw": [-0.5617264012, 0.6382733141, -0.3065926700, 0.4278686264],
+      "camera_to_tcp_translation_in_camera_m": [-0.0018366411, 0.0036181471, 0.1582679229],
+      "camera_to_tcp_quaternion_xyzw": [-0.5617264012, 0.6382733141, -0.3065926700, -0.4278686264],
+      "angular_fit_rmse_deg": 0.3939221456,
+      "source": "factory fisheye calibration + fixed 24 mm Tag ID 2 + CAD tag-to-base transform"
+    },
+    "right": {
+      "camera_origin_in_base_m": [-0.0180989655, -0.0002582996, 0.0736937835],
+      "camera_quaternion_in_base_xyzw": [-0.5580830275, 0.5702709776, -0.4351302008, 0.4171283435],
+      "camera_to_tcp_translation_in_camera_m": [-0.0053611611, 0.0191307457, 0.1651450287],
+      "camera_to_tcp_quaternion_xyzw": [-0.5580830275, 0.5702709776, -0.4351302008, -0.4171283435],
+      "angular_fit_rmse_deg": 0.0744241441,
+      "source": "factory fisheye calibration + fixed 24 mm Tag ID 2 + CAD tag-to-base transform"
+    }
+  },
+  "accuracy": {
+    "usage": "trajectory training and visualization",
+    "metrology_truth": false,
+    "note": "DJI factory metadata supplies lens intrinsics and rotations but not a public lens-center translation; Tag observation anchors the practical camera origin."
+  }
+}

@@ -440,9 +440,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-interpolation-gap", type=float, default=0.10)
     parser.add_argument(
-        "--alignment-model", choices=("rigid-rig", "world-frame"),
+        "--alignment-model", choices=("rigid-rig", "world-frame", "shared-world"),
         default="rigid-rig",
-        help="rigid-rig estimates a fixed camera-to-camera extrinsic; world-frame left-multiplies coordinates",
+        help=("rigid-rig estimates a fixed camera-to-camera extrinsic; "
+              "world-frame fits a left-multiplication; shared-world preserves "
+              "trajectories already expressed in the same tag-map frame"),
     )
     parser.add_argument("--min-alignment-samples", type=int, default=30)
     parser.add_argument("--max-position-p95-m", type=float, default=0.05)
@@ -514,7 +516,11 @@ def main() -> int:
     fit_source = "both_direct" if both_direct.sum() >= args.min_alignment_samples else "all_valid"
     eligible = both_direct if fit_source == "both_direct" else matched
     try:
-        if args.alignment_model == "rigid-rig":
+        if args.alignment_model == "shared-world":
+            rotation = Rotation.identity()
+            translation = np.zeros(3, dtype=float)
+            inliers = eligible.copy()
+        elif args.alignment_model == "rigid-rig":
             rotation, translation, inliers = estimate_rigid_camera_extrinsic(
                 left.positions, left.rotations,
                 sampled.positions, sampled.rotations, eligible,
@@ -537,8 +543,12 @@ def main() -> int:
     else:
         aligned_positions = rotation.apply(sampled.positions[matched]) + translation
         aligned_rotations = rotation * sampled.rotations[matched]
-        alignment_definition = "pose_left = T_left_from_right * pose_right"
-        matrix_name = "T_left_from_right"
+        if args.alignment_model == "shared-world":
+            alignment_definition = "pose_shared = pose_tagmap (identity; no cross-trajectory fit)"
+            matrix_name = "T_shared_from_right_tagmap"
+        else:
+            alignment_definition = "pose_left = T_left_from_right * pose_right"
+            matrix_name = "T_left_from_right"
     left_positions = left.positions[matched]
     left_rotations = left.rotations[matched]
     position_error = np.linalg.norm(left_positions - aligned_positions, axis=1)
@@ -555,10 +565,12 @@ def main() -> int:
         "sync_uncertainty_at_most_20ms": at_most(uncertainty, 0.020),
         "enough_alignment_samples": int(inliers.sum()) >= args.min_alignment_samples,
         "position_p95_within_limit": (
+            args.alignment_model == "shared-world" or
             position_stats["p95"] is not None
             and position_stats["p95"] <= args.max_position_p95_m
         ),
         "orientation_p95_within_limit": (
+            args.alignment_model == "shared-world" or
             orientation_stats["p95"] is not None
             and orientation_stats["p95"] <= args.max_orientation_p95_deg
         ),
@@ -578,7 +590,9 @@ def main() -> int:
         "capture_pair_id": pair_id,
         "alignment_run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "reference_frame": "left_camera",
+        "reference_frame": (
+            "shared_tagmap" if args.alignment_model == "shared-world" else "left_camera"
+        ),
         "left": {**left_identity, "trajectory": str(args.left_trajectory.resolve())},
         "right": {**right_identity, "trajectory": str(args.right_trajectory.resolve())},
         "time_alignment": {

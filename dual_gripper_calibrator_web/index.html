@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>双夹爪 3D 相对位姿标定</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, "Noto Sans SC", system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; overflow: hidden; background: #080b10; color: #edf3f8; }
+    #viewport { position: fixed; inset: 0 330px 0 0; }
+    #panel { position: fixed; top: 0; right: 0; bottom: 0; width: 330px; padding: 20px; overflow: auto; background: #111720; border-left: 1px solid #2c3746; }
+    h1 { margin: 0; font-size: 19px; }
+    .sub { margin: 7px 0 18px; color: #8998aa; font-size: 12px; line-height: 1.5; }
+    section { padding: 14px 0; border-top: 1px solid #27313d; }
+    section h2 { margin: 0 0 10px; color: #afbdca; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+    .toolbar, .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    button { min-height: 36px; border: 1px solid #344255; border-radius: 7px; background: #1a2330; color: #eaf1f7; cursor: pointer; }
+    button:hover { border-color: #62baff; }
+    button.active { color: #051019; background: #62baff; border-color: #62baff; font-weight: 700; }
+    button.primary { width: 100%; color: #06180e; background: #53db8b; border-color: #53db8b; font-weight: 700; }
+    .fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+    label { display: grid; gap: 5px; color: #8391a2; font-size: 11px; }
+    input[type=number], input[type=text] { width: 100%; padding: 8px; border: 1px solid #344255; border-radius: 6px; background: #0b1017; color: #fff; }
+    input[type=range] { width: 100%; accent-color: #62baff; }
+    .slider { margin-top: 10px; }
+    .slider b { color: #f5ce57; font-variant-numeric: tabular-nums; }
+    .metrics { display: grid; gap: 6px; font-size: 12px; color: #aab7c4; }
+    .metrics span { float: right; color: #fff; font-variant-numeric: tabular-nums; }
+    .hint { position: fixed; left: 18px; bottom: 16px; padding: 10px 13px; border: 1px solid #2c3746; border-radius: 8px; background: rgba(11,15,21,.88); color: #aab7c4; font-size: 12px; pointer-events: none; }
+    #status { min-height: 34px; padding-top: 9px; color: #76dba0; font-size: 12px; word-break: break-all; }
+    .cyan { color: #48d7ff; } .green { color: #66df8f; }
+    @media (max-width: 800px) { #viewport { inset: 0 0 340px; } #panel { top: auto; left: 0; width: auto; height: 340px; } }
+  </style>
+</head>
+<body>
+  <div id="viewport"></div>
+  <aside id="panel">
+    <h1>双夹爪 3D 标定</h1>
+    <p class="sub">坐标原点固定在两个夹爪基座的中点；拖动<span class="green">右夹爪</span>时，<span class="cyan">左夹爪</span>会保持中心对称。</p>
+    <section>
+      <h2>当前编辑对象</h2>
+      <div class="pair">
+        <button id="selectLeft">左夹爪</button>
+        <button id="selectRight" class="active">右夹爪</button>
+      </div>
+    </section>
+    <section>
+      <h2>鼠标工具</h2>
+      <div class="toolbar">
+        <button id="translate" class="active">移动 W</button>
+        <button id="rotate">旋转 E</button>
+        <button id="face">一键面对面</button>
+        <button id="reset">重置</button>
+      </div>
+    </section>
+    <section>
+      <h2 id="poseTitle">右夹爪 · 中心坐标 mm</h2>
+      <div class="fields">
+        <label>X<input id="px" type="number" step="1"></label>
+        <label>Y<input id="py" type="number" step="1"></label>
+        <label>Z<input id="pz" type="number" step="1"></label>
+      </div>
+      <h2 style="margin-top:14px">当前夹爪姿态 deg · XYZ</h2>
+      <div class="fields">
+        <label>Roll<input id="rx" type="number" step="1"></label>
+        <label>Pitch<input id="ry" type="number" step="1"></label>
+        <label>Yaw<input id="rz" type="number" step="1"></label>
+      </div>
+    </section>
+    <section>
+      <h2>开合预览</h2>
+      <label class="slider">左夹爪 <b id="leftAngleText">20.0°</b><input id="leftAngle" type="range" min="0" max="75" step="0.1" value="20"></label>
+      <label class="slider">右夹爪 <b id="rightAngleText">20.0°</b><input id="rightAngle" type="range" min="0" max="75" step="0.1" value="20"></label>
+    </section>
+    <section>
+      <h2>当前关系</h2>
+      <div class="metrics">
+        <div>基座距离 <span id="distance">—</span></div>
+        <div>面对方向夹角 <span id="facing">—</span></div>
+      </div>
+    </section>
+    <section>
+      <label>备注<input id="note" type="text" placeholder="例如：左、右夹爪面对面"></label>
+      <button id="save" class="primary" style="margin-top:12px">保存外参 JSON</button>
+      <div id="status"></div>
+    </section>
+  </aside>
+  <div class="hint">左键旋转视角 · 右键平移视角 · 滚轮缩放 · 拖动彩色轴调整右夹爪</div>
+
+  <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { TransformControls } from 'three/addons/controls/TransformControls.js';
+    import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+
+    const host = document.getElementById('viewport');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x080b10);
+    const camera = new THREE.PerspectiveCamera(45, 1, .01, 20);
+    camera.position.set(.75, -.8, .58);
+    const renderer = new THREE.WebGLRenderer({antialias:true});
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    host.appendChild(renderer.domElement);
+    const orbit = new OrbitControls(camera, renderer.domElement);
+    orbit.target.set(0, 0, .04); orbit.enableDamping = true;
+    scene.add(new THREE.HemisphereLight(0xcde7ff, 0x28313c, 2.2));
+    const key = new THREE.DirectionalLight(0xffffff, 3.2); key.position.set(.5,-.4,1); key.castShadow=true; scene.add(key);
+    scene.add(new THREE.GridHelper(1.6, 32, 0x536172, 0x222b36));
+    const axes = new THREE.AxesHelper(.18); scene.add(axes);
+
+    const loader = new STLLoader();
+    const geometries = {};
+    await Promise.all(['base_link.STL','Link1.STL','Link2.STL','Link3.STL'].map(async name => {
+      geometries[name] = await loader.loadAsync('/mesh/' + name);
+      geometries[name].computeVertexNormals();
+    }));
+
+    function material(color, opacity=.9) { return new THREE.MeshStandardMaterial({color, roughness:.55, metalness:.18, transparent:true, opacity, side:THREE.DoubleSide}); }
+    function buildGripper(color) {
+      const root = new THREE.Group();
+      const base = new THREE.Mesh(geometries['base_link.STL'], material(color)); base.castShadow=true; root.add(base);
+      const fixed = new THREE.Group(); fixed.position.set(.02625,0,.0196); const link3 = new THREE.Mesh(geometries['Link3.STL'], material(color,.72)); fixed.add(link3); root.add(fixed);
+      const leftPivot = new THREE.Group(); leftPivot.position.set(.015,.01425,.0151); leftPivot.add(new THREE.Mesh(geometries['Link1.STL'], material(0x64df8f,.86))); root.add(leftPivot);
+      const rightPivot = new THREE.Group(); rightPivot.position.set(.015,-.01425,.0157); rightPivot.add(new THREE.Mesh(geometries['Link2.STL'], material(0xf4ca50,.86))); root.add(rightPivot);
+      root.userData = {leftPivot,rightPivot};
+      root.add(new THREE.AxesHelper(.11));
+      return root;
+    }
+    const left = buildGripper(0x35c7f2); left.position.set(-.175,0,0); scene.add(left);
+    const right = buildGripper(0x55d883); right.position.set(.175,0,0); right.rotation.z=Math.PI; scene.add(right);
+    const lineGeometry = new THREE.BufferGeometry(); const line = new THREE.Line(lineGeometry, new THREE.LineBasicMaterial({color:0xf0b84b})); scene.add(line);
+
+    let selected=right;
+    const transform = new TransformControls(camera, renderer.domElement); transform.attach(selected); transform.setSpace('local'); transform.setTranslationSnap(.001); transform.setRotationSnap(THREE.MathUtils.degToRad(1)); scene.add(transform.getHelper());
+    transform.addEventListener('dragging-changed', e => orbit.enabled=!e.value);
+    transform.addEventListener('objectChange', ()=>{const other=selected===left?right:left;other.position.copy(selected.position).multiplyScalar(-1);syncInputs();});
+
+    const ids = ['px','py','pz','rx','ry','rz']; const el = Object.fromEntries(ids.map(id => [id,document.getElementById(id)]));
+    function wrapDeg(value){ return ((THREE.MathUtils.radToDeg(value)+180)%360+360)%360-180; }
+    function syncInputs(){
+      const relativePosition=right.position.clone().sub(left.position);
+      [el.px.value,el.py.value,el.pz.value]=selected.position.toArray().map(v=>(v*1000).toFixed(1));
+      [el.rx.value,el.ry.value,el.rz.value]=[selected.rotation.x,selected.rotation.y,selected.rotation.z].map(v=>wrapDeg(v).toFixed(1));
+      lineGeometry.setFromPoints([left.position.clone(),right.position.clone()]);
+      document.getElementById('distance').textContent=(relativePosition.length()*1000).toFixed(1)+' mm';
+      const lf=new THREE.Vector3(1,0,0).applyQuaternion(left.quaternion); const rf=new THREE.Vector3(1,0,0).applyQuaternion(right.quaternion);
+      document.getElementById('facing').textContent=THREE.MathUtils.radToDeg(lf.angleTo(rf)).toFixed(1)+'°';
+    }
+    function applyInputs(){selected.position.set(+el.px.value/1000,+el.py.value/1000,+el.pz.value/1000);const other=selected===left?right:left;other.position.copy(selected.position).multiplyScalar(-1);selected.rotation.set(...['rx','ry','rz'].map(id=>THREE.MathUtils.degToRad(+el[id].value)),'XYZ');syncInputs();}
+    ids.forEach(id=>el[id].addEventListener('change',applyInputs));
+    function setMode(mode){ transform.setMode(mode); document.getElementById('translate').classList.toggle('active',mode==='translate'); document.getElementById('rotate').classList.toggle('active',mode==='rotate'); }
+    document.getElementById('translate').onclick=()=>setMode('translate'); document.getElementById('rotate').onclick=()=>setMode('rotate');
+    function selectGripper(object,name){selected=object;transform.attach(selected);document.getElementById('selectLeft').classList.toggle('active',selected===left);document.getElementById('selectRight').classList.toggle('active',selected===right);document.getElementById('poseTitle').textContent=name+'夹爪 · 中心坐标 mm';syncInputs();}
+    document.getElementById('selectLeft').onclick=()=>selectGripper(left,'左');
+    document.getElementById('selectRight').onclick=()=>selectGripper(right,'右');
+    document.getElementById('face').onclick=()=>{left.rotation.set(0,0,0);right.rotation.set(0,0,Math.PI);syncInputs();};
+    document.getElementById('reset').onclick=()=>{left.position.set(-.175,0,0);right.position.set(.175,0,0);left.rotation.set(0,0,0);right.rotation.set(0,0,Math.PI);syncInputs();};
+    addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;if(e.key.toLowerCase()==='w')setMode('translate');if(e.key.toLowerCase()==='e')setMode('rotate');});
+
+    const neutral=THREE.MathUtils.radToDeg(Math.atan2(50.568,63.276)-Math.atan2(-50.745,63.134));
+    function setOpening(gripper, opening){const travel=THREE.MathUtils.degToRad((neutral-opening)/2);gripper.userData.leftPivot.rotation.z=-travel;gripper.userData.rightPivot.rotation.z=travel;}
+    for(const side of ['left','right']){const slider=document.getElementById(side+'Angle');const text=document.getElementById(side+'AngleText');slider.oninput=()=>{text.textContent=(+slider.value).toFixed(1)+'°';setOpening(side==='left'?left:right,+slider.value);};slider.oninput();}
+
+    document.getElementById('save').onclick=async()=>{
+      const leftAngleInput=document.getElementById('leftAngle'),rightAngleInput=document.getElementById('rightAngle'),noteInput=document.getElementById('note'),statusBox=document.getElementById('status');
+      const leftInverse=left.quaternion.clone().invert();
+      const relativePosition=right.position.clone().sub(left.position).applyQuaternion(leftInverse);
+      const relativeQuaternion=leftInverse.multiply(right.quaternion.clone());
+      const relativeEuler=new THREE.Euler().setFromQuaternion(relativeQuaternion,'XYZ');
+      const rpy=object=>[object.rotation.x,object.rotation.y,object.rotation.z].map(THREE.MathUtils.radToDeg);
+      const body={right_gripper_in_left_frame:{translation_m:relativePosition.toArray(),rotation_rpy_deg:[relativeEuler.x,relativeEuler.y,relativeEuler.z].map(THREE.MathUtils.radToDeg),rotation_order:'XYZ'},grippers_in_center_frame:{left:{translation_m:left.position.toArray(),rotation_rpy_deg:rpy(left)},right:{translation_m:right.position.toArray(),rotation_rpy_deg:rpy(right)}},preview_opening_deg:{left:+leftAngleInput.value,right:+rightAngleInput.value},note:noteInput.value};
+      const response=await fetch('/api/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const result=await response.json();
+      statusBox.textContent=response.ok?'已保存：'+result.path:'保存失败：'+result.error;
+      if(response.ok){const blob=new Blob([JSON.stringify(result.config,null,2)+'\n'],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=result.calibration_id+'.json';a.click();URL.revokeObjectURL(a.href);}
+    };
+    function resize(){const w=host.clientWidth,h=host.clientHeight;camera.aspect=w/h;camera.updateProjectionMatrix();renderer.setSize(w,h,false);} new ResizeObserver(resize).observe(host); resize(); syncInputs();
+    renderer.setAnimationLoop(()=>{orbit.update();renderer.render(scene,camera);});
+  </script>
+</body>
+</html>

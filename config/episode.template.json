@@ -1,0 +1,43 @@
+{
+  "schema_version": "vla-episode-spec/1.0",
+  "episode_id": null,
+  "task": {
+    "name": "bimanual_demo",
+    "instruction": "填写这段示范完成的任务",
+    "success": true
+  },
+  "start_s": 0.0,
+  "end_s": 10.0,
+  "frequency_hz": 20,
+  "quality": {
+    "min_tracked_pose_ratio": 0.90,
+    "min_direct_refresh_success": 0.70,
+    "max_tracked_gap_frames": 10
+  },
+  "hardware_config": "hardware.json",
+  "sync": {
+    "method": "audio_taps",
+    "uncertainty_s": null
+  },
+  "tag_visibility_policy": "excluded_by_view",
+  "robots": [
+    {
+      "name": "left",
+      "trajectory_csv": "left/trajectory_6dof.csv",
+      "gripper_csv": "left/gripper_angle.csv",
+      "video": "left/panorama.mp4",
+      "source_time_offset_s": 0.0,
+      "detector_redetect_interval_frames": 5,
+      "observation": {"yaw_deg": 0, "pitch_deg": 0, "fov_deg": 110, "size": [224, 224]}
+    },
+    {
+      "name": "right",
+      "trajectory_csv": "right/trajectory_6dof.csv",
+      "gripper_csv": "right/gripper_angle.csv",
+      "video": "right/panorama.mp4",
+      "source_time_offset_s": 0.0,
+      "detector_redetect_interval_frames": 5,
+      "observation": {"yaw_deg": 0, "pitch_deg": 0, "fov_deg": 110, "size": [224, 224]}
+    }
+  ]
+}

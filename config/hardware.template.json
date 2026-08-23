@@ -1,0 +1,19 @@
+{
+  "schema_version": "gripper-hardware-calibration/1.0",
+  "calibration_status": "pending",
+  "tcp_definition": "gripper_tcp_cad.json",
+  "robots": {
+    "left": {
+      "camera_to_tcp": null,
+      "camera_to_tcp_verified": false,
+      "gripper_width_calibration": null,
+      "gripper_width_verified": false
+    },
+    "right": {
+      "camera_to_tcp": null,
+      "camera_to_tcp_verified": false,
+      "gripper_width_calibration": null,
+      "gripper_width_verified": false
+    }
+  }
+}

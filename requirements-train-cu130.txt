@@ -1,0 +1,11 @@
+--index-url https://download.pytorch.org/whl/cu130
+--extra-index-url https://pypi.org/simple
+
+# RTX 50-series compatible training runtime.
+torch==2.11.0
+torchvision==0.26.0
+torchaudio==2.11.0
+
+# Dataset checks, metrics, and training progress.
+scikit-learn>=1.7,<2
+tqdm>=4.67,<5

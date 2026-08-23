@@ -41,6 +41,20 @@ uv sync --extra test
 uv sync --extra test --extra gpu
 ```
 
+UMI/VLA 训练节点使用 NVIDIA GPU 时，再安装独立锁定的 PyTorch 环境：
+
+```bash
+uv pip install --python .venv/bin/python -r requirements-train-cu130.txt
+```
+
+`dual_gripper_3d/` 的浏览器三维渲染器需要 Node.js：
+
+```bash
+cd dual_gripper_3d
+npm ci
+cd ..
+```
+
 DJI 原始 `.OSV` 拼接依赖本机 PanoForge，默认查找与本仓库同级的 `panoforge-test/`。也可以在运行时指定：
 
 ```bash
@@ -179,6 +193,45 @@ uv sync --extra test
 uv run pytest -q
 ```
 
+## UMI / VLA 数据集封装
+
+视觉解算完成后，用一个 Episode 清单把视频、6DoF、夹爪角度、双机时间偏移和任务文本统一封装：
+
+```bash
+cp config/episode.template.json episode.json
+cp config/hardware.template.json hardware.json
+./vla-dataset episode.json dataset-output
+```
+
+输出包含：
+
+- `episode_arrays.npz`：同步后的 TCP 位姿、轴角姿态、夹宽、测量掩码和双臂 action；
+- `episode_metadata.json`：任务、频率、时长、UUID 和是否可训练；
+- `quality_report.json`：可信视觉轨迹（Tag刷新＋光流）、Tag定期刷新成功率、最长失锁、同步及硬件标定门槛；
+- `dataset.zarr.zip`：通过全部门槛后生成的 UMI 兼容 replay buffer。
+
+相机→TCP 外参或“开合角→实际夹宽”尚未实测时仍可加 `--skip-rgb` 快速验证数据链，但结果会明确标为 `DRAFT_HARDWARE_OR_QUALITY_PENDING`，不会冒充可训练数据。硬件到位后只需补全 `hardware.json` 并重新执行同一命令。
+
+### 训练链路冒烟测试
+
+先用一个很小的数据集确认“双目图像＋双夹爪状态→下一帧动作”能够被模型读取和学习：
+
+```bash
+uv run --with-requirements requirements-train-cu130.txt \
+  python train_zarr_overfit_smoke.py dataset-output/dataset.zarr.zip \
+  --output-dir dataset-output/overfit-smoke
+```
+
+脚本严格按照 `episode_ends` 构造转移，不会跨 Episode 连接动作，并输出 checkpoint、预测 CSV、Loss/轨迹图和视频审计。它是数据管线的记忆测试，不是策略泛化精度；正式训练仍需要独立验证集和足够数量的成功 Episode。
+
+### 本地审核网页
+
+```bash
+./dual-gripper-calibrator
+```
+
+浏览器访问 `http://127.0.0.1:7861/umi` 可逐帧检查双目画面、原始/滤波轨迹、异常剔除点、夹宽和训练有效率。网页只读取本地产物，不上传原视频。
+
 ## 精度注意事项
 
-轨迹精度取决于相机工厂标定、Tag 实际尺寸与安装地图、运动模糊、Tag 可见数量、观察距离和标定板平整度。发布数据集前应检查直接视觉覆盖率、重投影 RMSE、最长失锁时间和坐标跳变。
+轨迹精度取决于相机工厂标定、Tag 实际尺寸与安装地图、运动模糊、Tag 可见数量、观察距离和标定板平整度。加速模式每隔若干帧才重新解码 Tag，中间帧由可信光流传播，因此发布数据集前应分别检查可信视觉轨迹覆盖率、Tag 定期刷新成功率、重投影 RMSE、最长失锁时间和坐标跳变，不能要求每一帧都直接解码 Tag。

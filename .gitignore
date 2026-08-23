@@ -1,9 +1,12 @@
 .venv/
 __pycache__/
 *.py[cod]
+node_modules/
 work/
 sessions/
 camera-datasets/
+dual-camera-pairs/
+tmp/
 mocap-runs/
 mocap-evaluation/input/
 mocap-evaluation/preview/
@@ -21,6 +24,9 @@ demo-output/
 *.mkv
 *.MKV
 *.log
+*.pt
+*.zarr.zip
+episode_arrays.npz
 pose.csv
 relative_coordinates.png
 .pytest_cache/
@@ -29,3 +35,8 @@ camera.yml
 camera.yaml
 .env
 .env.*
+
+# Local measurement references and one-off legacy batch runner.
+config/gripper_tcp_cad.png
+config/gripper_tcp_measurement.png
+batch_claw_trajectory.py

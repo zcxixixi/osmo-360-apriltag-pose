@@ -1,0 +1,35 @@
+{
+  "schema_version": "gripper-tcp-definition/1.0",
+  "source": {
+    "cad_asset": "../assets/osmo_rig/osmo定位.SLDASM",
+    "base_frame": "base_link",
+    "meshes": ["Link1.STL", "Link2.STL"],
+    "joint_axes": "Z",
+    "joint_origins_m": {
+      "joint1": [0.015, 0.01425, 0.0151],
+      "joint2": [0.015, -0.01425, 0.0157]
+    }
+  },
+  "definition": "midpoint between the two distal fingertip faces at the nominal closed configuration",
+  "nominal_closed_joint_deg": {
+    "joint1": -37.3514,
+    "joint2": 36.8178
+  },
+  "tcp_in_base": {
+    "translation_m": [0.1356, 0.0, 0.0101],
+    "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0]
+  },
+  "axes": {
+    "x": "base_link +X, forward toward the fingertips",
+    "y": "base_link +Y, across the two jaws",
+    "z": "base_link +Z, normal to the gripper plane"
+  },
+  "status": "cad_derived_physically_confirmed_approximate",
+  "physical_check": "User confirmed the pivot-midpoint to fingertip-midpoint distance is approximately 120.6 mm on 2026-08-23.",
+  "pivot_spacing_check": {
+    "cad_mm": 28.5,
+    "user_measured_approx_mm": 30.0,
+    "status": "consistent_with_cad"
+  },
+  "precision_note": "Suitable for initial dataset generation; use metrology calibration later if millimetre-level TCP accuracy is required."
+}

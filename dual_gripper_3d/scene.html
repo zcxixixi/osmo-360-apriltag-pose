@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Dual gripper 3D renderer</title>
+  <style>
+    *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#070b10;color:#f5f7fa;font-family:Inter,system-ui,sans-serif}
+    #scene{position:absolute;inset:0}canvas{display:block}
+    .title{position:absolute;left:52px;top:40px;font-size:30px;font-weight:600;letter-spacing:.05em}.sub{font-size:13px;color:#93a2b5;margin-top:8px;letter-spacing:.11em}
+    .pip-label{position:absolute;top:32px;color:#dce5ef;font-size:13px;letter-spacing:.12em}.pip-left{left:1212px}.pip-right{left:1556px}
+    .pip-slot{position:absolute;top:54px;width:324px;height:166px;border:2px solid}.slot-left{left:1208px;border-color:#37c8ff}.slot-right{left:1552px;border-color:#58df91}
+    .hud{position:absolute;left:52px;bottom:42px;display:grid;grid-template-columns:240px 240px 240px;gap:18px}.metric{border-left:3px solid #506173;padding-left:14px}.metric.left{border-color:#37c8ff}.metric.right{border-color:#58df91}.k{font-size:12px;color:#8291a2;letter-spacing:.1em}.v{font-size:22px;margin-top:6px}.state{font-size:12px;margin-top:5px;color:#b7c0cc}
+    .time{position:absolute;right:50px;bottom:42px;text-align:right}.time .v{font-variant-numeric:tabular-nums}.notice{position:absolute;left:52px;top:112px;color:#f4c65a;font-size:12px;letter-spacing:.08em}
+  </style>
+  <script type="importmap">{"imports":{"three":"/three/build/three.module.js","three/addons/":"/three/examples/jsm/"}}</script>
+</head>
+<body>
+  <div id="scene"></div>
+  <div class="title"><span id="main-title">DUAL GRIPPER 6DoF</span><div class="sub" id="subtitle">CENTER-ORIGIN · REAL MOTION DELTAS · UUID <span id="uuid"></span></div></div>
+  <div class="notice" id="notice">MANUAL START LAYOUT PRIOR · NOT METROLOGY GROUND TRUTH</div>
+  <div class="pip-label pip-left">LEFT CAMERA</div><div class="pip-slot slot-left"></div>
+  <div class="pip-label pip-right" id="right-camera-label">RIGHT CAMERA</div><div class="pip-slot slot-right"></div>
+  <div class="hud">
+    <div class="metric left"><div class="k">LEFT OPENING</div><div class="v" id="left-angle"></div><div class="state" id="left-state"></div></div>
+    <div class="metric right"><div class="k">RIGHT OPENING</div><div class="v" id="right-angle"></div><div class="state" id="right-state"></div></div>
+    <div class="metric"><div class="k" id="metric3-label">BASE SEPARATION</div><div class="v" id="separation"></div><div class="state" id="pose-filter">Kalman + RTS · quaternion smooth</div></div>
+  </div>
+  <div class="time"><div class="k">SYNCHRONIZED TIME</div><div class="v" id="time"></div><div class="state" id="sync-quality"></div></div>
+  <script type="module">
+    import * as THREE from 'three';
+    import {STLLoader} from 'three/addons/loaders/STLLoader.js';
+    const timeline=await (await fetch('/timeline.json')).json();
+    const auditMode=timeline.audit_mode===true;
+    if(auditMode){document.getElementById('main-title').textContent='ZARR DATASET EXACT REPLAY';document.getElementById('subtitle').innerHTML=`TRAINING ARRAYS · SHA256 ${timeline.dataset_sha256.slice(0,16)}… · UUID <span id="uuid"></span>`;document.getElementById('notice').textContent='NO RECOMPUTE · NO EXTRA FILTERING · DISPLAY LANES ARE DECLARED STATIC TRANSFORMS';document.getElementById('metric3-label').textContent='DATA FRAME';document.getElementById('pose-filter').textContent='EXACT VALUES FROM dataset.zarr.zip';}
+    if(timeline.attitude?.mode==='imu-level')document.getElementById('pose-filter').textContent='Kalman + RTS · DJI IMU level';
+    document.getElementById('uuid').textContent=timeline.capture_pair_id;
+    const sourceOffsetMs=Math.round(Number(timeline.sync.offset_s)*1000);
+    const displayOffsetMs=timeline.side_mapping?.left==='view2'?-sourceOffsetMs:sourceOffsetMs;
+    document.getElementById('right-camera-label').textContent=`RIGHT CAMERA · ${displayOffsetMs>=0?'+':''}${displayOffsetMs} ms`;
+    document.getElementById('sync-quality').textContent=auditMode?`${timeline.fps.toFixed(0)} fps · ${timeline.training_episodes} trusted episodes`:`${timeline.fps.toFixed(0)} fps · audio corr ${Number(timeline.sync.correlation).toFixed(3)}`;
+    const scene=new THREE.Scene();scene.background=new THREE.Color(0x070b10);scene.fog=new THREE.Fog(0x070b10,1.8,3.8);
+    const camera=new THREE.PerspectiveCamera(36,16/9,.01,20);
+    const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});renderer.setSize(1920,1080,false);renderer.setPixelRatio(1);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;document.getElementById('scene').appendChild(renderer.domElement);
+    scene.add(new THREE.HemisphereLight(0xaed9ff,0x121921,2.1));const key=new THREE.DirectionalLight(0xffffff,4.2);key.position.set(.7,-.8,1.5);key.castShadow=true;key.shadow.mapSize.set(2048,2048);scene.add(key);const rim=new THREE.DirectionalLight(0x4a8eff,2.0);rim.position.set(-1,.8,.6);scene.add(rim);
+    const grid=new THREE.GridHelper(2.4,48,0x53657a,0x1b2632);grid.rotation.x=Math.PI/2;grid.position.z=-.12;scene.add(grid);scene.add(new THREE.AxesHelper(.22));
+    const loader=new STLLoader();const geometries={};for(const name of ['base_link.STL','Link1.STL','Link2.STL','Link3.STL']){geometries[name]=await loader.loadAsync('/mesh/'+name);geometries[name].computeVertexNormals();}
+    const mat=(color,metal=.16)=>new THREE.MeshStandardMaterial({color,roughness:.42,metalness:metal,side:THREE.DoubleSide});
+    function mesh(name,material){const m=new THREE.Mesh(geometries[name],material);m.castShadow=true;m.receiveShadow=true;return m}
+    function gripper(baseColor){const root=new THREE.Group();root.add(mesh('base_link.STL',mat(baseColor,.34)));const fixed=new THREE.Group();fixed.position.set(.02625,0,.0196);fixed.add(mesh('Link3.STL',mat(0xb7c2d0,.28)));root.add(fixed);const j1=new THREE.Group();j1.position.set(.015,.01425,.0151);j1.add(mesh('Link1.STL',mat(0x5de29a)));root.add(j1);const j2=new THREE.Group();j2.position.set(.015,-.01425,.0157);j2.add(mesh('Link2.STL',mat(0xf1c84f)));root.add(j2);root.userData={j1,j2};root.add(new THREE.AxesHelper(.10));return root}
+    const left=gripper(0x2fbde9),right=gripper(0x43cb80);scene.add(left,right);
+    const makeLine=color=>{const g=new THREE.BufferGeometry();const positions=new Float32Array(timeline.frames.length*3);g.setAttribute('position',new THREE.BufferAttribute(positions,3));g.setDrawRange(0,1);const line=new THREE.Line(g,new THREE.LineBasicMaterial({color,linewidth:2}));scene.add(line);return line};
+    const leftLine=makeLine(0x37c8ff),rightLine=makeLine(0x58df91);for(let i=0;i<timeline.frames.length;i++){for(const [line,side] of [[leftLine,'left'],[rightLine,'right']])line.geometry.attributes.position.array.set(timeline.frames[i][side].p,i*3)}leftLine.geometry.attributes.position.needsUpdate=true;rightLine.geometry.attributes.position.needsUpdate=true;
+    const connectorGeometry=new THREE.BufferGeometry();const connector=new THREE.Line(connectorGeometry,new THREE.LineBasicMaterial({color:0xf4c65a,transparent:true,opacity:.82}));scene.add(connector);
+    const framingCount=Math.min(timeline.frames.length,Number(new URLSearchParams(location.search).get('frames')||timeline.frames.length));const all=timeline.frames.slice(0,framingCount).flatMap(f=>[new THREE.Vector3(...f.left.p),new THREE.Vector3(...f.right.p)]);const box=new THREE.Box3().setFromPoints(all);box.expandByScalar(.10);const center=box.getCenter(new THREE.Vector3());const size=box.getSize(new THREE.Vector3());const radius=Math.max(size.x,size.y,size.z,.45);
+    // Keep the physical left-right baseline horizontal on screen and world Z vertical.
+    const worldUp=new THREE.Vector3(0,0,1);const baseline=new THREE.Vector3(...timeline.frames[0].right.p).sub(new THREE.Vector3(...timeline.frames[0].left.p)).normalize();let viewDirection=new THREE.Vector3().crossVectors(baseline,worldUp);if(viewDirection.lengthSq()<1e-8)viewDirection.set(0,-1,0);viewDirection.normalize();camera.up.copy(worldUp);camera.position.copy(center).addScaledVector(viewDirection,radius*1.65).addScaledVector(worldUp,radius*.10);camera.lookAt(center);camera.far=10;camera.updateProjectionMatrix();
+    const startMarker=g=>{const s=new THREE.Mesh(new THREE.SphereGeometry(.012,24,12),new THREE.MeshBasicMaterial({color:0xffffff}));s.position.fromArray(timeline.frames[0][g].p);scene.add(s);return s};const leftStart=startMarker('left'),rightStart=startMarker('right');
+    function apply(root,data){root.position.fromArray(data.p);root.quaternion.fromArray(data.q);root.userData.j1.rotation.z=THREE.MathUtils.degToRad(data.joints[0]);root.userData.j2.rotation.z=THREE.MathUtils.degToRad(data.joints[1])}
+    window.renderFrame=index=>{const frame=timeline.frames[Math.max(0,Math.min(index,timeline.frames.length-1))];apply(left,frame.left);apply(right,frame.right);const lineStart=auditMode?frame.episode_start:0;leftLine.geometry.setDrawRange(lineStart,index-lineStart+1);rightLine.geometry.setDrawRange(lineStart,index-lineStart+1);leftStart.position.fromArray(timeline.frames[lineStart].left.p);rightStart.position.fromArray(timeline.frames[lineStart].right.p);connector.visible=!auditMode;connectorGeometry.setFromPoints([left.position,right.position]);const separation=left.position.distanceTo(right.position)*1000;document.getElementById('left-angle').textContent=frame.left.opening.toFixed(1)+'°';document.getElementById('right-angle').textContent=frame.right.opening.toFixed(1)+'°';document.getElementById('left-state').textContent=auditMode?`VALID · xyz ${frame.left.source_p.map(v=>v.toFixed(3)).join(', ')}`:frame.left.pose_state+' · angle '+frame.left.angle_state;document.getElementById('right-state').textContent=auditMode?`VALID · xyz ${frame.right.source_p.map(v=>v.toFixed(3)).join(', ')}`:frame.right.pose_state+' · angle '+frame.right.angle_state;document.getElementById('separation').textContent=auditMode?`${frame.source_index+1} / ${timeline.source_frames}`:separation.toFixed(1)+' mm';if(auditMode)document.getElementById('pose-filter').textContent=`EPISODE ${frame.episode+1}/${timeline.training_episodes} · exact Zarr values`;document.getElementById('time').textContent=frame.t.toFixed(2)+' / '+timeline.duration_s.toFixed(2)+' s';renderer.render(scene,camera);return true};
+    window.renderFrame(0);window.rendererReady=true;
+  </script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "name": "dual-gripper-3d-renderer",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "puppeteer-core": "24.16.0",
+    "three": "0.170.0"
+  }
+}
