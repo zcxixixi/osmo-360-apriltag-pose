@@ -1,5 +1,5 @@
 {
-  "schema_version": "vla-episode-spec/1.0",
+  "schema_version": "vla-episode-spec/1.1",
   "episode_id": null,
   "task": {
     "name": "bimanual_demo",
@@ -9,6 +9,17 @@
   "start_s": 0.0,
   "end_s": 10.0,
   "frequency_hz": 20,
+  "coordinate_frame": {
+    "mode": "world",
+    "frame_id": "room_world",
+    "tag_map": "room_world_tag_map.json"
+  },
+  "workspace": {
+    "type": "tabletop",
+    "table_plane_z_m": 0.0,
+    "minimum_tcp_z_m": -0.1,
+    "max_robot_median_z_difference_m": 0.25
+  },
   "quality": {
     "min_tracked_pose_ratio": 0.90,
     "min_direct_refresh_success": 0.70,

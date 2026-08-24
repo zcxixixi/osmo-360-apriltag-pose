@@ -63,6 +63,25 @@ DJI 原始 `.OSV` 拼接依赖本机 PanoForge，默认查找与本仓库同级�
   --run-name production-001
 ```
 
+Insta360 `.insv/.lrv` 原片使用官方 Linux MediaSDK。默认从
+`work/insta360-sdk/media/` 查找免系统安装的 SDK，也可用 `--insta-sdk-root`
+指定解包目录。拼接阶段默认关闭 FlowState 和方向锁定，以保留用于 6DoF 解算的原始相机运动：
+
+```bash
+./camera-to-dataset /data/VID_xxx.insv \
+  --insta-sdk-root /opt/insta360-media-sdk \
+  --run-name insta-x6-001 \
+  --max-processed-frames 60
+```
+
+若官方硬件编解码与当前驱动不兼容，可追加
+`--insta-soft-decode --insta-soft-encode`；若 CUDA 路径不兼容，可追加
+`--insta-disable-cuda`。
+
+截至 Linux MediaSDK 3.1.1，官方公开兼容列表到 X5，尚不包含 X6。X6
+原始 INSV 会被适配器明确阻止并报告相机型号；请使用 Insta360 Studio 导出的
+无 FlowState、无方向锁定 2:1 MP4，或由 Insta360 提供明确支持 X6 的 MediaSDK 构建。
+
 ### 自动处理策略
 
 | 输入 | 自动处理路径 |
@@ -84,11 +103,11 @@ NVDEC 目前保留为显式实验选项；由于帧仍需下载到 CPU 进行 Ap
   --run-name robot-motion-001
 ```
 
-默认 AprilGrid 参数为 6×6、黑色编码区 88 mm、间距比例 0.30。使用独立大 Tag 时必须传入实际地图：
+默认 AprilGrid 参数为 6×6、黑色编码区 88 mm、间距比例 0.30。使用独立大 Tag 时必须传入实际地图。双夹爪采集必须使用包含两面墙全部唯一ID的共同世界地图：
 
 ```bash
 ./camera-to-dataset /data/CAM_xxx_D.OSV \
-  --tag-map mocap-evaluation/config/insta360_x6_tag_map.json \
+  --tag-map config/room_corner_10tag_world_provisional.json \
   --output-root /data/processed \
   --run-name four-tag-motion-001
 ```
@@ -101,12 +120,29 @@ NVDEC 目前保留为显式实验选项；由于帧仍需下载到 CPU 进行 Ap
   --max-processed-frames 60
 ```
 
-确认 Tag 尺寸、地图、坐标方向和识别率后，去掉 `--max-processed-frames` 执行全量。加 `--extract-frames` 才会额外保存 JPEG；默认使用 MP4 + 时间戳 CSV，避免数据集膨胀。
+确认 Tag 尺寸、地图、坐标方向和识别率后，去掉 `--max-processed-frames` 执行全量。`PROVISIONAL` 卷尺地图只会生成诊断结果；完成房间标定并冻结地图后才会标记训练就绪。加 `--extract-frames` 才会额外保存 JPEG；默认使用 MP4 + 时间戳 CSV，避免数据集膨胀。
+
+### 双夹爪共同世界坐标
+
+双机轨迹必须直接输出 `T_room_world_panorama_camera`，再按
+`T_world_tcp = T_world_camera · T_camera_tcp` 转为夹爪TCP。禁止分别把左右第一帧归零后再用手动动画布局拼接。
+
+```bash
+# 编译、校验10 Tag世界地图并查看稳定哈希
+uv run python world_frames.py \
+  config/room_corner_10tag_world_provisional.json \
+  --output /data/calibration/room_world_tags.compiled.json
+
+# UMI诊断/导出；episode.json必须声明coordinate_frame与同一地图
+uv run python vla_dataset_export.py episode.json output/
+```
+
+UMI中的 `robot*_eef_pos` 和姿态是共同世界坐标，`robot*_eef_delta_from_start_*` 是附加的单爪起点增量。地图哈希、父子坐标系、相机到TCP方向或标定状态不匹配时，管线会阻止Zarr训练文件输出。
 
 ### 输入规则
 
 - `.OSV`：执行 DJI 工厂标定拼接、IMU 提取、6DoF 解算和数据集封装；
-- `.insv/.lrv`：识别为 Insta360 原始文件，当前返回 `waiting_for_insta360_sdk`，不会用通用投影伪造结果；
+- `.insv/.lrv`：调用官方 Insta360 MediaSDK 拼接为无 FlowState、无方向锁定的 2:1 MP4，再进行轨迹解算；仅凭 2:1 尺寸不会把双鱼眼 LRV 误判为等距柱状全景；
 - 2:1 MP4：跳过原始鱼眼拼接，直接进行轨迹解算和数据集封装。
 
 ## 数据集结构
@@ -128,7 +164,7 @@ dataset/
 └── metadata.json
 ```
 
-- `trajectory_6dof.csv`：时间戳、第一帧原点坐标、位置、四元数、测量来源和状态；
+- `trajectory_6dof.csv`：时间戳、位置、四元数、父子坐标系、Tag地图哈希、测量来源和状态；
 - `pose_direct.csv`、`detections.jsonl`：可审计的直接视觉结果；
 - `calibration/`：相机工厂标定与坐标系信息；
 - `sensor/`：DJI IMU 数据；

@@ -18,6 +18,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent
 ASSET_ROOT = ROOT / "assets/osmo_rig/osmo定位.SLDASM"
 MESH_ROOT = ASSET_ROOT / "meshes"
+OLD_MESH_ROOT = ROOT.parent / "claw-urdf/extracted/claw-urdf/osmo定位.SLDASM/meshes"
+PAD_COMPARE_ROOT = ROOT / "assets/hardware_compare"
 OUTPUT_ROOT = ROOT / "sessions/dual-gripper-calibrations"
 TEMPLATE_ROOT = ROOT / "dual_gripper_calibrator_web"
 TIMELINE_PATH = ROOT / "dual-camera-pairs/processed/bbaff9c1-7a0e-4bfb-8292-b6d57abb3e5e/dual_gripper_timeline.json"
@@ -114,6 +116,16 @@ def hardware():
     return send_file(TEMPLATE_ROOT / "hardware.html", mimetype="text/html", conditional=True)
 
 
+@app.get("/hardware-compare")
+def hardware_compare():
+    return send_file(TEMPLATE_ROOT / "hardware_compare.html", mimetype="text/html", conditional=True)
+
+
+@app.get("/pad-compare")
+def pad_compare():
+    return send_file(TEMPLATE_ROOT / "pad_compare.html", mimetype="text/html", conditional=True)
+
+
 @app.get("/api/hardware-model")
 def hardware_model():
     if not HARDWARE_MODEL_PATH.is_file():
@@ -189,6 +201,29 @@ def mesh(name: str):
     if name not in {"base_link.STL", "Link1.STL", "Link2.STL", "Link3.STL"}:
         return jsonify(error="unknown mesh"), 404
     return send_from_directory(MESH_ROOT, name)
+
+
+@app.get("/compare-mesh/<version>/<path:name>")
+def compare_mesh(version: str, name: str):
+    if name not in {"base_link.STL", "Link1.STL", "Link2.STL", "Link3.STL"}:
+        return jsonify(error="unknown mesh"), 404
+    roots = {"old": OLD_MESH_ROOT, "current": MESH_ROOT}
+    root = roots.get(version)
+    if root is None:
+        return jsonify(error="unknown version"), 404
+    return send_from_directory(root, name)
+
+
+@app.get("/pad-mesh/<version>")
+def pad_mesh(version: str):
+    files = {
+        "old": "old_pad_right.STL",
+        "new": "new_pad_vol2_aligned.STL",
+    }
+    name = files.get(version)
+    if name is None:
+        return jsonify(error="unknown version"), 404
+    return send_from_directory(PAD_COMPARE_ROOT, name)
 
 
 @app.post("/api/save")

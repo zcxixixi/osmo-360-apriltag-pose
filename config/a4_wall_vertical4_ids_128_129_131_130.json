@@ -1,0 +1,28 @@
+{
+  "schema_version": "independent-apriltag-map/1.0",
+  "dictionary": "APRILTAG_36h11",
+  "description": "Four 200 mm tags stacked vertically with approximately 10 mm white gaps in the 2026-08-23 capture, top-to-bottom 128,129,131,130.",
+  "units": "m",
+  "tag_outer_size_m": 0.2,
+  "sheet_size_m": [0.21, 0.297],
+  "origin": "center of the four-sheet stack",
+  "axes": "x right, y down, z out of wall",
+  "tags": [
+    {
+      "id": 128,
+      "corners_m": [[-0.10, -0.415, 0.0], [0.10, -0.415, 0.0], [0.10, -0.215, 0.0], [-0.10, -0.215, 0.0]]
+    },
+    {
+      "id": 129,
+      "corners_m": [[-0.10, -0.205, 0.0], [0.10, -0.205, 0.0], [0.10, -0.005, 0.0], [-0.10, -0.005, 0.0]]
+    },
+    {
+      "id": 131,
+      "corners_m": [[-0.10, 0.005, 0.0], [0.10, 0.005, 0.0], [0.10, 0.205, 0.0], [-0.10, 0.205, 0.0]]
+    },
+    {
+      "id": 130,
+      "corners_m": [[-0.10, 0.215, 0.0], [0.10, 0.215, 0.0], [0.10, 0.415, 0.0], [-0.10, 0.415, 0.0]]
+    }
+  ]
+}

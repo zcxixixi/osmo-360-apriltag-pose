@@ -4,13 +4,23 @@
   "tcp_definition": "gripper_tcp_cad.json",
   "robots": {
     "left": {
-      "camera_to_tcp": null,
+      "camera_to_tcp": {
+        "parent_frame": "panorama_camera",
+        "child_frame": "left_tcp",
+        "translation_m": [0.0, 0.0, 0.0],
+        "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0]
+      },
       "camera_to_tcp_verified": false,
       "gripper_width_calibration": null,
       "gripper_width_verified": false
     },
     "right": {
-      "camera_to_tcp": null,
+      "camera_to_tcp": {
+        "parent_frame": "panorama_camera",
+        "child_frame": "right_tcp",
+        "translation_m": [0.0, 0.0, 0.0],
+        "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0]
+      },
       "camera_to_tcp_verified": false,
       "gripper_width_calibration": null,
       "gripper_width_verified": false

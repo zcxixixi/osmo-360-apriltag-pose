@@ -13,6 +13,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 import zarr
 
+from world_frames import compile_world_tag_map
+
 
 ROOT = Path(__file__).resolve().parent
 FFMPEG = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg"
@@ -83,8 +85,24 @@ def build_timeline(dataset: Path, metadata_path: Path, timeline_path: Path,
         effective_episode_ends.append(count)
     dataset_hash = sha256(dataset)
     neutral = abs(np.degrees(np.arctan2(50.568, 63.276) - np.arctan2(-50.745, 63.134)))
-    display_offsets = [np.asarray([-0.32, 0.0, 0.0]), np.asarray([0.32, 0.0, 0.0])]
-    display_rotations = [Rotation.identity(), Rotation.from_euler("z", 180, degrees=True)]
+    coordinate = metadata.get("coordinate_frame", {})
+    world_mode = coordinate.get("mode") == "world"
+    display_offsets = [np.zeros(3), np.zeros(3)] if world_mode else [
+        np.asarray([-0.32, 0.0, 0.0]), np.asarray([0.32, 0.0, 0.0])]
+    display_rotations = [Rotation.identity(), Rotation.identity()] if world_mode else [
+        Rotation.identity(), Rotation.from_euler("z", 180, degrees=True)]
+    tag_anchors = []
+    if world_mode and coordinate.get("tag_map"):
+        world_map = compile_world_tag_map(Path(coordinate["tag_map"]))
+        if world_map["tag_map_sha256"] != coordinate.get("tag_map_sha256"):
+            raise ValueError("Zarr metadata Tag map hash mismatch")
+        for tag in world_map["tags"]:
+            panel = str(tag.get("panel", ""))
+            side = "left" if panel.startswith("left") else "right"
+            tag_anchors.append({
+                "id": int(tag["id"]), "side": side, "corners": tag["corners_m"],
+                "color": "#37c8ff" if side == "left" else "#58df91",
+            })
     frames = []
     for index in range(count):
         frame = {
@@ -111,7 +129,9 @@ def build_timeline(dataset: Path, metadata_path: Path, timeline_path: Path,
     timeline = {
         "schema_version": "zarr-exact-replay/v1", "audit_mode": True,
         "capture_pair_id": metadata["episode_id"], "layout_calibration_id": "zarr-display-lanes-v1",
-        "dataset_sha256": dataset_hash, "reference_frame": "per-gripper-start-local",
+        "dataset_sha256": dataset_hash,
+        "reference_frame": coordinate.get("frame_id", "room_world") if world_mode else "per-gripper-start-local",
+        "training_ready": bool(metadata.get("training_ready", False)),
         "source_interval_s": {"start": 0.0, "end": count / float(metadata["frequency_hz"])},
         "fps": float(metadata["frequency_hz"]), "duration_s": count / float(metadata["frequency_hz"]),
         "source_frames": int(metadata["frames"]), "training_frames": count,
@@ -120,12 +140,12 @@ def build_timeline(dataset: Path, metadata_path: Path, timeline_path: Path,
         "sync": {"offset_s": 0.0, "correlation": 1.0},
         "side_mapping": {"left": "camera0/robot0", "right": "camera1/robot1"},
         "coordinate_mapping": {
-            "source": "exact Zarr per-gripper local pose",
-            "left_display": "identity rotation + [-0.32,0,0] m",
-            "right_display": "Rz(180deg) + [0.32,0,0] m",
+            "source": "exact Zarr shared world pose" if world_mode else "exact Zarr per-gripper local pose",
+            "display": "identity: same world arrays" if world_mode else "declared static display lanes",
         },
+        "coordinate_status": coordinate,
         "attitude": {"mode": "zarr-exact", "source": "robot*_eef_rot_axis_angle", "level_constraint": False},
-        "bounds_m": {}, "frames": frames,
+        "bounds_m": {}, "tag_anchors": tag_anchors, "frames": frames,
     }
     timeline_path.write_text(json.dumps(timeline, ensure_ascii=False, separators=(",", ":")) + "\n",
                              encoding="utf-8")

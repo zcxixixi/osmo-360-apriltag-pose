@@ -1,10 +1,33 @@
+import json
+
 import numpy as np
+import pytest
 from scipy.spatial.transform import Rotation
 
 from export_dual_gripper_timeline import (
-    continuous_quaternions, rebase, rebase_shared_world, resample_imu_attitude,
+    continuous_quaternions, load_extrinsic, rebase, rebase_shared_world, resample_imu_attitude,
     smooth_quaternions,
 )
+
+
+def test_load_extrinsic_requires_explicit_camera_to_tcp_frames(tmp_path):
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text(json.dumps({
+        "translation_gripper_origin_in_camera_m": [0, 0, 0],
+        "rotation_gripper_to_camera": np.eye(3).tolist(),
+    }))
+    with pytest.raises(ValueError, match="deprecated camera->base"):
+        load_extrinsic(legacy)
+
+    current = tmp_path / "current.json"
+    current.write_text(json.dumps({"camera_to_tcp": {
+        "parent_frame": "panorama_camera", "child_frame": "gripper_tcp",
+        "translation_m": [0.1, 0.2, 0.3],
+        "quaternion_xyzw": [0, 0, 0, 1],
+    }}))
+    translation, rotation = load_extrinsic(current)
+    np.testing.assert_allclose(translation, [0.1, 0.2, 0.3])
+    np.testing.assert_allclose(rotation.as_matrix(), np.eye(3))
 
 
 def test_rebase_exact_start_and_preserves_local_motion():

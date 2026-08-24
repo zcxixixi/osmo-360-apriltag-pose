@@ -13,11 +13,14 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from world_frames import compile_world_tag_map
+
 
 ROOT = Path(__file__).resolve().parent
 FFMPEG_BIN = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin"
 PANOFORGE_ROOT = ROOT.parent / "panoforge-test"
 GRIPPER_MESHES = ROOT / "assets/gripper"
+INSTA360_SDK_ROOT = ROOT / "work/insta360-sdk/media"
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,6 +46,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-processed-frames", type=int)
     parser.add_argument("--stitch-width", type=int, choices=(3840, 6144, 7680), default=3840)
     parser.add_argument("--stitch-encoder", choices=("auto", "cpu", "nvenc"), default="auto")
+    parser.add_argument("--insta-sdk-root", type=Path, default=INSTA360_SDK_ROOT)
+    parser.add_argument(
+        "--insta-stitch-type", choices=("template", "optflow", "dynamicstitch", "aistitch"),
+        default="optflow",
+    )
+    parser.add_argument("--insta-disable-cuda", action="store_true")
+    parser.add_argument("--insta-soft-decode", action="store_true")
+    parser.add_argument("--insta-soft-encode", action="store_true")
     parser.add_argument("--projection-backend", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument("--panoforge-root", type=Path, default=PANOFORGE_ROOT)
     parser.add_argument("--extract-frames", action="store_true")
@@ -147,6 +158,15 @@ def main() -> int:
     manifest_path = run_dir / "pipeline_manifest.json"
     requested_source = file_identity(source)
     tag_map_identity = file_identity(args.tag_map.resolve()) if args.tag_map else None
+    if args.tag_map:
+        compiled_map = compile_world_tag_map(args.tag_map.resolve())
+        tag_map_identity.update(
+            tag_map_sha256=compiled_map["tag_map_sha256"],
+            map_id=compiled_map.get("map_id"),
+            world_frame=compiled_map.get("world_frame"),
+            calibration_status=compiled_map.get("calibration_status"),
+            expected_ids=sorted(int(tag["id"]) for tag in compiled_map["tags"]),
+        )
     processing_parameters = {
         "camera_override": args.camera,
         "tag_map": tag_map_identity,
@@ -163,6 +183,11 @@ def main() -> int:
         "max_processed_frames": args.max_processed_frames,
         "stitch_width": args.stitch_width,
         "stitch_encoder": args.stitch_encoder,
+        "insta_sdk_root": str(args.insta_sdk_root.resolve()),
+        "insta_stitch_type": args.insta_stitch_type,
+        "insta_disable_cuda": args.insta_disable_cuda,
+        "insta_soft_decode": args.insta_soft_decode,
+        "insta_soft_encode": args.insta_soft_encode,
         "projection_backend": args.projection_backend,
     }
     if manifest_path.is_file() and not args.force:
@@ -190,16 +215,6 @@ def main() -> int:
     print(f"CAMERA_DETECTED {camera} {source.name}")
     if camera == "unknown":
         raise SystemExit("camera could not be identified; use --camera dji or --camera insta360")
-    if camera == "insta360" and source.suffix.lower() in {".insv", ".lrv"}:
-        manifest.update(
-            status="waiting_for_insta360_sdk",
-            message="Insta360 raw source recognized; official SDK integration is pending. No fake remux was attempted.",
-        )
-        if not args.dry_run:
-            manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
-        print("INSTA360_WAITING_SDK: raw file recognized; dataset processing intentionally not started")
-        return 2
-
     panorama = run_dir / "intermediate/panorama_factory_calibrated.mp4"
     sensor_metadata = run_dir / "sensor-metadata"
     log = run_dir / "pipeline.log"
@@ -237,6 +252,24 @@ def main() -> int:
             run("dji_factory_stitch", stitch, log, args.dry_run)
         else:
             print(f"[dji_factory_stitch] reuse {panorama}")
+    elif camera == "insta360" and source.suffix.lower() in {".insv", ".lrv"}:
+        stitch = [
+            sys.executable, str(ROOT / "insta360_media_stitch.py"), str(source), str(panorama),
+            "--sdk-root", str(args.insta_sdk_root.resolve()), "--width", str(args.stitch_width),
+            "--stitch-type", args.insta_stitch_type,
+        ]
+        if args.insta_disable_cuda:
+            stitch.append("--disable-cuda")
+        if args.insta_soft_decode:
+            stitch.append("--soft-decode")
+        if args.insta_soft_encode:
+            stitch.append("--soft-encode")
+        if args.force:
+            stitch.append("--force")
+        if args.force or not panorama.is_file():
+            run("insta360_official_stitch", stitch, log, args.dry_run)
+        else:
+            print(f"[insta360_official_stitch] reuse {panorama}")
     else:
         panorama = source
 
@@ -253,7 +286,7 @@ def main() -> int:
     ]
     if args.tag_map:
         track.extend(("--tag-map", str(args.tag_map.resolve()), "--min-tags", "2",
-                      "--pnp-points", "corners", "--pnp-solver", "ippe"))
+                      "--pnp-points", "corners", "--pnp-solver", "iterative"))
     else:
         track.extend((
             "--tag-size", str(args.tag_size), "--spacing", str(args.spacing),
@@ -304,8 +337,15 @@ def main() -> int:
         export.append("--extract-frames")
     run("dataset", export, log, args.dry_run)
 
+    calibration_status = (
+        str(tag_map_identity.get("calibration_status", "")).upper()
+        if tag_map_identity else ""
+    )
+    calibrated_world = calibration_status in {"CALIBRATED", "FROZEN", "VERIFIED"}
     manifest.update(
-        status="complete", projection_backend=projection_backend,
+        status=("complete" if not tag_map_identity or calibrated_world else "diagnostic_provisional_map"),
+        training_ready=bool(not tag_map_identity or calibrated_world),
+        projection_backend=projection_backend,
         outputs={
             "dataset": str(dataset), "metadata": str(dataset / "metadata.json"),
             "trajectory": str(dataset / "annotations/trajectory_6dof.csv"),
@@ -317,7 +357,10 @@ def main() -> int:
     if args.dry_run:
         print(f"DRY_RUN_COMPLETE planned_dataset={dataset}")
     else:
-        print(f"DATASET_READY {dataset}")
+        if tag_map_identity and not calibrated_world:
+            print(f"DATASET_DIAGNOSTIC_ONLY provisional_tag_map={dataset}")
+        else:
+            print(f"DATASET_READY {dataset}")
     return 0
 
 

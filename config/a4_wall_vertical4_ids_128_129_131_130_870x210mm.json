@@ -1,0 +1,29 @@
+{
+  "schema_version": "independent-apriltag-map/1.0",
+  "dictionary": "APRILTAG_36h11",
+  "description": "Four 200 mm tags stacked vertically, top-to-bottom 128,129,131,130. Geometry uses the user-measured complete panel size 870 x 210 mm, giving a 223.333 mm vertical centre pitch.",
+  "units": "m",
+  "tag_outer_size_m": 0.2,
+  "panel_size_m": [0.21, 0.87],
+  "tag_center_pitch_y_m": 0.22333333333333333,
+  "origin": "center of the measured 870 x 210 mm panel",
+  "axes": "x right, y down, z out of wall",
+  "tags": [
+    {
+      "id": 128,
+      "corners_m": [[-0.10, -0.435, 0.0], [0.10, -0.435, 0.0], [0.10, -0.235, 0.0], [-0.10, -0.235, 0.0]]
+    },
+    {
+      "id": 129,
+      "corners_m": [[-0.10, -0.2116666667, 0.0], [0.10, -0.2116666667, 0.0], [0.10, -0.0116666667, 0.0], [-0.10, -0.0116666667, 0.0]]
+    },
+    {
+      "id": 131,
+      "corners_m": [[-0.10, 0.0116666667, 0.0], [0.10, 0.0116666667, 0.0], [0.10, 0.2116666667, 0.0], [-0.10, 0.2116666667, 0.0]]
+    },
+    {
+      "id": 130,
+      "corners_m": [[-0.10, 0.235, 0.0], [0.10, 0.235, 0.0], [0.10, 0.435, 0.0], [-0.10, 0.435, 0.0]]
+    }
+  ]
+}

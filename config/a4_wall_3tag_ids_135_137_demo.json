@@ -1,0 +1,24 @@
+{
+  "schema_version": "independent-apriltag-map/1.0",
+  "dictionary": "APRILTAG_36h11",
+  "description": "Demo-only left wall subset excluding ID134 because the capture displayed a second ID134 on the computer monitor.",
+  "units": "m",
+  "tag_outer_size_m": 0.2,
+  "sheet_size_m": [0.21, 0.297],
+  "origin": "center of the original four-sheet panel",
+  "axes": "x right, y down, z out of wall",
+  "tags": [
+    {
+      "id": 136,
+      "corners_m": [[-0.205, -0.2485, 0.0], [-0.005, -0.2485, 0.0], [-0.005, -0.0485, 0.0], [-0.205, -0.0485, 0.0]]
+    },
+    {
+      "id": 137,
+      "corners_m": [[-0.205, 0.0485, 0.0], [-0.005, 0.0485, 0.0], [-0.005, 0.2485, 0.0], [-0.205, 0.2485, 0.0]]
+    },
+    {
+      "id": 135,
+      "corners_m": [[0.005, 0.0485, 0.0], [0.205, 0.0485, 0.0], [0.205, 0.2485, 0.0], [0.005, 0.2485, 0.0]]
+    }
+  ]
+}

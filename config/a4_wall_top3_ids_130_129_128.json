@@ -1,0 +1,24 @@
+{
+  "schema_version": "independent-apriltag-map/1.0",
+  "dictionary": "APRILTAG_36h11",
+  "description": "Visible top row of the 2026-08-23 six-sheet wall: left-to-right 130,129,128. This capture-specific map excludes the occluded lower row and duplicate IDs on the adjacent wall.",
+  "units": "m",
+  "tag_outer_size_m": 0.2,
+  "sheet_size_m": [0.21, 0.297],
+  "origin": "center of the top row",
+  "axes": "x right, y down, z out of wall",
+  "tags": [
+    {
+      "id": 130,
+      "corners_m": [[-0.31, -0.10, 0.0], [-0.11, -0.10, 0.0], [-0.11, 0.10, 0.0], [-0.31, 0.10, 0.0]]
+    },
+    {
+      "id": 129,
+      "corners_m": [[-0.10, -0.10, 0.0], [0.10, -0.10, 0.0], [0.10, 0.10, 0.0], [-0.10, 0.10, 0.0]]
+    },
+    {
+      "id": 128,
+      "corners_m": [[0.11, -0.10, 0.0], [0.31, -0.10, 0.0], [0.31, 0.10, 0.0], [0.11, 0.10, 0.0]]
+    }
+  ]
+}

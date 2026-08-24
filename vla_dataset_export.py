@@ -24,8 +24,10 @@ import py360convert
 from scipy.ndimage import median_filter
 from scipy.spatial.transform import Rotation, Slerp
 
+from world_frames import compile_world_tag_map
 
-SCHEMA_VERSION = "vla-episode/1.0"
+
+SCHEMA_VERSION = "vla-episode/1.1"
 
 
 def _number(row: dict[str, str], names: tuple[str, ...], default: float = math.nan) -> float:
@@ -79,6 +81,11 @@ class PoseSeries:
     rotation: Rotation
     direct: np.ndarray
     tracked: np.ndarray
+    rmse_px: np.ndarray
+    parent_frame: str = ""
+    child_frame: str = ""
+    tag_map_sha256: str = ""
+    detected_ids: frozenset[int] = frozenset()
 
 
 def load_pose_csv(path: Path) -> PoseSeries:
@@ -87,7 +94,11 @@ def load_pose_csv(path: Path) -> PoseSeries:
     if len(rows) < 2:
         raise ValueError(f"pose CSV needs at least two rows: {path}")
 
-    times, positions, quaternions, direct, tracked = [], [], [], [], []
+    times, positions, quaternions, direct, tracked, rmses = [], [], [], [], [], []
+    parent_frames: set[str] = set()
+    child_frames: set[str] = set()
+    tag_map_hashes: set[str] = set()
+    detected_ids: set[int] = set()
     for row in rows:
         t = _number(row, ("timestamp_s", "timestamp", "time_s", "time"))
         p = [
@@ -113,14 +124,36 @@ def load_pose_csv(path: Path) -> PoseSeries:
         if not math.isfinite(t) or not np.all(np.isfinite(p)):
             continue
         source = row.get("measurement_source", "").strip().lower()
+        source_kind = source.rsplit(":", 1)[-1]
+        source_is_trusted = not source.startswith("secondary_map:")
         quality = row.get("quality_status", row.get("state", "valid")).strip().lower()
         explicit = row.get("direct_measurement", "").strip().lower()
-        is_direct = explicit in {"1", "true", "yes"} if explicit else source in {"", "direct", "measured"}
+        is_direct = explicit in {"1", "true", "yes"} if explicit else source_kind in {"", "direct", "measured"}
+        is_direct = is_direct and source_is_trusted
         is_direct = is_direct and quality not in {"invalid", "lost", "searching", "predicted"}
-        is_tracked = quality in {"valid", "tracked", "filtered"} and source in {
+        is_tracked = quality in {"valid", "tracked", "filtered"} and source_kind in {
             "", "direct", "measured", "optical_flow", "flow"
-        }
-        times.append(t); positions.append(p); quaternions.append(q); direct.append(is_direct); tracked.append(is_tracked)
+        } and source_is_trusted
+        parent = row.get("parent_frame", "").strip()
+        child = row.get("child_frame", "").strip()
+        tag_hash = row.get("tag_map_sha256", "").strip()
+        if parent:
+            parent_frames.add(parent)
+        if child:
+            child_frames.add(child)
+        if tag_hash:
+            tag_map_hashes.add(tag_hash)
+        for value in row.get("detected_ids", "").replace(",", " ").split():
+            try:
+                detected_ids.add(int(value))
+            except ValueError:
+                pass
+        times.append(t); positions.append(p); quaternions.append(q)
+        direct.append(is_direct); tracked.append(is_tracked)
+        rmses.append(_number(row, ("reprojection_rmse_px",)))
+
+    if len(parent_frames) > 1 or len(child_frames) > 1 or len(tag_map_hashes) > 1:
+        raise ValueError(f"pose CSV mixes coordinate-frame metadata: {path}")
 
     order = np.argsort(times)
     time = np.asarray(times, dtype=float)[order]
@@ -131,6 +164,11 @@ def load_pose_csv(path: Path) -> PoseSeries:
         rotation=Rotation.from_quat(np.asarray(quaternions, dtype=float)[order][keep]),
         direct=np.asarray(direct, dtype=bool)[order][keep],
         tracked=np.asarray(tracked, dtype=bool)[order][keep],
+        rmse_px=np.asarray(rmses, dtype=float)[order][keep],
+        parent_frame=next(iter(parent_frames), ""),
+        child_frame=next(iter(child_frames), ""),
+        tag_map_sha256=next(iter(tag_map_hashes), ""),
+        detected_ids=frozenset(detected_ids),
     )
 
 
@@ -333,11 +371,24 @@ def _hardware_robot(hardware: dict[str, Any], name: str) -> dict[str, Any]:
     return hardware.get("robots", {}).get(name, {})
 
 
+def _camera_serial_from_calibration(path: Path | None) -> str:
+    """Return the physical camera serial recorded by a factory calibration file."""
+    if path is None or not path.is_file():
+        return ""
+    value = _load_json(path).get("serial", "")
+    return str(value).strip() if value is not None else ""
+
+
 def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
-                  allow_unready: bool = False) -> dict[str, Any]:
+                  allow_unready: bool = False,
+                  hardware_override: Path | None = None) -> dict[str, Any]:
     spec_path = spec_path.resolve(); base = spec_path.parent
     spec = _load_json(spec_path)
-    hardware_path = _resolve(base, spec.get("hardware_config"))
+    hardware_path = (
+        hardware_override.resolve()
+        if hardware_override is not None
+        else _resolve(base, spec.get("hardware_config"))
+    )
     hardware = _load_json(hardware_path) if hardware_path else {"calibration_status": "pending", "robots": {}}
     robots = spec.get("robots", [])
     if not robots:
@@ -351,6 +402,35 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
     arrays: dict[str, np.ndarray] = {"timestamp_s": (timeline - start).astype(np.float64)}
     checks: list[dict[str, Any]] = []
     per_robot: list[dict[str, Any]] = []
+    coordinate = spec.get("coordinate_frame", {})
+    world_mode = coordinate.get("mode") == "world"
+    world_frame = str(coordinate.get("frame_id", "")).strip()
+    world_map_path = _resolve(base, coordinate.get("tag_map"))
+    world_map = compile_world_tag_map(world_map_path) if world_map_path else None
+    expected_map_hash = world_map["tag_map_sha256"] if world_map else ""
+    expected_ids = {
+        int(tag["id"]) for tag in world_map.get("tags", [])
+    } if world_map else set()
+    calibration_status = str(
+        world_map.get("calibration_status", "") if world_map else ""
+    ).upper()
+    calibration_final = calibration_status in {"CALIBRATED", "FROZEN", "VERIFIED"}
+    if len(robots) > 1:
+        checks.extend([
+            {"name": "coordinate.world_mode", "pass": world_mode, "value": coordinate.get("mode")},
+            {"name": "coordinate.world_frame_declared", "pass": bool(world_frame), "value": world_frame},
+            {"name": "coordinate.global_tag_map_present", "pass": world_map is not None,
+             "value": str(world_map_path) if world_map_path else None},
+            {"name": "coordinate.global_tag_map_calibrated", "pass": calibration_final,
+             "value": calibration_status or None},
+        ])
+        if world_map and world_frame:
+            checks.append({
+                "name": "coordinate.world_frame_matches_map",
+                "pass": world_map.get("world_frame") == world_frame,
+                "value": world_map.get("world_frame"),
+            })
+    world_positions: dict[str, np.ndarray] = {}
 
     for index, robot in enumerate(robots):
         name = robot.get("name", f"robot{index}")
@@ -359,8 +439,50 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
         if pose_path is None or not pose_path.is_file():
             raise ValueError(f"missing trajectory for {name}")
         pose_series = load_pose_csv(pose_path)
+        if world_mode:
+            checks.extend([
+                {"name": f"{name}.pose_parent_frame_matches", "pass": pose_series.parent_frame == world_frame,
+                 "value": pose_series.parent_frame or None},
+                {"name": f"{name}.pose_child_frame_is_camera",
+                 "pass": pose_series.child_frame == "panorama_camera",
+                 "value": pose_series.child_frame or None},
+                {"name": f"{name}.tag_map_hash_matches",
+                 "pass": bool(expected_map_hash) and pose_series.tag_map_sha256 == expected_map_hash,
+                 "value": pose_series.tag_map_sha256 or None},
+                {"name": f"{name}.detected_ids_in_global_map",
+                 "pass": bool(pose_series.detected_ids) and pose_series.detected_ids <= expected_ids,
+                 "value": sorted(pose_series.detected_ids)},
+            ])
         position, rotation, direct, tracked = resample_pose(pose_series, local_time)
         hw = _hardware_robot(hardware, name)
+        serial_binding_declared = "camera_serial" in robot or "camera_calibration" in robot
+        declared_serial = str(robot.get("camera_serial", "")).strip()
+        hardware_serial = str(hw.get("camera_serial", "")).strip()
+        calibration_path = _resolve(base, robot.get("camera_calibration"))
+        actual_serial = _camera_serial_from_calibration(calibration_path)
+        if serial_binding_declared:
+            checks.extend([
+                {"name": f"{name}.camera_serial_declared", "pass": bool(declared_serial),
+                 "value": declared_serial or None},
+                {"name": f"{name}.camera_calibration_present",
+                 "pass": calibration_path is not None and calibration_path.is_file(),
+                 "value": str(calibration_path) if calibration_path else None},
+                {"name": f"{name}.camera_serial_matches_hardware",
+                 "pass": bool(declared_serial and hardware_serial) and declared_serial == hardware_serial,
+                 "value": {"episode": declared_serial or None, "hardware": hardware_serial or None}},
+                {"name": f"{name}.camera_serial_matches_calibration",
+                 "pass": bool(declared_serial and actual_serial) and declared_serial == actual_serial,
+                 "value": {"episode": declared_serial or None, "calibration": actual_serial or None}},
+                {"name": f"{name}.hardware_camera_serial_matches_calibration",
+                 "pass": bool(hardware_serial and actual_serial) and hardware_serial == actual_serial,
+                 "value": {"hardware": hardware_serial or None, "calibration": actual_serial or None}},
+                {"name": f"{name}.camera_source_view_declared",
+                 "pass": bool(str(hw.get("source_view", "")).strip()),
+                 "value": str(hw.get("source_view", "")).strip() or None},
+                {"name": f"{name}.camera_mount_revision_declared",
+                 "pass": bool(str(hw.get("mount_revision", "")).strip()),
+                 "value": str(hw.get("mount_revision", "")).strip() or None},
+            ])
         extrinsic = hw.get("camera_to_tcp")
         position, rotation = apply_camera_to_tcp(position, rotation, extrinsic)
         raw_position = position.copy()
@@ -376,10 +498,16 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
         angle, width, angle_direct = load_gripper(
             _resolve(base, robot.get("gripper_csv")), local_time, hw.get("gripper_width_calibration")
         )
-        arrays[f"robot{index}_eef_pos"] = relative_p.astype(np.float32)
-        arrays[f"robot{index}_eef_pos_raw"] = raw_relative_p.astype(np.float32)
-        arrays[f"robot{index}_eef_rot_axis_angle"] = relative_r.as_rotvec().astype(np.float32)
-        arrays[f"robot{index}_eef_rot_6d"] = _rot6d(relative_r)
+        stored_p = position if world_mode else relative_p
+        stored_raw_p = raw_position if world_mode else raw_relative_p
+        stored_r = rotation if world_mode else relative_r
+        arrays[f"robot{index}_eef_pos"] = stored_p.astype(np.float32)
+        arrays[f"robot{index}_eef_pos_raw"] = stored_raw_p.astype(np.float32)
+        arrays[f"robot{index}_eef_rot_axis_angle"] = stored_r.as_rotvec().astype(np.float32)
+        arrays[f"robot{index}_eef_rot_6d"] = _rot6d(stored_r)
+        arrays[f"robot{index}_eef_delta_from_start_pos"] = relative_p.astype(np.float32)
+        arrays[f"robot{index}_eef_delta_from_start_rot_axis_angle"] = relative_r.as_rotvec().astype(np.float32)
+        arrays[f"robot{index}_eef_delta_from_start_rot_6d"] = _rot6d(relative_r)
         arrays[f"robot{index}_gripper_width"] = width[:, None]
         arrays[f"robot{index}_gripper_angle_deg"] = angle[:, None]
         arrays[f"robot{index}_pose_measured"] = direct
@@ -388,9 +516,9 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
         arrays[f"robot{index}_pose_outlier_rejected"] = rejected
         arrays[f"robot{index}_gripper_measured"] = angle_direct
         arrays[f"robot{index}_demo_start_pose"] = np.tile(
-            np.r_[relative_p[0], relative_r[0].as_rotvec()], (len(timeline), 1)).astype(np.float32)
+            np.r_[stored_p[0], stored_r[0].as_rotvec()], (len(timeline), 1)).astype(np.float32)
         arrays[f"robot{index}_demo_end_pose"] = np.tile(
-            np.r_[relative_p[-1], relative_r[-1].as_rotvec()], (len(timeline), 1)).astype(np.float32)
+            np.r_[stored_p[-1], stored_r[-1].as_rotvec()], (len(timeline), 1)).astype(np.float32)
 
         video_path = _resolve(base, robot.get("video"))
         if not skip_rgb:
@@ -414,6 +542,15 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
         maximum_rejected = float(quality_config.get("max_outlier_rejected_ratio", 0.08))
         checks.extend([
             {"name": f"{name}.camera_to_tcp_verified", "pass": bool(extrinsic and hw.get("camera_to_tcp_verified"))},
+            {"name": f"{name}.camera_to_tcp_direction_explicit", "pass": bool(
+                extrinsic
+                and extrinsic.get("parent_frame") == "panorama_camera"
+                and extrinsic.get("child_frame") == f"{name}_tcp"
+            ) if world_mode else True,
+             "value": {
+                 "parent_frame": extrinsic.get("parent_frame") if extrinsic else None,
+                 "child_frame": extrinsic.get("child_frame") if extrinsic else None,
+             }},
             {"name": f"{name}.gripper_width_verified", "pass": bool(hw.get("gripper_width_calibration") and hw.get("gripper_width_verified"))},
             {"name": f"{name}.tracked_pose_ratio>={minimum_tracked:.2f}", "pass": tracked_ratio >= minimum_tracked, "value": tracked_ratio},
             {"name": f"{name}.direct_refresh_success>={minimum_refresh:.2f}", "pass": refresh_success >= minimum_refresh, "value": refresh_success},
@@ -423,10 +560,51 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
             {"name": f"{name}.outlier_rejected_ratio<={maximum_rejected:.2f}", "pass": motion_audit["rejected_ratio"] <= maximum_rejected, "value": motion_audit["rejected_ratio"]},
             {"name": f"{name}.rgb_present", "pass": not skip_rgb},
         ])
+        finite_rmse = pose_series.rmse_px[np.isfinite(pose_series.rmse_px)]
+        median_rmse = float(np.median(finite_rmse)) if len(finite_rmse) else math.inf
+        p95_rmse = float(np.quantile(finite_rmse, 0.95)) if len(finite_rmse) else math.inf
+        if world_mode:
+            checks.extend([
+                {"name": f"{name}.pnp_median_rmse<=1.5px", "pass": median_rmse <= 1.5,
+                 "value": median_rmse if math.isfinite(median_rmse) else None},
+                {"name": f"{name}.pnp_p95_rmse<=3.0px", "pass": p95_rmse <= 3.0,
+                 "value": p95_rmse if math.isfinite(p95_rmse) else None},
+            ])
+        if world_mode:
+            world_positions[name] = stored_p.copy()
         per_robot.append({
             "name": name, "direct_pose_ratio": direct_ratio,
             "tracked_pose_ratio": tracked_ratio, "direct_refresh_success": refresh_success,
             "longest_tracked_gap_frames": longest_gap, "motion_audit": motion_audit,
+            "parent_frame": pose_series.parent_frame or None,
+            "child_frame": pose_series.child_frame or None,
+            "tag_map_sha256": pose_series.tag_map_sha256 or None,
+            "pnp_median_rmse_px": median_rmse if math.isfinite(median_rmse) else None,
+            "pnp_p95_rmse_px": p95_rmse if math.isfinite(p95_rmse) else None,
+            "camera_serial": declared_serial or None,
+            "camera_calibration": str(calibration_path) if calibration_path else None,
+            "calibration_camera_serial": actual_serial or None,
+            "hardware_camera_serial": hardware_serial or None,
+            "source_view": hw.get("source_view"),
+            "mount_revision": hw.get("mount_revision"),
+        })
+
+    workspace = spec.get("workspace", {})
+    if world_mode and len(world_positions) > 1 and workspace.get("type") == "tabletop":
+        minimum_z = float(workspace.get("minimum_tcp_z_m", -0.10))
+        maximum_median_difference = float(workspace.get("max_robot_median_z_difference_m", 0.25))
+        medians = {name: float(np.median(values[:, 2])) for name, values in world_positions.items()}
+        checks.append({
+            "name": "coordinate.tcp_not_below_table",
+            "pass": all(float(np.quantile(values[:, 2], 0.01)) >= minimum_z
+                        for values in world_positions.values()),
+            "value": {name: float(np.quantile(values[:, 2], 0.01))
+                      for name, values in world_positions.items()},
+        })
+        checks.append({
+            "name": "coordinate.robot_workspace_height_consistent",
+            "pass": max(medians.values()) - min(medians.values()) <= maximum_median_difference,
+            "value": medians,
         })
 
     action_parts = []
@@ -471,19 +649,52 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
         "training_frames": int(len(training_indices)), "training_episodes": len(training_runs),
         "training_segments": [[start_index, end_index] for start_index, end_index in training_runs],
         "robots": per_robot, "hardware_config": str(hardware_path) if hardware_path else None,
-        "training_ready": ready, "status": "READY" if ready else "DRAFT_HARDWARE_OR_QUALITY_PENDING",
+        "training_ready": ready,
+        "status": (
+            "READY" if ready else
+            "PROVISIONAL_COMMON_WORLD_NOT_TRAINING_READY"
+            if world_mode and not calibration_final else
+            "DRAFT_HARDWARE_OR_QUALITY_PENDING"
+        ),
         "tag_visibility_policy": spec.get("tag_visibility_policy", "unspecified"),
+        "coordinate_frame": {
+            "mode": "world" if world_mode else "per_robot_start_local",
+            "frame_id": world_frame if world_mode else None,
+            "tag_map": str(world_map_path) if world_map_path else None,
+            "tag_map_sha256": expected_map_hash or None,
+            "calibration_status": calibration_status or None,
+        },
     }
     report = {"training_ready": ready, "checks": checks, "failed": [c["name"] for c in checks if not c["pass"]]}
     (output_dir / "episode_metadata.json").write_text(json.dumps(metadata, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (output_dir / "quality_report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (output_dir / "episode_spec.snapshot.json").write_text(json.dumps(spec, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
-    if ready or allow_unready:
+    critical_prefixes = ("coordinate.",)
+    critical_failures = [
+        check["name"] for check in checks
+        if not check["pass"] and (
+            check["name"].startswith(critical_prefixes)
+            or ".pose_parent_frame" in check["name"]
+            or ".pose_child_frame" in check["name"]
+            or ".tag_map_hash" in check["name"]
+            or ".detected_ids_in_global_map" in check["name"]
+            or ".camera_to_tcp_direction_explicit" in check["name"]
+            or ".camera_serial" in check["name"]
+            or ".hardware_camera_serial" in check["name"]
+            or ".camera_calibration_present" in check["name"]
+            or ".camera_source_view_declared" in check["name"]
+            or ".camera_mount_revision_declared" in check["name"]
+        )
+    ]
+    report["critical_failures"] = critical_failures
+    if ready:
         if not np.all(np.isfinite(arrays["action"])):
             report["umi_export"] = "blocked: action contains uncalibrated values"
         elif skip_rgb:
             report["umi_export"] = "blocked: RGB was skipped"
+        elif not len(training_indices):
+            report["umi_export"] = "blocked: no continuous trusted training segment"
         else:
             import zarr
             store = zarr.ZipStore(str(output_dir / "dataset.zarr.zip"), mode="w")
@@ -499,6 +710,27 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
             meta.create_dataset("episode_ends", data=np.asarray(episode_ends, dtype=np.int64))
             store.close(); report["umi_export"] = "dataset.zarr.zip"
         (output_dir / "quality_report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    else:
+        report["umi_export"] = (
+            "blocked: invalid or uncalibrated common coordinate frame"
+            if critical_failures else "blocked: quality gates failed"
+        )
+        if allow_unready:
+            report["allow_unready_notice"] = (
+                "--allow-unready keeps diagnostic NPZ output but never bypasses training Zarr gates"
+            )
+        stale_dataset = output_dir / "dataset.zarr.zip"
+        if stale_dataset.exists():
+            quarantined = output_dir / "dataset.zarr.zip.NOT_TRAINING_READY"
+            if quarantined.exists():
+                raise RuntimeError(
+                    f"cannot quarantine stale Zarr because target exists: {quarantined}"
+                )
+            stale_dataset.replace(quarantined)
+            report["quarantined_stale_zarr"] = str(quarantined)
+    (output_dir / "quality_report.json").write_text(
+        json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     return metadata
 
 
@@ -507,13 +739,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("episode_spec", type=Path)
     parser.add_argument("output_dir", type=Path)
     parser.add_argument("--skip-rgb", action="store_true", help="validate signals without decoding video")
-    parser.add_argument("--allow-unready", action="store_true", help="attempt export despite failed gates")
+    parser.add_argument(
+        "--allow-unready", action="store_true",
+        help="deprecated compatibility flag; diagnostic NPZ is written but failed gates never produce Zarr",
+    )
+    parser.add_argument(
+        "--hardware-override", type=Path,
+        help="diagnostic-only hardware file; the episode spec remains unchanged",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    metadata = build_episode(args.episode_spec, args.output_dir, args.skip_rgb, args.allow_unready)
+    metadata = build_episode(
+        args.episode_spec, args.output_dir, args.skip_rgb, args.allow_unready,
+        args.hardware_override,
+    )
     print(json.dumps(metadata, indent=2, ensure_ascii=False))
     return 0
 

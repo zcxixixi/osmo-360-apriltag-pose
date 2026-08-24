@@ -1,0 +1,38 @@
+{
+  "schema_version": "capture-duplicate-apriltag-map/1.0",
+  "map_id": "a9abc654-legacy-duplicate-panels-v1",
+  "capture_uuid": "a9abc654-550a-4ef5-bb16-f8c2a4749ec2",
+  "calibration_status": "PROVISIONAL_TAPE_MEASURED_CAPTURE_SALVAGE",
+  "world_frame": "room_world",
+  "world_origin": "vertical wall seam projected onto tabletop",
+  "world_axes": "+X along right wall away from seam; +Y along left wall away from seam; +Z upward",
+  "units": "m",
+  "tag_size_m": 0.2,
+  "allow_duplicate_decoded_ids": true,
+  "duplicate_raw_ids": [128, 129, 130, 131],
+  "description": "Capture-only salvage map. The left vertical stack and right 3x2 panel physically reuse IDs 128,129,130,131. New production captures must use globally unique IDs instead.",
+  "panels": [
+    {
+      "name": "left_vertical_legacy",
+      "tag_map": "a4_wall_vertical4_ids_128_129_131_130_870x210mm.json",
+      "expected_ids": [128, 129, 130, 131],
+      "T_world_map": {
+        "parent_frame": "room_world",
+        "child_frame": "left_vertical_tag_map",
+        "translation_m": [0.0, -0.255, 0.985],
+        "quaternion_xyzw": [0.5, 0.5, -0.5, -0.5]
+      }
+    },
+    {
+      "name": "right_grid_legacy",
+      "tag_map": "a4_wall_6tag_ids_128_133.json",
+      "expected_ids": [128, 129, 130, 131, 132, 133],
+      "T_world_map": {
+        "parent_frame": "room_world",
+        "child_frame": "right_grid_tag_map",
+        "translation_m": [0.655, 0.0, 0.867],
+        "quaternion_xyzw": [0.7071067811865475, 0.0, 0.0, -0.7071067811865476]
+      }
+    }
+  ]
+}

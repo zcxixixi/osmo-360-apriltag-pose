@@ -48,8 +48,19 @@ def read_rows(path: Path) -> list[dict[str, str]]:
 
 def load_extrinsic(path: Path) -> tuple[np.ndarray, Rotation]:
     data = json.loads(path.read_text(encoding="utf-8"))
-    translation = np.asarray(data["translation_gripper_origin_in_camera_m"], float)
-    rotation = Rotation.from_matrix(np.asarray(data["rotation_gripper_to_camera"], float))
+    framed = data.get("camera_to_tcp")
+    if not isinstance(framed, dict):
+        raise ValueError(
+            f"{path} contains only the deprecated camera->base fields; "
+            "regenerate it with estimate_gripper_extrinsic.py before rendering TCP data"
+        )
+    if (
+        framed.get("parent_frame") != "panorama_camera"
+        or framed.get("child_frame") not in {"gripper_tcp", "left_tcp", "right_tcp"}
+    ):
+        raise ValueError(f"ambiguous camera_to_tcp frame direction in {path}")
+    translation = np.asarray(framed["translation_m"], float)
+    rotation = Rotation.from_quat(np.asarray(framed["quaternion_xyzw"], float))
     if translation.shape != (3,):
         raise ValueError(f"invalid extrinsic translation in {path}")
     return translation, rotation

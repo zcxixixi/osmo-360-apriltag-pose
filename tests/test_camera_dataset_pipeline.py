@@ -31,6 +31,15 @@ def test_camera_detection_accepts_stitched_panorama(monkeypatch, tmp_path: Path)
     assert camera_to_dataset.detect_source(tmp_path / "stitched.mp4")[0] == "panorama"
 
 
+def test_camera_detection_preserves_insta_identity_for_dual_fisheye_lrv(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        camera_to_dataset,
+        "ffprobe",
+        lambda _path: video_probe(2048, 1024, 1),
+    )
+    assert camera_to_dataset.detect_source(tmp_path / "preview.lrv")[0] == "insta360"
+
+
 def test_auto_projection_is_deferred_to_camera_profile(monkeypatch):
     monkeypatch.setattr(camera_to_dataset, "cuda_available", lambda: True)
     assert camera_to_dataset.backend("auto") == "auto"
@@ -48,3 +57,7 @@ def test_packaged_dji_entrypoints_and_panoforge_exist():
     assert (camera_to_dataset.ROOT / "camera-to-dataset").is_file()
     assert (camera_to_dataset.ROOT / "dji_osv_stitch.py").is_file()
     assert (camera_to_dataset.PANOFORGE_ROOT / "app/core/maps.py").is_file()
+
+
+def test_official_insta360_stitch_adapter_exists():
+    assert (camera_to_dataset.ROOT / "insta360_media_stitch.py").is_file()
