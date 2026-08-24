@@ -7,8 +7,14 @@
       "camera_serial": "95SXN9H0423SGG",
       "source_view": "view2",
       "tag_id": 2,
-      "tag_corner_quarter_turns": 0,
-      "ippe_branch": 1
+      "tag_corner_quarter_turns": 1,
+      "ippe_branch": 1,
+      "heading_correction": {
+        "previous_quarter_turns": 0,
+        "rotation_about_gripper_plane_normal_deg": -90,
+        "reason": "Physical left fingertip pointed upper-right while the virtual fingertip pointed lower-right.",
+        "effect": "Rotates the left base_link heading by -90 degrees while preserving the gripper-plane +Z normal."
+      }
     },
     "right": {
       "camera_serial": "95SXNAD0425JCY",

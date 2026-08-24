@@ -1,4 +1,12 @@
-# Dual-gripper axis/frame fix v3
+# Dual-gripper axis/frame fix v4
+
+## Left-gripper heading correction
+
+A tissue keyframe showed the physical left fingertip pointing upper-right while the v3
+virtual fingertip pointed lower-right. The left mount is changed from Tag quarter-turn
+`0` to `1` (IPPE branch remains `1`), a -90 degree physical camera→base heading
+correction. The gripper-plane normal is unchanged. All three diagnostic datasets and
+servers were regenerated as v4.
 
 ## Right-gripper heading correction
 
@@ -7,11 +15,11 @@ reversed its in-plane fingertip direction. It is now changed to quarter-turn `0`
 branch `0`. This is a physical `camera→base_link` correction, not a renderer rotation.
 It reverses the right gripper `+X/+Y` directions by 180 degrees while preserving its
 already-correct plane normal (`+Z`). The selection is frozen in
-`config/gripper_mount_selections_axisfix_v3.json`.
+`config/gripper_mount_selections_axisfix_v4.json`.
 
-The new U-disk diagnostic A-point gap is `125.1 mm` (previous honest v2 value was
-`231.5 mm`). It remains a failed common-space validation, but is not fitted or hidden.
-The v3 interactive diagnostic is served on port 7867.
+The v4 U-disk diagnostic A-point gap is `191.7 mm`. It remains a failed common-space
+validation and is not fitted or hidden.
+The v4 interactive diagnostics are served on ports 7867–7869.
 
 ## What is fixed in code
 
@@ -31,17 +39,19 @@ The v3 interactive diagnostic is served on port 7867.
 
 U disk:
 
-- `demo-output/upan-20260823/hardware-axisfix-v3.json`
-- `demo-output/upan-20260823/dataset-axisfix-v3/`
-- `demo-output/upan-20260823/upan_axisfix_v3_diagnostic_timeline.json`
+- `demo-output/upan-20260823/hardware-axisfix-v4.json`
+- `demo-output/upan-20260823/dataset-axisfix-v4/`
+- `demo-output/upan-20260823/upan_axisfix_v4_diagnostic_timeline.json`
 
 Earphone:
 
-- `/home/cenxi/Videos/umi-captures/20260823/regression-earphone/dataset-axisfix-v3/`
-- `/home/cenxi/Videos/umi-captures/20260823/regression-earphone/earphone_axisfix_v3_diagnostic_timeline.json`
+- `/home/cenxi/Videos/umi-captures/20260823/regression-earphone/dataset-axisfix-v4/`
+- `/home/cenxi/Videos/umi-captures/20260823/regression-earphone/earphone_axisfix_v4_diagnostic_timeline.json`
+- `/home/cenxi/Videos/umi-captures/20260823/regression-tissue/dataset-axisfix-v4/`
+- `/home/cenxi/Videos/umi-captures/20260823/regression-tissue/tissue_axisfix_v4_diagnostic_timeline.json`
 
-The v3 U-disk timeline reports the independently replayed DROP/PICK A-point gap as
-`125.1 mm`, not the overfit `0.38 mm`. This is intentionally still a failed validation and
+The v4 U-disk timeline reports the independently replayed DROP/PICK A-point gap as
+`191.7 mm`, not the overfit `0.38 mm`. This is intentionally still a failed validation and
 proves that the remaining shared-space error is no longer hidden by `shared-a`.
 
 At the first diagnostic frame, both gripper-plane normals agree with physical up to about
