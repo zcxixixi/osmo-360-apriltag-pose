@@ -1,0 +1,28 @@
+{
+  "schema_version": "gripper-mount-selection/1.0",
+  "status": "DIAGNOSTIC_AWAITING_MULTI_ANCHOR_CONFIRMATION",
+  "coordinate_bridge": "PanoForge body XYZ -> OpenCV panorama: +X->+Z, +Y->-X, +Z->-Y",
+  "mounts": {
+    "left": {
+      "camera_serial": "95SXN9H0423SGG",
+      "source_view": "view2",
+      "tag_id": 2,
+      "tag_corner_quarter_turns": 0,
+      "ippe_branch": 1
+    },
+    "right": {
+      "camera_serial": "95SXNAD0425JCY",
+      "source_view": "view1",
+      "tag_id": 2,
+      "tag_corner_quarter_turns": 0,
+      "ippe_branch": 0,
+      "heading_correction": {
+        "previous_quarter_turns": 2,
+        "rotation_about_gripper_plane_normal_deg": 180,
+        "reason": "The virtual right fingertip +X pointed right while the physical right gripper pointed left.",
+        "effect": "Negates base_link +X and +Y while preserving the already-correct gripper-plane +Z normal."
+      }
+    }
+  },
+  "prohibited_compensations": ["renderer_rotation", "manual_layout_heading", "shared-a", "flat", "table"]
+}

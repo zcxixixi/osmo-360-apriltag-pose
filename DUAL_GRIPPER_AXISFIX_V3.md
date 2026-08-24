@@ -1,4 +1,17 @@
-# Dual-gripper axis/frame fix v2
+# Dual-gripper axis/frame fix v3
+
+## Right-gripper heading correction
+
+The v2 right mount used Tag quarter-turn `2`, which kept the gripper horizontal but
+reversed its in-plane fingertip direction. It is now changed to quarter-turn `0`, IPPE
+branch `0`. This is a physical `camera→base_link` correction, not a renderer rotation.
+It reverses the right gripper `+X/+Y` directions by 180 degrees while preserving its
+already-correct plane normal (`+Z`). The selection is frozen in
+`config/gripper_mount_selections_axisfix_v3.json`.
+
+The new U-disk diagnostic A-point gap is `125.1 mm` (previous honest v2 value was
+`231.5 mm`). It remains a failed common-space validation, but is not fitted or hidden.
+The v3 interactive diagnostic is served on port 7867.
 
 ## What is fixed in code
 
@@ -18,18 +31,18 @@
 
 U disk:
 
-- `demo-output/upan-20260823/hardware-axisfix-v2.json`
-- `demo-output/upan-20260823/dataset-axisfix-v2/`
-- `demo-output/upan-20260823/upan_axisfix_v2_diagnostic_timeline.json`
+- `demo-output/upan-20260823/hardware-axisfix-v3.json`
+- `demo-output/upan-20260823/dataset-axisfix-v3/`
+- `demo-output/upan-20260823/upan_axisfix_v3_diagnostic_timeline.json`
 
 Earphone:
 
-- `/home/cenxi/Videos/umi-captures/20260823/regression-earphone/dataset-axisfix-v2/`
-- `/home/cenxi/Videos/umi-captures/20260823/regression-earphone/earphone_axisfix_v2_diagnostic_timeline.json`
+- `/home/cenxi/Videos/umi-captures/20260823/regression-earphone/dataset-axisfix-v3/`
+- `/home/cenxi/Videos/umi-captures/20260823/regression-earphone/earphone_axisfix_v3_diagnostic_timeline.json`
 
-The v2 U-disk timeline reports the independently replayed DROP/PICK A-point gap as
-`231.5 mm`, not the overfit `0.38 mm`. This is intentionally a failed validation and proves
-that the remaining shared-space error is no longer hidden by `shared-a`.
+The v3 U-disk timeline reports the independently replayed DROP/PICK A-point gap as
+`125.1 mm`, not the overfit `0.38 mm`. This is intentionally still a failed validation and
+proves that the remaining shared-space error is no longer hidden by `shared-a`.
 
 At the first diagnostic frame, both gripper-plane normals agree with physical up to about
 `14 degrees` or better (absolute dot product `0.95+`), so the former horizontal-vs-vertical
