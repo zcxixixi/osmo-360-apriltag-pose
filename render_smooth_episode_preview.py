@@ -221,6 +221,7 @@ def main() -> int:
             ),
         },
         "coordinate_status": metadata.get("coordinate_frame", {}),
+        "eef_reference": metadata.get("eef_reference", {"type": "tcp"}),
         "attitude": {"mode": "SLERP display interpolation", "level_constraint": False},
         "bounds_m": {}, "tag_anchors": tag_anchors, "validation_events": validation_events,
         "segment_untrusted_tracks": bool(args.segment_untrusted_tracks), "frames": frames,

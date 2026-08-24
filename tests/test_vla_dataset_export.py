@@ -8,7 +8,8 @@ from scipy.spatial.transform import Rotation
 import zarr
 
 from vla_dataset_export import (
-    _compose_hardware_camera_to_tcp, _rot6d, build_episode, load_pose_csv, resample_pose,
+    _compose_hardware_camera_to_tcp, _rot6d, apply_camera_to_tcp,
+    build_episode, load_pose_csv, resample_pose,
 )
 from world_frames import compile_world_tag_map
 
@@ -36,6 +37,18 @@ def write_gripper(path: Path, duration: float = 4.0, fps: int = 20) -> None:
         writer.writeheader()
         for frame in range(int(duration * fps) + 1):
             writer.writerow({"time_s": frame / fps, "opening_angle_deg": frame / 2, "measured": 1})
+
+
+def test_mount_tag2_can_be_the_eef_reference_without_tcp_lever() -> None:
+    position = np.asarray([[1.0, 2.0, 3.0]])
+    rotation = Rotation.identity(1)
+    transformed, transformed_rotation = apply_camera_to_tcp(position, rotation, {
+        "parent_frame": "panorama_camera", "child_frame": "left_mount_tag2",
+        "translation_m": [0.04, 0.07, 0.0],
+        "quaternion_xyzw": [0, 0, 0, 1],
+    })
+    np.testing.assert_allclose(transformed, [[1.04, 2.07, 3.0]])
+    np.testing.assert_allclose(transformed_rotation.as_matrix(), np.eye(3)[None])
 
 
 def test_hardware_chain_composes_once_and_rejects_conflicting_tcp_alias() -> None:

@@ -312,11 +312,14 @@ def _compose_hardware_camera_to_tcp(robot: dict[str, Any]) -> dict[str, Any] | N
 
 def apply_camera_to_tcp(position: np.ndarray, rotation: Rotation,
                         calibration: dict[str, Any] | None) -> tuple[np.ndarray, Rotation]:
+    """Apply the EEF reference transform (legacy function name retained)."""
     if not calibration:
         return position.copy(), rotation
     transform = RigidTransform.from_dict(calibration)
-    if transform.parent_frame != "panorama_camera" or not transform.child_frame.endswith("tcp"):
-        raise ValueError("expected explicit panorama_camera→*_tcp transform")
+    if transform.parent_frame != "panorama_camera" or not (
+        transform.child_frame.endswith("tcp") or transform.child_frame.endswith("tag2")
+    ):
+        raise ValueError("expected panorama_camera→(*_tcp|*_tag2) transform")
     return (
         position + rotation.apply(np.broadcast_to(transform.translation_m, position.shape)),
         rotation * transform.rotation,
@@ -513,7 +516,9 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
                  "pass": bool(str(hw.get("mount_revision", "")).strip()),
                  "value": str(hw.get("mount_revision", "")).strip() or None},
             ])
-        extrinsic = _compose_hardware_camera_to_tcp(hw)
+        tag_reference = hw.get("camera_to_eef_reference")
+        use_mount_tag = isinstance(tag_reference, dict)
+        extrinsic = tag_reference if use_mount_tag else _compose_hardware_camera_to_tcp(hw)
         position, rotation = apply_camera_to_tcp(position, rotation, extrinsic)
         raw_position = position.copy()
         position, rejected, motion_audit = smooth_positions(position, timeline)
@@ -571,10 +576,18 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
         maximum_acceleration = float(quality_config.get("max_filtered_p99_acceleration_mps2", 6.0))
         maximum_rejected = float(quality_config.get("max_outlier_rejected_ratio", 0.08))
         checks.extend([
-            {"name": f"{name}.camera_to_tcp_verified", "pass": bool(extrinsic and hw.get("camera_to_tcp_verified"))},
+            {"name": f"{name}.eef_reference_verified", "pass": bool(
+                extrinsic and (
+                    hw.get("eef_reference_verified") if use_mount_tag
+                    else hw.get("camera_to_tcp_verified")
+                )
+            )},
+            {"name": f"{name}.camera_to_tcp_verified", "pass": bool(
+                extrinsic and hw.get("camera_to_tcp_verified")
+            ) if not use_mount_tag else True},
             {"name": f"{name}.physical_extrinsic_chain_explicit", "pass": bool(
                 hw.get("camera_to_base") and hw.get("base_to_tcp")
-            ) if world_mode else True},
+            ) if world_mode and not use_mount_tag else True},
             {"name": f"{name}.mount_revision_has_no_display_patch", "pass": not any(
                 token in str(hw.get("mount_revision", "")).lower()
                 for token in ("flat", "table", "shared-a", "shared_a")
@@ -582,7 +595,9 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
             {"name": f"{name}.camera_to_tcp_direction_explicit", "pass": bool(
                 extrinsic
                 and extrinsic.get("parent_frame") == "panorama_camera"
-                and extrinsic.get("child_frame") == f"{name}_tcp"
+                and extrinsic.get("child_frame") == (
+                    f"{name}_mount_tag2" if use_mount_tag else f"{name}_tcp"
+                )
             ) if world_mode else True,
              "value": {
                  "parent_frame": extrinsic.get("parent_frame") if extrinsic else None,
@@ -624,6 +639,10 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
             "hardware_camera_serial": hardware_serial or None,
             "source_view": hw.get("source_view"),
             "mount_revision": hw.get("mount_revision"),
+            "eef_reference": (
+                {"type": "mount_tag", "tag_id": 2, "frame_id": f"{name}_mount_tag2"}
+                if use_mount_tag else {"type": "tcp", "frame_id": f"{name}_tcp"}
+            ),
         })
 
     workspace = spec.get("workspace", {})
@@ -704,6 +723,14 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
         "training_frames": int(len(training_indices)), "training_episodes": len(training_runs),
         "training_segments": [[start_index, end_index] for start_index, end_index in training_runs],
         "robots": per_robot, "hardware_config": str(hardware_path) if hardware_path else None,
+        "eef_reference": (
+            {"type": "mount_tag", "tag_id": 2,
+             "definition": "centre of gripper-mounted Tag 2"}
+            if per_robot and all(
+                item.get("eef_reference", {}).get("type") == "mount_tag"
+                for item in per_robot
+            ) else {"type": "tcp"}
+        ),
         "training_ready": ready,
         "status": (
             "READY" if ready else

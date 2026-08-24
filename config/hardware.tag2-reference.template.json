@@ -1,0 +1,29 @@
+{
+  "schema_version": "gripper-hardware-reference/1.0",
+  "calibration_status": "pending",
+  "eef_reference": {
+    "type": "mount_tag",
+    "tag_id": 2,
+    "definition": "centre and printed axes of the gripper-mounted Tag 2"
+  },
+  "robots": {
+    "left": {
+      "camera_to_eef_reference": {
+        "parent_frame": "panorama_camera",
+        "child_frame": "left_mount_tag2",
+        "translation_m": [0.0, 0.0, 0.0],
+        "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0]
+      },
+      "eef_reference_verified": false
+    },
+    "right": {
+      "camera_to_eef_reference": {
+        "parent_frame": "panorama_camera",
+        "child_frame": "right_mount_tag2",
+        "translation_m": [0.0, 0.0, 0.0],
+        "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0]
+      },
+      "eef_reference_verified": false
+    }
+  }
+}
