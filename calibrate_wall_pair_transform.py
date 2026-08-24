@@ -11,10 +11,11 @@ initialisation followed by robust SO(3) averaging and translation refinement
 rejects bad PnP branches.  Block bootstrap intervals account (approximately)
 for the strong temporal correlation between adjacent video frames.
 
-The a9abc654 capture has duplicate tag IDs on the two walls.  Such a capture
-can only be salvaged when the two input pose streams were produced from
-spatially isolated views.  The emitted configuration records that limitation
-and is always marked PROVISIONAL.
+The normal production path expects globally unique tag IDs on both panels.
+Legacy captures that reused IDs can still be diagnosed only when the two
+input pose streams were produced from explicitly isolated panel views.  The
+report records which contract applies and always remains PROVISIONAL until an
+independent capture validates the fixed transform.
 """
 
 from __future__ import annotations
@@ -129,13 +130,15 @@ def read_visual_poses(path: Path, minimum_tags: int = 2) -> dict[int, PoseSample
     return poses
 
 
-def load_tag_map(path: Path, expected_tag_size_m: float = 0.2) -> TagMap:
+def load_tag_map(path: Path, expected_tag_size_m: float | None = None) -> TagMap:
     payload = json.loads(path.read_text(encoding="utf-8"))
     units = payload.get("units")
     if units != "m":
         raise ValueError(f"tag map must use metres, got {units!r}: {path}")
     size = float(payload.get("tag_outer_size_m", "nan"))
-    if not np.isfinite(size) or abs(size - expected_tag_size_m) > 1e-6:
+    if not np.isfinite(size) or size <= 0:
+        raise ValueError(f"tag map {path} has invalid tag_outer_size_m={size}")
+    if expected_tag_size_m is not None and abs(size - expected_tag_size_m) > 1e-6:
         raise ValueError(
             f"tag map {path} has tag_outer_size_m={size}; expected {expected_tag_size_m}"
         )
@@ -148,8 +151,8 @@ def load_tag_map(path: Path, expected_tag_size_m: float = 0.2) -> TagMap:
         if tag_id in corners:
             raise ValueError(f"duplicate tag ID {tag_id} inside map {path}")
         edges = np.linalg.norm(np.roll(values, -1, axis=0) - values, axis=1)
-        if not np.allclose(edges, expected_tag_size_m, atol=1e-6):
-            raise ValueError(f"tag {tag_id} corners are not a {expected_tag_size_m} m square")
+        if not np.allclose(edges, size, atol=1e-6):
+            raise ValueError(f"tag {tag_id} corners are not a {size} m square")
         corners[tag_id] = values
     if not corners:
         raise ValueError(f"tag map contains no tags: {path}")
@@ -536,9 +539,37 @@ def calibrate(
     duplicate_ids = sorted(
         set(primary_map.corners_by_id) & set(secondary_output_map.corners_by_id)
     )
+    has_duplicate_ids = bool(duplicate_ids)
+    calibration_status = (
+        "PROVISIONAL_DUPLICATE_ID_SALVAGE"
+        if has_duplicate_ids
+        else "PROVISIONAL_SINGLE_CAPTURE_AUTO_CALIBRATED"
+    )
+    selection_contract = {
+        "required": has_duplicate_ids,
+        "reason": (
+            "the two physical panels reuse tag IDs"
+            if has_duplicate_ids
+            else "panel IDs are globally unique; no spatial disambiguation is required"
+        ),
+        "rule": (
+            "poses must first be spatially isolated into the named primary and secondary panel views; tag ID alone cannot select a wall"
+            if has_duplicate_ids
+            else "tag ID uniquely selects its physical panel"
+        ),
+    }
+    warnings = [
+        "PROVISIONAL: derived from one capture and approximate panorama projections",
+        "Validate the fixed panel transform with an independent capture before training use",
+    ]
+    if has_duplicate_ids:
+        warnings.extend([
+            "DUPLICATE IDS: this transform cannot make a single global ID-only AprilTag map",
+            "Use only for capture-specific salvage and diagnostics until a unique-ID cross-wall calibration is recorded",
+        ])
     report = {
         "schema_version": "capture-panel-pair-calibration/1.0",
-        "calibration_status": "PROVISIONAL_DUPLICATE_ID_SALVAGE",
+        "calibration_status": calibration_status,
         "capture_pair_id": capture_pair_id,
         "method": {
             "name": "paired-direct-camera-pose-robust-se3",
@@ -614,17 +645,9 @@ def calibrate(
             "enforced_scale": 1.0,
         },
         "residual_audit": robust_audit,
-        "selection_contract": {
-            "required": True,
-            "reason": "the two physical panels reuse tag IDs",
-            "rule": "poses must first be spatially isolated into the named primary and secondary panel views; tag ID alone cannot select a wall",
-        },
+        "selection_contract": selection_contract,
         "training_ready": False,
-        "warnings": [
-            "PROVISIONAL: derived from one capture and approximate panorama projections",
-            "DUPLICATE IDS: this transform cannot make a single global ID-only AprilTag map",
-            "Use only for capture-specific salvage and diagnostics until a unique-ID cross-wall calibration is recorded",
-        ],
+        "warnings": warnings,
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -640,8 +663,8 @@ def main() -> int:
     parser.add_argument("--secondary-output-map", type=Path, required=True)
     parser.add_argument("--capture-pair", type=Path)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--primary-frame", default="left_wall_duplicate_panel_map")
-    parser.add_argument("--secondary-frame", default="right_wall_six_tag_panel_map")
+    parser.add_argument("--primary-frame", default="primary_wall_panel_map")
+    parser.add_argument("--secondary-frame", default="secondary_wall_panel_map")
     parser.add_argument("--minimum-inliers", type=int, default=20)
     parser.add_argument("--bootstrap-samples", type=int, default=500)
     args = parser.parse_args()

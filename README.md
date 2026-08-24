@@ -9,6 +9,9 @@
         → 光流恢复 → Kalman + RTS 平滑 → 标准数据集
 ```
 
+问题根因、坐标变换链、质量门禁和双夹爪共同世界坐标的完整说明见
+[`LOCALIZATION_PIPELINE.md`](LOCALIZATION_PIPELINE.md)。
+
 ## 能力
 
 - 自动识别 DJI `.OSV`、Insta360 `.insv/.lrv` 和已拼接的 2:1 MP4；
