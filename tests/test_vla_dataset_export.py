@@ -7,7 +7,9 @@ import pytest
 from scipy.spatial.transform import Rotation
 import zarr
 
-from vla_dataset_export import _rot6d, build_episode, load_pose_csv, resample_pose
+from vla_dataset_export import (
+    _compose_hardware_camera_to_tcp, _rot6d, build_episode, load_pose_csv, resample_pose,
+)
 from world_frames import compile_world_tag_map
 
 
@@ -36,6 +38,27 @@ def write_gripper(path: Path, duration: float = 4.0, fps: int = 20) -> None:
             writer.writerow({"time_s": frame / fps, "opening_angle_deg": frame / 2, "measured": 1})
 
 
+def test_hardware_chain_composes_once_and_rejects_conflicting_tcp_alias() -> None:
+    robot = {
+        "camera_to_base": {
+            "parent_frame": "panorama_camera", "child_frame": "base_link",
+            "translation_m": [1, 0, 0], "quaternion_xyzw": [0, 0, 0, 1],
+        },
+        "base_to_tcp": {
+            "parent_frame": "base_link", "child_frame": "left_tcp",
+            "translation_m": [.1356, 0, .0101], "quaternion_xyzw": [0, 0, 0, 1],
+        },
+    }
+    composed = _compose_hardware_camera_to_tcp(robot)
+    np.testing.assert_allclose(composed["translation_m"], [1.1356, 0, .0101])
+    robot["camera_to_tcp"] = {
+        "parent_frame": "panorama_camera", "child_frame": "left_tcp",
+        "translation_m": [1, 0, 0], "quaternion_xyzw": [0, 0, 0, 1],
+    }
+    with pytest.raises(ValueError, match="conflicts"):
+        _compose_hardware_camera_to_tcp(robot)
+
+
 def test_pose_resampling_and_rotation6d(tmp_path: Path) -> None:
     pose = tmp_path / "pose.csv"; write_pose(pose)
     series = load_pose_csv(pose)
@@ -54,7 +77,10 @@ def test_verified_episode_exports_canonical_arrays(tmp_path: Path) -> None:
     hardware = {
         "calibration_status": "verified",
         "robots": {name: {
-            "camera_to_tcp": {"translation_m": [0, 0, 0], "quaternion_xyzw": [0, 0, 0, 1]},
+            "camera_to_tcp": {
+                "parent_frame": "panorama_camera", "child_frame": f"{name}_tcp",
+                "translation_m": [0, 0, 0], "quaternion_xyzw": [0, 0, 0, 1],
+            },
             "camera_to_tcp_verified": True,
             "gripper_width_calibration": {
                 "type": "linear", "closed_angle_deg": 0, "closed_width_m": 0,
@@ -111,6 +137,7 @@ def _write_serial_bound_episode(tmp_path: Path, calibration_serial: str) -> Path
         "source_view": "view2-left",
         "mount_revision": "mount-rev-20260824",
         "camera_to_tcp": {
+            "parent_frame": "panorama_camera", "child_frame": "left_tcp",
             "translation_m": [0, 0, 0], "quaternion_xyzw": [0, 0, 0, 1],
         },
         "camera_to_tcp_verified": True,
@@ -169,7 +196,10 @@ def test_ready_episode_writes_umi_zarr(tmp_path: Path, monkeypatch) -> None:
     pose = tmp_path / "pose.csv"; angle = tmp_path / "angle.csv"
     write_pose(pose); write_gripper(angle)
     hardware = {"robots": {"left": {
-        "camera_to_tcp": {"translation_m": [0, 0, 0], "quaternion_xyzw": [0, 0, 0, 1]},
+        "camera_to_tcp": {
+            "parent_frame": "panorama_camera", "child_frame": "left_tcp",
+            "translation_m": [0, 0, 0], "quaternion_xyzw": [0, 0, 0, 1],
+        },
         "camera_to_tcp_verified": True,
         "gripper_width_calibration": {
             "type": "linear", "closed_angle_deg": 0, "closed_width_m": 0,
@@ -210,6 +240,7 @@ def test_dual_robot_world_mode_preserves_shared_positions(tmp_path: Path) -> Non
         "map_id": "synthetic-frozen",
         "calibration_status": "FROZEN",
         "world_frame": "room_world",
+        "frame_convention": {"up_axis": "+Z", "up_vector": [0, 0, 1]},
         "tags": [
             {"id": 128, "corners_m": [[0, 0, 0], [.2, 0, 0], [.2, .2, 0], [0, .2, 0]]},
             {"id": 134, "corners_m": [[0, 0, .4], [.2, 0, .4], [.2, .2, .4], [0, .2, .4]]},
@@ -240,8 +271,12 @@ def test_dual_robot_world_mode_preserves_shared_positions(tmp_path: Path) -> Non
                 })
     angle = tmp_path / "angle.csv"; write_gripper(angle)
     hardware = {"robots": {name: {
-        "camera_to_tcp": {
-            "parent_frame": "panorama_camera", "child_frame": f"{name}_tcp",
+        "camera_to_base": {
+            "parent_frame": "panorama_camera", "child_frame": "base_link",
+            "translation_m": [0, 0, 0], "quaternion_xyzw": [0, 0, 0, 1],
+        },
+        "base_to_tcp": {
+            "parent_frame": "base_link", "child_frame": f"{name}_tcp",
             "translation_m": [0, 0, 0], "quaternion_xyzw": [0, 0, 0, 1],
         },
         "camera_to_tcp_verified": True,
@@ -256,7 +291,10 @@ def test_dual_robot_world_mode_preserves_shared_positions(tmp_path: Path) -> Non
         "task": {"instruction": "move object"}, "start_s": 0, "end_s": 4,
         "frequency_hz": 20, "hardware_config": "hardware.json",
         "coordinate_frame": {"mode": "world", "frame_id": "room_world", "tag_map": "world.json"},
-        "workspace": {"type": "tabletop"}, "sync": {"uncertainty_s": .005},
+        "workspace": {
+            "type": "tabletop", "up_vector": [0, 0, 1],
+            "table_plane_status": "CALIBRATED", "table_plane_offset_m": 0.0,
+        }, "sync": {"uncertainty_s": .005},
         "robots": [
             {"name": name, "trajectory_csv": f"{name}.csv", "gripper_csv": "angle.csv"}
             for name in ("left", "right")

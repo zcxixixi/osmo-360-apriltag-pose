@@ -4,6 +4,16 @@
   "description": "Capture-calibrated two-wall map for the 2026-08-23 upan demo. Left-wall ID134 is deliberately excluded because the recording also shows ID134 on the computer monitor. Production maps must not mask duplicate IDs.",
   "units": "m",
   "tag_outer_size_m": 0.2,
+  "world_frame": "tag_map",
+  "world_origin": "left wall panel center",
+  "world_axes": "+X right across left wall; +Y down; +Z out of left wall",
+  "frame_convention": {
+    "handedness": "right",
+    "up_axis": "-Y",
+    "up_vector": [0.0, -1.0, 0.0],
+    "tabletop_normal": [0.0, -1.0, 0.0],
+    "tabletop_plane_status": "NOT_CALIBRATED"
+  },
   "origin": "left wall panel center",
   "axes": "left-panel x right, y down, z out of left wall",
   "calibration_status": "PROVISIONAL_CAPTURE_CALIBRATED_SCREEN_TAG_MASKED",

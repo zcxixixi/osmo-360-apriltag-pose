@@ -1,13 +1,20 @@
 {
-  "schema_version": "gripper-hardware-calibration/1.0",
+  "schema_version": "gripper-hardware-calibration/2.1",
   "calibration_status": "pending",
   "tcp_definition": "gripper_tcp_cad.json",
+  "physical_chain": "T_common_tcp = T_common_camera @ T_camera_base @ T_base_tcp",
   "robots": {
     "left": {
-      "camera_to_tcp": {
+      "camera_to_base": {
         "parent_frame": "panorama_camera",
-        "child_frame": "left_tcp",
+        "child_frame": "base_link",
         "translation_m": [0.0, 0.0, 0.0],
+        "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0]
+      },
+      "base_to_tcp": {
+        "parent_frame": "base_link",
+        "child_frame": "left_tcp",
+        "translation_m": [0.1356, 0.0, 0.0101],
         "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0]
       },
       "camera_to_tcp_verified": false,
@@ -15,10 +22,16 @@
       "gripper_width_verified": false
     },
     "right": {
-      "camera_to_tcp": {
+      "camera_to_base": {
         "parent_frame": "panorama_camera",
-        "child_frame": "right_tcp",
+        "child_frame": "base_link",
         "translation_m": [0.0, 0.0, 0.0],
+        "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0]
+      },
+      "base_to_tcp": {
+        "parent_frame": "base_link",
+        "child_frame": "right_tcp",
+        "translation_m": [0.1356, 0.0, 0.0101],
         "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0]
       },
       "camera_to_tcp_verified": false,

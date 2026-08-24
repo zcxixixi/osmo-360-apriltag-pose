@@ -205,7 +205,10 @@ def main() -> int:
     timeline = {
         "schema_version": "smooth-episode-preview/v1", "audit_mode": False,
         "capture_pair_id": metadata["episode_id"], "layout_calibration_id": layout_id,
-        "reference_frame": "room_world" if args.world_frame else "per-gripper-start-local", "fps": args.fps,
+        "reference_frame": (
+            metadata.get("coordinate_frame", {}).get("frame_id", "UNDECLARED_COMMON_FRAME")
+            if args.world_frame else "per-gripper-start-local"
+        ), "fps": args.fps,
         "duration_s": duration, "source_frames": len(source_t), "training_frames": int(metadata["training_frames"]),
         "training_episodes": int(metadata["training_episodes"]),
         "training_ready": bool(metadata.get("training_ready", False)),

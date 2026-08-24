@@ -24,7 +24,7 @@ import py360convert
 from scipy.ndimage import median_filter
 from scipy.spatial.transform import Rotation, Slerp
 
-from world_frames import compile_world_tag_map
+from world_frames import RigidTransform, compile_world_tag_map
 
 
 SCHEMA_VERSION = "vla-episode/1.1"
@@ -284,13 +284,43 @@ def smooth_rotations(rotations: Rotation, radius: int = 2) -> Rotation:
     return Rotation.from_quat(result)
 
 
+def _compose_hardware_camera_to_tcp(robot: dict[str, Any]) -> dict[str, Any] | None:
+    """Resolve the physical camera→base→TCP chain and reject conflicting aliases."""
+    direct = robot.get("camera_to_tcp")
+    camera_base = robot.get("camera_to_base")
+    base_tcp = robot.get("base_to_tcp")
+    if camera_base is None and base_tcp is None:
+        return direct
+    if camera_base is None or base_tcp is None:
+        raise ValueError("camera_to_base and base_to_tcp must be supplied together")
+    first = RigidTransform.from_dict(camera_base)
+    second = RigidTransform.from_dict(base_tcp)
+    composed = first.compose(second)
+    if first.parent_frame != "panorama_camera" or first.child_frame != "base_link":
+        raise ValueError("hardware chain must start panorama_camera→base_link")
+    if second.parent_frame != "base_link" or not second.child_frame.endswith("tcp"):
+        raise ValueError("hardware chain must end base_link→*_tcp")
+    result = composed.to_dict()
+    if direct is not None:
+        alias = RigidTransform.from_dict(direct)
+        translation_error = np.linalg.norm(alias.translation_m - composed.translation_m)
+        angle_error = (alias.rotation.inv() * composed.rotation).magnitude()
+        if translation_error > 1e-6 or angle_error > 1e-6:
+            raise ValueError("camera_to_tcp conflicts with camera_to_base @ base_to_tcp")
+    return result
+
+
 def apply_camera_to_tcp(position: np.ndarray, rotation: Rotation,
                         calibration: dict[str, Any] | None) -> tuple[np.ndarray, Rotation]:
     if not calibration:
         return position.copy(), rotation
-    translation = np.asarray(calibration["translation_m"], dtype=float)
-    camera_to_tcp = Rotation.from_quat(calibration["quaternion_xyzw"])
-    return position + rotation.apply(np.broadcast_to(translation, position.shape)), rotation * camera_to_tcp
+    transform = RigidTransform.from_dict(calibration)
+    if transform.parent_frame != "panorama_camera" or not transform.child_frame.endswith("tcp"):
+        raise ValueError("expected explicit panorama_camera→*_tcp transform")
+    return (
+        position + rotation.apply(np.broadcast_to(transform.translation_m, position.shape)),
+        rotation * transform.rotation,
+    )
 
 
 def load_gripper(path: Path | None, query_time: np.ndarray,
@@ -483,7 +513,7 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
                  "pass": bool(str(hw.get("mount_revision", "")).strip()),
                  "value": str(hw.get("mount_revision", "")).strip() or None},
             ])
-        extrinsic = hw.get("camera_to_tcp")
+        extrinsic = _compose_hardware_camera_to_tcp(hw)
         position, rotation = apply_camera_to_tcp(position, rotation, extrinsic)
         raw_position = position.copy()
         position, rejected, motion_audit = smooth_positions(position, timeline)
@@ -542,6 +572,13 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
         maximum_rejected = float(quality_config.get("max_outlier_rejected_ratio", 0.08))
         checks.extend([
             {"name": f"{name}.camera_to_tcp_verified", "pass": bool(extrinsic and hw.get("camera_to_tcp_verified"))},
+            {"name": f"{name}.physical_extrinsic_chain_explicit", "pass": bool(
+                hw.get("camera_to_base") and hw.get("base_to_tcp")
+            ) if world_mode else True},
+            {"name": f"{name}.mount_revision_has_no_display_patch", "pass": not any(
+                token in str(hw.get("mount_revision", "")).lower()
+                for token in ("flat", "table", "shared-a", "shared_a")
+            ), "value": hw.get("mount_revision")},
             {"name": f"{name}.camera_to_tcp_direction_explicit", "pass": bool(
                 extrinsic
                 and extrinsic.get("parent_frame") == "panorama_camera"
@@ -591,20 +628,38 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
 
     workspace = spec.get("workspace", {})
     if world_mode and len(world_positions) > 1 and workspace.get("type") == "tabletop":
-        minimum_z = float(workspace.get("minimum_tcp_z_m", -0.10))
-        maximum_median_difference = float(workspace.get("max_robot_median_z_difference_m", 0.25))
-        medians = {name: float(np.median(values[:, 2])) for name, values in world_positions.items()}
+        convention = world_map.get("frame_convention", {}) if world_map else {}
+        up = np.asarray(workspace.get("up_vector", convention.get("up_vector", [0, 0, 1])), float)
+        if up.shape != (3,) or not np.isfinite(up).all() or np.linalg.norm(up) < 1e-9:
+            raise ValueError("tabletop workspace needs a finite non-zero up_vector")
+        up /= np.linalg.norm(up)
+        heights = {name: values @ up for name, values in world_positions.items()}
+        medians = {name: float(np.median(values)) for name, values in heights.items()}
+        maximum_median_difference = float(workspace.get(
+            "max_robot_median_height_difference_m",
+            workspace.get("max_robot_median_z_difference_m", 0.25),
+        ))
+        plane_calibrated = workspace.get("table_plane_status") in {"CALIBRATED", "VERIFIED"}
+        plane_offset = workspace.get("table_plane_offset_m")
         checks.append({
-            "name": "coordinate.tcp_not_below_table",
-            "pass": all(float(np.quantile(values[:, 2], 0.01)) >= minimum_z
-                        for values in world_positions.values()),
-            "value": {name: float(np.quantile(values[:, 2], 0.01))
-                      for name, values in world_positions.items()},
+            "name": "coordinate.table_plane_calibrated",
+            "pass": plane_calibrated and plane_offset is not None,
+            "value": workspace.get("table_plane_status", "NOT_CALIBRATED"),
         })
+        if plane_calibrated and plane_offset is not None:
+            minimum_clearance = float(workspace.get("minimum_tcp_clearance_m", -0.10))
+            offset = float(plane_offset)
+            checks.append({
+                "name": "coordinate.tcp_not_below_table",
+                "pass": all(float(np.quantile(values, 0.01)) - offset >= minimum_clearance
+                            for values in heights.values()),
+                "value": {name: float(np.quantile(values, 0.01)) - offset
+                          for name, values in heights.items()},
+            })
         checks.append({
             "name": "coordinate.robot_workspace_height_consistent",
             "pass": max(medians.values()) - min(medians.values()) <= maximum_median_difference,
-            "value": medians,
+            "value": {"axis": up.tolist(), "median_projection_m": medians},
         })
 
     action_parts = []
@@ -663,6 +718,10 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
             "tag_map": str(world_map_path) if world_map_path else None,
             "tag_map_sha256": expected_map_hash or None,
             "calibration_status": calibration_status or None,
+            "frame_convention": world_map.get("frame_convention") if world_map else None,
+            "world_origin": world_map.get("world_origin", world_map.get("origin")) if world_map else None,
+            "world_axes": world_map.get("world_axes", world_map.get("axes")) if world_map else None,
+            "workspace": spec.get("workspace", {}) if world_mode else None,
         },
     }
     report = {"training_ready": ready, "checks": checks, "failed": [c["name"] for c in checks if not c["pass"]]}
@@ -680,6 +739,8 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
             or ".tag_map_hash" in check["name"]
             or ".detected_ids_in_global_map" in check["name"]
             or ".camera_to_tcp_direction_explicit" in check["name"]
+            or ".physical_extrinsic_chain_explicit" in check["name"]
+            or ".mount_revision_has_no_display_patch" in check["name"]
             or ".camera_serial" in check["name"]
             or ".hardware_camera_serial" in check["name"]
             or ".camera_calibration_present" in check["name"]
