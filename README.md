@@ -266,10 +266,13 @@ uv run --with-requirements requirements-train-cu130.txt \
 ### 本地审核网页
 
 ```bash
-./dual-gripper-calibrator
+DUAL_GRIPPER_DATA_ROOT=/absolute/path/to/episode-review \
+  ./dual-gripper-calibrator
 ```
 
 浏览器访问 `http://127.0.0.1:7861/umi` 可逐帧检查双目画面、原始/滤波轨迹、异常剔除点、夹宽和训练有效率。网页只读取本地产物，不上传原视频。
+审核目录中放置 `dual_gripper_timeline.json`，并将 UMI 产物放在其
+`vla-episode/` 子目录；未配置本地数据时 API 会明确返回 404，而不会依赖仓库里的某个历史采集 UUID。
 
 ## 精度注意事项
 
