@@ -43,13 +43,29 @@ def main() -> int:
                         help="write the interactive timeline without encoding an MP4")
     parser.add_argument("--segment-untrusted-tracks", action="store_true",
                         help="break trajectory lines instead of drawing across recovered gaps")
+    parser.add_argument(
+        "--allow-invalid-pair", action="store_true",
+        help="render an explicitly invalid multi-camera pair for forensic inspection only",
+    )
     args = parser.parse_args()
 
     arrays_path = args.arrays.resolve(); output = args.output.resolve()
     metadata = json.loads(args.metadata.resolve().read_text(encoding="utf-8"))
+    pair_integrity = metadata.get("sync", {}).get("pair_integrity", {})
+    if pair_integrity.get("required") and not pair_integrity.get("valid") and not args.allow_invalid_pair:
+        raise ValueError(
+            "refusing to render an invalid multi-camera pair: "
+            f"{pair_integrity.get('status', 'UNKNOWN')}; "
+            "record simultaneously or provide verified hardware/audio synchronization"
+        )
     episode_spec = {}
+    hardware = {}
     if args.episode_spec:
         episode_spec = json.loads(args.episode_spec.resolve().read_text(encoding="utf-8"))
+        hardware_ref = episode_spec.get("hardware_config")
+        if hardware_ref:
+            hardware_path = (args.episode_spec.resolve().parent / hardware_ref).resolve()
+            hardware = json.loads(hardware_path.read_text(encoding="utf-8"))
     source = np.load(arrays_path)
     source_t = np.asarray(source["timestamp_s"], dtype=float)
     source_t = source_t - source_t[0]
@@ -79,6 +95,13 @@ def main() -> int:
             for side in ("left", "right")
         ]
         layout_id = str(layout.get("calibration_id", args.manual_layout.stem))
+    robot_specs_by_name = {
+        item.get("name"): item for item in episode_spec.get("robots", [])
+    }
+    display_enabled = [
+        bool(robot_specs_by_name.get(side, {}).get("display_enabled", True))
+        for side in ("left", "right")
+    ]
     robot_data = []
     for robot in range(2):
         pos0 = np.asarray(source[f"robot{robot}_eef_pos"], dtype=float)
@@ -162,6 +185,7 @@ def main() -> int:
                 "source_p": pos[index].tolist(), "source_q": rot[index].as_quat().tolist(),
                 "opening": float(opening[index]), "joints": [-float(travel), float(travel)],
                 "pose_state": pose_state,
+                "visible": display_enabled[robot],
                 "angle_state": (
                     "MEASURED" if angle_measured[index]
                     else "DISPLAY INTERPOLATED" if angle_available[index]
@@ -202,8 +226,31 @@ def main() -> int:
                 "observations": observations, "distance_m": distance_m,
             })
 
+    display_tag_to_base = {}
+    for side in ("left", "right"):
+        base_tag = hardware.get("robots", {}).get(side, {}).get("base_to_eef_reference")
+        if not isinstance(base_tag, dict):
+            continue
+        rotation_base_tag = Rotation.from_quat(base_tag["quaternion_xyzw"])
+        rotation_tag_base = rotation_base_tag.inv()
+        translation_tag_base = -rotation_tag_base.apply(
+            np.asarray(base_tag["translation_m"], dtype=float)
+        )
+        display_tag_to_base[side] = {
+            "translation_m": translation_tag_base.tolist(),
+            "quaternion_xyzw": rotation_tag_base.as_quat().tolist(),
+            "tag_outer_size_m": float(
+                hardware.get("robots", {}).get(side, {})
+                .get("camera_to_eef_reference", {}).get("tag_outer_size_m", 0.020)
+            ),
+            "source": str(base_tag.get("source", "hardware base_to_eef_reference inverse")),
+        }
+
     timeline = {
         "schema_version": "smooth-episode-preview/v1", "audit_mode": False,
+        "render_mode": str(episode_spec.get("render_mode", "standard")),
+        "default_view": str(episode_spec.get("default_view", "operator")),
+        "view_roll_deg": float(episode_spec.get("view_roll_deg", 0.0)),
         "capture_pair_id": metadata["episode_id"], "layout_calibration_id": layout_id,
         "reference_frame": (
             metadata.get("coordinate_frame", {}).get("frame_id", "UNDECLARED_COMMON_FRAME")
@@ -212,7 +259,11 @@ def main() -> int:
         "duration_s": duration, "source_frames": len(source_t), "training_frames": int(metadata["training_frames"]),
         "training_episodes": int(metadata["training_episodes"]),
         "training_ready": bool(metadata.get("training_ready", False)),
-        "sync": {"offset_s": 0.0, "correlation": 1.0},
+        "sync": {
+            "offset_s": 0.0,
+            "correlation": float(metadata.get("sync", {}).get("correlation", 1.0)),
+            "pair_integrity": pair_integrity,
+        },
         "side_mapping": {"left": "camera0/robot0", "right": "camera1/robot1"},
         "coordinate_mapping": {
             "source": "shared room_world pose" if args.world_frame else "per-gripper start-local pose",
@@ -222,6 +273,7 @@ def main() -> int:
         },
         "coordinate_status": metadata.get("coordinate_frame", {}),
         "eef_reference": metadata.get("eef_reference", {"type": "tcp"}),
+        "display_tag_to_base": display_tag_to_base,
         "attitude": {"mode": "SLERP display interpolation", "level_constraint": False},
         "bounds_m": {}, "tag_anchors": tag_anchors, "validation_events": validation_events,
         "segment_untrusted_tracks": bool(args.segment_untrusted_tracks), "frames": frames,

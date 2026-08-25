@@ -9,7 +9,7 @@ import zarr
 
 from vla_dataset_export import (
     _compose_hardware_camera_to_tcp, _rot6d, apply_camera_to_tcp,
-    build_episode, load_pose_csv, resample_pose,
+    audit_multicamera_pair, build_episode, load_pose_csv, resample_pose,
 )
 from world_frames import compile_world_tag_map
 
@@ -49,6 +49,53 @@ def test_mount_tag2_can_be_the_eef_reference_without_tcp_lever() -> None:
     })
     np.testing.assert_allclose(transformed, [[1.04, 2.07, 3.0]])
     np.testing.assert_allclose(transformed_rotation.as_matrix(), np.eye(3)[None])
+
+
+def test_pair_integrity_rejects_sequential_repetitions(tmp_path: Path) -> None:
+    for name, creation in (("left", "2026-08-24T11:11:12Z"),
+                           ("right", "2026-08-24T11:10:38Z")):
+        (tmp_path / f"{name}.json").write_text(json.dumps({
+            "creation_time_utc": creation, "duration_s": 21.0,
+        }), encoding="utf-8")
+    spec = {
+        "start_s": .5, "end_s": 20.5,
+        "sync": {
+            "method": "audio_cross_correlation_diagnostic",
+            "correlation": .235, "uncertainty_s": .05,
+            "creation_time_clock_aligned": True,
+        },
+    }
+    robots = [
+        {"name": "left", "source_info": "left.json"},
+        {"name": "right", "source_info": "right.json"},
+    ]
+    audit = audit_multicamera_pair(tmp_path / "episode.json", spec, robots)
+    assert not audit["valid"]
+    assert audit["status"] == "INVALID_SEQUENTIAL_CAPTURE"
+    assert audit["creation_time_overlap_s"] == 0.0
+
+
+def test_pair_integrity_accepts_strong_audio_sync_with_unaligned_clocks(tmp_path: Path) -> None:
+    for name, creation in (("left", "2026-08-24T11:11:12Z"),
+                           ("right", "2026-08-24T11:10:38Z")):
+        (tmp_path / f"{name}.json").write_text(json.dumps({
+            "creation_time_utc": creation, "duration_s": 21.0,
+        }), encoding="utf-8")
+    spec = {
+        "start_s": 0.0, "end_s": 20.0,
+        "sync": {
+            "method": "audio_cross_correlation",
+            "correlation": .91, "uncertainty_s": .008,
+            "creation_time_clock_aligned": False,
+        },
+    }
+    robots = [
+        {"name": "left", "source_info": "left.json"},
+        {"name": "right", "source_info": "right.json"},
+    ]
+    audit = audit_multicamera_pair(tmp_path / "episode.json", spec, robots)
+    assert audit["valid"]
+    assert audit["evidence"]["audio"]
 
 
 def test_hardware_chain_composes_once_and_rejects_conflicting_tcp_alias() -> None:
@@ -284,6 +331,7 @@ def test_dual_robot_world_mode_preserves_shared_positions(tmp_path: Path) -> Non
                 })
     angle = tmp_path / "angle.csv"; write_gripper(angle)
     hardware = {"robots": {name: {
+        "base_tag_id": 2 if name == "left" else 3,
         "camera_to_base": {
             "parent_frame": "panorama_camera", "child_frame": "base_link",
             "translation_m": [0, 0, 0], "quaternion_xyzw": [0, 0, 0, 1],
@@ -323,4 +371,6 @@ def test_dual_robot_world_mode_preserves_shared_positions(tmp_path: Path) -> Non
     assert arrays["robot1_eef_pos"][0, 0] == pytest.approx(.8, abs=.01)
     np.testing.assert_allclose(arrays["robot0_eef_delta_from_start_pos"][0], 0, atol=1e-6)
     report = json.loads((output / "quality_report.json").read_text())
+    by_name = {item["name"]: item for item in report["checks"]}
+    assert by_name["hardware.base_tag_ids_disjoint_from_world_map"]["pass"]
     assert not report["critical_failures"]

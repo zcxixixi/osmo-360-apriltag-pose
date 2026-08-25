@@ -30,6 +30,119 @@ from world_frames import RigidTransform, compile_world_tag_map
 SCHEMA_VERSION = "vla-episode/1.1"
 
 
+def _parse_utc(value: str) -> datetime:
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def audit_multicamera_pair(
+    spec_path: Path, spec: dict[str, Any], robots: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Audit whether robot videos are one simultaneous multi-camera capture.
+
+    Pose similarity is deliberately *not* synchronization evidence: two
+    sequential repetitions of the same task can have nearly identical world
+    trajectories.  A pair needs an overlapping trusted clock, a hardware
+    synchronization method, or a strong audio correlation with low timing
+    uncertainty.
+
+    Older single-camera specs and legacy specs without ``source_info`` remain
+    compatible.  New multi-camera capture specs should always provide it.
+    """
+    if len(robots) < 2:
+        return {"required": False, "valid": True, "status": "SINGLE_CAMERA"}
+
+    sync = spec.get("sync", {})
+    source_records: list[dict[str, Any]] = []
+    missing_sources: list[str] = []
+    for robot in robots:
+        source_path = _resolve(spec_path.parent, robot.get("source_info"))
+        if source_path is None:
+            missing_sources.append(str(robot.get("name", "unnamed")))
+            continue
+        if not source_path.exists():
+            missing_sources.append(str(robot.get("name", "unnamed")))
+            continue
+        payload = _load_json(source_path)
+        try:
+            start = _parse_utc(payload["creation_time_utc"])
+            duration = float(payload["duration_s"])
+        except (KeyError, TypeError, ValueError):
+            missing_sources.append(str(robot.get("name", "unnamed")))
+            continue
+        source_records.append({
+            "robot": str(robot.get("name", "unnamed")),
+            "path": str(source_path),
+            "creation_time_utc": start.isoformat(),
+            "duration_s": duration,
+            "end_time_utc": datetime.fromtimestamp(
+                start.timestamp() + duration, tz=timezone.utc
+            ).isoformat(),
+            "end_timestamp": start.timestamp() + duration,
+            "start_timestamp": start.timestamp(),
+        })
+
+    overlap_s: float | None = None
+    creation_clock_valid = False
+    if len(source_records) == len(robots):
+        latest_start = max(item["start_timestamp"] for item in source_records)
+        earliest_end = min(item["end_timestamp"] for item in source_records)
+        overlap_s = max(0.0, float(earliest_end - latest_start))
+        required_overlap = float(sync.get(
+            "minimum_creation_time_overlap_s",
+            max(1.0, float(spec.get("end_s", 0.0)) - float(spec.get("start_s", 0.0)) - 1.0),
+        ))
+        creation_clock_valid = bool(sync.get("creation_time_clock_aligned", False)) and overlap_s >= required_overlap
+
+    uncertainty = sync.get("uncertainty_s")
+    uncertainty_ok = uncertainty is not None and float(uncertainty) <= float(
+        sync.get("maximum_uncertainty_s", 0.020)
+    )
+    method = str(sync.get("method", "")).lower()
+    correlation = sync.get("correlation")
+    minimum_correlation = float(sync.get("minimum_audio_correlation", 0.80))
+    audio_valid = (
+        "audio" in method and correlation is not None
+        and float(correlation) >= minimum_correlation and uncertainty_ok
+    )
+    hardware_valid = (
+        any(token in method for token in ("hardware_trigger", "timecode", "genlock", "ptp"))
+        and uncertainty_ok
+    )
+    evidence_present = bool(source_records or method or sync.get("require_pair_integrity"))
+    valid = creation_clock_valid or audio_valid or hardware_valid
+    if not evidence_present:
+        return {
+            "required": False, "valid": True, "status": "LEGACY_UNAUDITED",
+            "warning": "multi-camera source_info is absent; add it for scale collection",
+        }
+    if valid:
+        status = "SIMULTANEOUS_PAIR_VERIFIED"
+    elif overlap_s == 0.0 and bool(sync.get("creation_time_clock_aligned", False)):
+        status = "INVALID_SEQUENTIAL_CAPTURE"
+    else:
+        status = "INVALID_UNVERIFIED_SYNCHRONIZATION"
+    return {
+        "required": True,
+        "valid": bool(valid),
+        "status": status,
+        "creation_time_clock_aligned": bool(sync.get("creation_time_clock_aligned", False)),
+        "creation_time_overlap_s": overlap_s,
+        "audio_correlation": float(correlation) if correlation is not None else None,
+        "minimum_audio_correlation": minimum_correlation,
+        "uncertainty_s": float(uncertainty) if uncertainty is not None else None,
+        "evidence": {
+            "creation_time_overlap": creation_clock_valid,
+            "audio": audio_valid,
+            "hardware": hardware_valid,
+        },
+        "sources": source_records,
+        "missing_source_info": missing_sources,
+    }
+
+
 def _number(row: dict[str, str], names: tuple[str, ...], default: float = math.nan) -> float:
     for name in names:
         try:
@@ -435,6 +548,12 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
     arrays: dict[str, np.ndarray] = {"timestamp_s": (timeline - start).astype(np.float64)}
     checks: list[dict[str, Any]] = []
     per_robot: list[dict[str, Any]] = []
+    pair_integrity = audit_multicamera_pair(spec_path, spec, robots)
+    checks.append({
+        "name": "sync.multi_camera_pair_integrity",
+        "pass": bool(pair_integrity["valid"]),
+        "value": pair_integrity,
+    })
     coordinate = spec.get("coordinate_frame", {})
     world_mode = coordinate.get("mode") == "world"
     world_frame = str(coordinate.get("frame_id", "")).strip()
@@ -463,6 +582,34 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
                 "pass": world_map.get("world_frame") == world_frame,
                 "value": world_map.get("world_frame"),
             })
+    base_tag_bindings = []
+    for index, robot in enumerate(robots):
+        name = robot.get("name", f"robot{index}")
+        hw_robot = _hardware_robot(hardware, name)
+        declared = robot.get("base_tag_id", hw_robot.get("base_tag_id"))
+        base_tag_bindings.append((name, int(declared) if declared is not None else None))
+    declared_base_ids = [tag_id for _, tag_id in base_tag_bindings if tag_id is not None]
+    if len(robots) > 1:
+        checks.extend([
+            {
+                "name": "hardware.base_tag_ids_declared",
+                "pass": len(declared_base_ids) == len(robots),
+                "value": dict(base_tag_bindings),
+            },
+            {
+                "name": "hardware.base_tag_ids_unique",
+                "pass": len(declared_base_ids) == len(set(declared_base_ids)),
+                "value": declared_base_ids,
+            },
+            {
+                "name": "hardware.base_tag_ids_disjoint_from_world_map",
+                "pass": not bool(set(declared_base_ids) & expected_ids),
+                "value": {
+                    "base_tag_ids": declared_base_ids,
+                    "collisions": sorted(set(declared_base_ids) & expected_ids),
+                },
+            },
+        ])
     world_positions: dict[str, np.ndarray] = {}
 
     for index, robot in enumerate(robots):
@@ -723,6 +870,10 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
         "training_frames": int(len(training_indices)), "training_episodes": len(training_runs),
         "training_segments": [[start_index, end_index] for start_index, end_index in training_runs],
         "robots": per_robot, "hardware_config": str(hardware_path) if hardware_path else None,
+        "sync": {
+            **spec.get("sync", {}),
+            "pair_integrity": pair_integrity,
+        },
         "eef_reference": (
             {"type": "mount_tag", "tag_id": 2,
              "definition": "centre of gripper-mounted Tag 2"}
@@ -756,7 +907,7 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
     (output_dir / "quality_report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (output_dir / "episode_spec.snapshot.json").write_text(json.dumps(spec, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
-    critical_prefixes = ("coordinate.",)
+    critical_prefixes = ("coordinate.", "sync.multi_camera_pair_integrity")
     critical_failures = [
         check["name"] for check in checks
         if not check["pass"] and (

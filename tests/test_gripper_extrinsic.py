@@ -6,6 +6,8 @@ from scipy.spatial.transform import Rotation
 from estimate_gripper_extrinsic import (
     BODY_TO_PANORAMA_OPENCV,
     compose_camera_base_tcp,
+    compose_camera_tag_to_base,
+    select_ippe_candidate,
     solve_bearing_ippe,
     tangent_view_basis,
 )
@@ -89,3 +91,79 @@ def test_bearing_ippe_recovers_metric_pose_near_panorama_horizon():
         errors.append((rotation_error, translation_error))
     assert min(error[0] for error in errors) < np.deg2rad(0.05)
     assert min(error[1] for error in errors) < 1e-4
+
+
+def test_camera_base_uses_authoritative_hardware_base_to_tag():
+    camera_tag_rotation = Rotation.from_euler(
+        "xyz", [17.0, -31.0, 8.0], degrees=True
+    )
+    camera_tag_translation = np.array([-0.032, 0.059, 0.007])
+    base_tag_rotation = Rotation.from_euler(
+        "xyz", [3.0, 5.0, -7.0], degrees=True
+    )
+    base_tag_translation = np.array([0.02625, 0.0, 0.0196])
+    base_to_tag = {
+        "parent_frame": "base_link",
+        "child_frame": "basetag",
+        "translation_m": base_tag_translation.tolist(),
+        "quaternion_xyzw": base_tag_rotation.as_quat().tolist(),
+    }
+    actual = compose_camera_tag_to_base(
+        camera_tag_rotation.as_matrix(), camera_tag_translation, base_to_tag
+    )
+    camera_tag = np.eye(4)
+    camera_tag[:3, :3] = camera_tag_rotation.as_matrix()
+    camera_tag[:3, 3] = camera_tag_translation
+    expected_base_tag = np.eye(4)
+    expected_base_tag[:3, :3] = base_tag_rotation.as_matrix()
+    expected_base_tag[:3, 3] = base_tag_translation
+    np.testing.assert_allclose(actual, camera_tag @ np.linalg.inv(expected_base_tag))
+
+
+def test_physical_mount_constraints_select_camera_behind_tag():
+    candidates = [
+        {
+            "branch": 0.0,
+            "raw_camera_origin_in_tag_m": np.array([-0.010, 0.012, -0.067]),
+            "raw_angular_rmse_deg": 0.30,
+            "angular_rmse_deg": 0.20,
+        },
+        {
+            "branch": 1.0,
+            "raw_camera_origin_in_tag_m": np.array([0.010, -0.012, -0.067]),
+            "raw_angular_rmse_deg": 0.25,
+            "angular_rmse_deg": 0.18,
+        },
+    ]
+    selected = select_ippe_candidate(
+        candidates,
+        {
+            "camera_origin_in_tag_m": {
+                "x_max": 0.0,
+                "z_min": -0.10,
+                "z_max": -0.04,
+            }
+        },
+    )
+    assert int(selected["branch"]) == 0
+
+
+def test_explicit_wrong_ippe_branch_is_rejected_by_hardware_constraints():
+    candidates = [
+        {
+            "branch": 1.0,
+            "raw_camera_origin_in_tag_m": np.array([0.010, 0.0, -0.067]),
+            "raw_angular_rmse_deg": 0.1,
+            "angular_rmse_deg": 0.1,
+        }
+    ]
+    try:
+        select_ippe_candidate(
+            candidates,
+            {"camera_origin_in_tag_m": {"x_max": 0.0}},
+            requested_branch="1",
+        )
+    except ValueError as error:
+        assert "hardware camera-in-tag constraints" in str(error)
+    else:
+        raise AssertionError("physically impossible explicit branch was accepted")

@@ -62,6 +62,19 @@ def test_room_world_map_has_unique_ids_and_measured_geometry():
     assert tag_map.metadata["world_frame"] == "room_world"
 
 
+def test_world_map_can_exclude_a_mobile_base_tag_id(tmp_path):
+    source = compile_world_tag_map(MAP_PATH)
+    source.pop("tag_map_sha256", None)
+    source["excluded_tag_ids"] = [128]
+    filtered_path = tmp_path / "filtered.json"
+    filtered_path.write_text(json.dumps(source), encoding="utf-8")
+
+    payload = compile_world_tag_map(filtered_path)
+
+    assert 128 not in {int(tag["id"]) for tag in payload["tags"]}
+    assert sorted(int(tag["id"]) for tag in payload["tags"]) == list(range(129, 138))
+
+
 def test_non_xy_wall_pnp_recovers_world_camera_pose_with_ippe(monkeypatch):
     tag_map = load_tag_map(MAP_PATH)
     camera_position = np.asarray([0.65, -1.0, 0.82])
