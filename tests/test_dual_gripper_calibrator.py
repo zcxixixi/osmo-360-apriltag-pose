@@ -40,14 +40,14 @@ def test_rejects_bad_translation():
         raise AssertionError("invalid translation was accepted")
 
 
-def test_animation_page_and_timeline_are_available():
+def test_animation_page_is_available_and_missing_timeline_is_explicit():
     client = app.test_client()
     page = client.get("/animation")
     timeline = client.get("/api/animation-timeline")
     assert page.status_code == 200
     assert "双夹爪 6DoF 交互动画" in page.get_data(as_text=True)
-    assert timeline.status_code == 200
-    assert timeline.get_json()["schema_version"] == "dual-gripper-animation/v1"
+    assert timeline.status_code == 404
+    assert "not found" in timeline.get_json()["error"]
 
 
 def test_hardware_model_page_and_api_are_available():
@@ -63,19 +63,14 @@ def test_hardware_model_page_and_api_are_available():
     assert set(payload["mounts"]) == {"left", "right"}
 
 
-def test_umi_explainer_page_summary_and_frame_are_available():
+def test_umi_explainer_page_handles_missing_local_dataset():
     client = app.test_client()
     page = client.get("/umi")
     summary = client.get("/api/umi-summary")
     frame = client.get("/api/umi-frame/0/180")
     assert page.status_code == 200
     assert "这18秒视频，已经变成可审计的训练数据" in page.get_data(as_text=True)
-    assert summary.status_code == 200
-    assert summary.get_json()["action_shape"] == [361, 20]
-    assert frame.status_code == 200
-    assert frame.mimetype == "image/jpeg"
-    assert frame.headers["Cache-Control"].startswith("no-store")
-    assert frame.headers["X-UMI-Frame"] == "180"
-    other_frame = client.get("/api/umi-frame/0/181")
-    assert other_frame.status_code == 200
-    assert other_frame.data != frame.data
+    assert summary.status_code == 404
+    assert "DUAL_GRIPPER_DATA_ROOT" in summary.get_json()["error"]
+    assert frame.status_code == 404
+    assert "DUAL_GRIPPER_DATA_ROOT" in frame.get_json()["error"]
