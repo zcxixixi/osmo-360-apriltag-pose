@@ -86,8 +86,9 @@
     if(singleMode){
       const dualSmoke=timeline.right_gripper_tracking?.enabled===true;
       const trueDualX5=timeline.right_gripper_tracking?.source==='right X5 Grid';
-      document.getElementById('main-title').textContent=`${cameraLabel} · ${dualSmoke?'DUAL GRIPPER':'SINGLE GRIPPER'} · ${Number(timeline.fps).toFixed(2)} FPS`;
-      document.getElementById('notice').textContent=trueDualX5?'LEFT + RIGHT = OWN X5 GRID/CAD/ANGLE/CONTACT · DIAGNOSTIC':dualSmoke?'LEFT = FULL GRID/CAD/ANGLE/FORCE · RIGHT = RECIPROCAL BASETAG3 TRAJECTORY ONLY · DIAGNOSTIC':'TRAJECTORY = GRID WORLD → BASE_LINK · CONTACT INTENSITY IS RELATIVE, NOT NEWTONS · DIAGNOSTIC';
+      const forceCalibration=timeline.coordinate_status?.calibration_status==='X5_FORCE_MODEL_REJECTED';
+      document.getElementById('main-title').textContent=forceCalibration?`${cameraLabel} · FORCE CALIBRATION AUDIT · ${Number(timeline.fps).toFixed(2)} FPS`:`${cameraLabel} · ${dualSmoke?'DUAL GRIPPER':'SINGLE GRIPPER'} · ${Number(timeline.fps).toFixed(2)} FPS`;
+      document.getElementById('notice').textContent=forceCalibration?'FORCE OUTPUT REJECTED · BLACK DOTS + RAW DEFORMATION SCORE ONLY':trueDualX5?'LEFT + RIGHT = OWN X5 GRID/CAD/ANGLE/CONTACT · DIAGNOSTIC':dualSmoke?'LEFT = FULL GRID/CAD/ANGLE/FORCE · RIGHT = RECIPROCAL BASETAG3 TRAJECTORY ONLY · DIAGNOSTIC':'TRAJECTORY = GRID WORLD → BASE_LINK · CONTACT INTENSITY IS RELATIVE, NOT NEWTONS · DIAGNOSTIC';
       const displayFilter=timeline.display_filter?.mode||'raw';
       document.getElementById('left-metric-label').textContent='INCLUDED JAW ANGLE';document.getElementById('right-metric-label').textContent='CAD OPENING';document.getElementById('metric3-label').textContent='CONTACT INTENSITY';
       document.getElementById('pose-filter').textContent=displayFilter==='raw'?'raw visual pose · bounded recovery ≤0.25 s':`${displayFilter.toUpperCase()} DISPLAY ONLY · raw source_p/source_q preserved`;

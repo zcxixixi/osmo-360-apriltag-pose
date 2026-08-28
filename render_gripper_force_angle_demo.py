@@ -648,6 +648,7 @@ def render_demo(
     model: ForceModel,
     urdf_model: UrdfWireframe,
     rig_id: str,
+    force_validated: bool = True,
 ) -> None:
     capture = cv2.VideoCapture(str(video))
     intermediate = output.with_name(output.stem + "_mp4v.mp4")
@@ -688,13 +689,23 @@ def render_demo(
 
         draw_text(canvas, "JAW OPENING", (1020, 570), 0.48, MUTED)
         draw_text(canvas, f"{last_angle:5.1f} deg", (1020, 625), 1.30, CYAN, 3)
-        draw_text(canvas, "RELATIVE FORCE", (1270, 570), 0.48, MUTED)
-        color = force_color(last_force)
+        draw_text(
+            canvas,
+            "RELATIVE FORCE" if force_validated else "RAW DEFORMATION SCORE",
+            (1270, 570), 0.48, MUTED,
+        )
+        color = force_color(last_force) if force_validated else AMBER
         draw_text(canvas, f"{last_force:5.1f} %", (1270, 625), 1.30, color, 3)
         cv2.rectangle(canvas, (1020, 660), (1545, 694), (49, 57, 68), -1)
         cv2.rectangle(canvas, (1020, 660), (1020 + round(5.25 * last_force), 694), color, -1)
-        draw_text(canvas, "UNCALIBRATED: not Newtons", (1020, 725), 0.50, AMBER, 2)
-        draw_text(canvas, state, (1020, 770), 0.58, state_color, 2)
+        draw_text(
+            canvas,
+            "UNCALIBRATED: not Newtons" if force_validated else "REJECTED AS FORCE / UNVALIDATED",
+            (1020, 725), 0.50, AMBER, 2,
+        )
+        display_state = state if force_validated else "RAW SCORE ONLY"
+        display_state_color = state_color if force_validated else RED
+        draw_text(canvas, display_state, (1020, 770), 0.58, display_state_color, 2)
         yellow_count = int(observation.yellow_left is not None) * 3 + int(observation.yellow_right is not None) * 3
         black_count = int(observation.dot_left is not None) + int(observation.dot_right is not None)
         draw_text(
@@ -796,6 +807,7 @@ def main() -> int:
     force, force_recovered = bounded_interpolate(raw_force, maximum_gap)
     opening = np.where(np.isfinite(opening), nanmedian_filter(opening), np.nan)
     force = np.where(np.isfinite(force), nanmedian_filter(force), np.nan)
+    x5_force_rejected = args.camera_profile == "insta360-x5-front"
 
     csv_path = output_dir / "force_angle_observations.csv"
     video_path = output_dir / "gripper_force_angle_demo.mp4"
@@ -822,6 +834,7 @@ def main() -> int:
         force_model,
         urdf_model,
         rig["revision"]["revision_id"],
+        not x5_force_rejected,
     )
 
     yellow_measured = np.asarray(
@@ -830,7 +843,6 @@ def main() -> int:
     black_measured = np.asarray(
         [item.dot_left is not None and item.dot_right is not None for item in observations]
     )
-    x5_force_rejected = args.camera_profile == "insta360-x5-front"
     audit = {
         "schema_version": "gripper-force-angle-demo/1.0",
         "status": (
