@@ -44,7 +44,7 @@ LOG = logging.getLogger("osmo360.offline")
 STOP = False
 
 
-CAMERA_MODELS = ("auto", "dji-osmo-360", "insta360-x6", "generic")
+CAMERA_MODELS = ("auto", "dji-osmo-360", "insta360-x5", "generic")
 
 
 def infer_camera_model(path: Path, width: int, height: int, requested: str) -> str:
@@ -55,11 +55,11 @@ def infer_camera_model(path: Path, width: int, height: int, requested: str) -> s
     if "insta360" in name or "_no_flowstate" in name or (
         name.startswith("vid_") and width >= 6000
     ):
-        return "insta360-x6"
+        return "insta360-x5"
     if "osmo" in name or name.startswith("cam_") or path.suffix.lower() == ".osv":
         return "dji-osmo-360"
     if width >= 7000 and width == 2 * height:
-        return "insta360-x6"
+        return "insta360-x5"
     if width <= 4096 and width == 2 * height:
         return "dji-osmo-360"
     return "generic"
@@ -69,12 +69,12 @@ def resolve_decoder(requested: str, camera_model: str) -> str:
     """Resolve decoding independently from projection acceleration.
 
     Downloading NVDEC frames back to BGR is slower than OpenCV/FFmpeg CPU
-    decoding on the validated DJI 3K and Insta360 X6 8K exports. Keep NVDEC as
+    decoding on the validated DJI 3K and Insta360 X5 8K exports. Keep NVDEC as
     an explicit experiment until a zero-copy detector path is available.
     """
     if requested != "auto":
         return requested
-    if camera_model in ("dji-osmo-360", "insta360-x6", "generic"):
+    if camera_model in ("dji-osmo-360", "insta360-x5", "generic"):
         return "cpu"
     raise ValueError(f"unknown camera model: {camera_model}")
 
@@ -2474,7 +2474,7 @@ def parse_args() -> argparse.Namespace:
         "--projection-backend",
         choices=("auto", "cpu", "cuda"),
         default="auto",
-        help="projection backend (auto: DJI 3K CPU; X6/high-resolution CUDA)",
+        help="projection backend (auto: DJI 3K CPU; X5/high-resolution CUDA)",
     )
     p.add_argument(
         "--decoder", choices=("auto", "cpu", "nvdec"), default="auto",
@@ -2482,7 +2482,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--camera-model", choices=CAMERA_MODELS, default="auto",
-        help="processing profile; auto infers DJI Osmo 360, Insta360 X6, or generic",
+        help="processing profile; auto infers DJI Osmo 360, Insta360 X5, or generic",
     )
     p.add_argument(
         "--ffmpeg-bin", type=Path,

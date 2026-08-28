@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot
+  name="osmo定位.SLDASM">
+  <link
+    name="base_link">
+    <inertial>
+      <origin
+        xyz="-0.00199464156435489 -5.56092268521052E-08 0.0512811084064809"
+        rpy="0 0 0" />
+      <mass
+        value="0.146508885094401" />
+      <inertia
+        ixx="0.000105421808512446"
+        ixy="-2.17158250986538E-11"
+        ixz="-1.45420163593457E-05"
+        iyy="7.33808808135822E-05"
+        iyz="-1.07937739557828E-11"
+        izz="6.06368333190989E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://osmo定位.SLDASM/meshes/base_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://osmo定位.SLDASM/meshes/base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link
+    name="Link1">
+    <inertial>
+      <origin
+        xyz="0.0466719865077553 0.00424243437571579 -0.00622466669144627"
+        rpy="0 0 0" />
+      <mass
+        value="0.0759495390604381" />
+      <inertia
+        ixx="6.86409919104242E-06"
+        ixy="-2.6837877683117E-06"
+        ixz="1.24087407833583E-06"
+        iyy="6.9553574919398E-05"
+        iyz="-6.457187345459E-07"
+        izz="7.0398037440287E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://osmo定位.SLDASM/meshes/Link1.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.866666666666667 0.909803921568627 1 0.25" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://osmo定位.SLDASM/meshes/Link1.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="joint1"
+    type="fixed">
+    <origin
+      xyz="0.015 0.025 0.0151"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="Link1" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="Link2">
+    <inertial>
+      <origin
+        xyz="0.0544405203831648 -0.0078649597601626 -0.00643596692252391"
+        rpy="0 0 0" />
+      <mass
+        value="0.0454529463801399" />
+      <inertia
+        ixx="3.32641631782378E-06"
+        ixy="5.12118024868841E-07"
+        ixz="5.48677840118884E-07"
+        iyy="4.38209676824735E-05"
+        iyz="2.67304567631751E-07"
+        izz="4.4275810726997E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://osmo定位.SLDASM/meshes/Link2.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.796078431372549 0.823529411764706 0.937254901960784 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://osmo定位.SLDASM/meshes/Link2.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="joint2"
+    type="fixed">
+    <origin
+      xyz="0.015 -0.02 0.0157"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="Link2" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="Link3">
+    <inertial>
+      <origin
+        xyz="-0.0336457118238116 -4.7999063194745E-07 -0.00396292441039347"
+        rpy="0 0 0" />
+      <mass
+        value="0.0169737600725147" />
+      <inertia
+        ixx="6.26898073245533E-06"
+        ixy="-2.17158251067177E-11"
+        ixz="-3.21972703143559E-07"
+        iyy="3.09338346543039E-06"
+        iyz="-1.07937739800505E-11"
+        izz="8.53592975769599E-06" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://osmo定位.SLDASM/meshes/Link3.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://osmo定位.SLDASM/meshes/Link3.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="joint3"
+    type="fixed">
+    <origin
+      xyz="0.02625 0 0.0196"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="Link3" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+</robot>

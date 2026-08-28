@@ -1,0 +1,41 @@
+{
+  "schema_version": "gripper-visual-marker-layout/1.0",
+  "revision_id": "gripper-marker-layout-umi-iii-dxf-r1",
+  "status": "REJECTED_MISIDENTIFIED_AUXILIARY_CIRCLES_AS_FORCE_MARKERS",
+  "replacement": "config/rig_revisions/gripper_marker_layout_umi_iii_dxf_r2.json",
+  "source": {
+    "path": "/home/cenxi/Downloads/标定.DXF",
+    "sha256": "82a5aab2a1392c93a793c4f27d68ca979bee66cfd591fdb056d06ae86a9e5c19",
+    "reference": "joint1",
+    "drawing_view_scale": 2.0,
+    "units": "mm"
+  },
+  "yellow_markers": {
+    "diameter_mm": 4.0,
+    "centres_dxf_xy_mm": [
+      [-22.352067, 27.370798],
+      [-20.988930, 52.006052],
+      [-20.170538, 66.787188]
+    ]
+  },
+  "black_markers": {
+    "diameter_mm": 1.7,
+    "centres_dxf_xy_mm": [
+      [-4.950000, 31.000000],
+      [-4.950000, 41.000000],
+      [-4.950000, 51.000000],
+      [-4.950000, 61.000000],
+      [-4.950000, 71.000000]
+    ]
+  },
+  "image_use": {
+    "yellow_correspondence_order": "sort physical distance from joint descending to match image tip-to-base order",
+    "allow_per_jaw_similarity_fit": true,
+    "metric_3d_projection": false
+  },
+  "unresolved": {
+    "dxf_axes_to_link1": "PENDING",
+    "link2_mirror_transform": "PENDING",
+    "marker_plane_height_m": "PENDING"
+  }
+}

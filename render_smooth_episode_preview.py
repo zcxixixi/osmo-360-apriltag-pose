@@ -286,19 +286,24 @@ def main() -> int:
     if args.timeline_only:
         print(timeline_path)
         return 0
-    for camera in range(2):
-        encode_rgb_video(source[f"camera{camera}_rgb"], camera_videos[camera], source_hz)
+    has_camera_insets = all(f"camera{camera}_rgb" in source.files for camera in range(2))
+    if has_camera_insets:
+        for camera in range(2):
+            encode_rgb_video(source[f"camera{camera}_rgb"], camera_videos[camera], source_hz)
     run(["node", str(RENDERER), "--timeline", str(timeline_path), "--mesh-dir", str(MESH_DIR),
          "--output", str(base_video), "--ffmpeg", str(FFMPEG), "--duration", str(duration), "--fps", str(args.fps)])
-    run([str(FFMPEG), "-y", "-hide_banner", "-loglevel", "error",
-         "-i", str(base_video), "-i", str(camera_videos[0]), "-i", str(camera_videos[1]),
-         "-filter_complex",
-         "[1:v]scale=160:160:flags=lanczos,pad=320:160:80:0:black[c0];"
-         "[2:v]scale=160:160:flags=lanczos,pad=320:160:80:0:black[c1];"
-         "[0:v][c0]overlay=1210:56:shortest=1[tmp];[tmp][c1]overlay=1554:56:shortest=1[v]",
-         "-map", "[v]", "-an", "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-         "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(output)])
-    base_video.unlink(missing_ok=True)
+    if has_camera_insets:
+        run([str(FFMPEG), "-y", "-hide_banner", "-loglevel", "error",
+             "-i", str(base_video), "-i", str(camera_videos[0]), "-i", str(camera_videos[1]),
+             "-filter_complex",
+             "[1:v]scale=160:160:flags=lanczos,pad=320:160:80:0:black[c0];"
+             "[2:v]scale=160:160:flags=lanczos,pad=320:160:80:0:black[c1];"
+             "[0:v][c0]overlay=1210:56:shortest=1[tmp];[tmp][c1]overlay=1554:56:shortest=1[v]",
+             "-map", "[v]", "-an", "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+             "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(output)])
+        base_video.unlink(missing_ok=True)
+    else:
+        base_video.replace(output)
     for path in camera_videos:
         path.unlink(missing_ok=True)
     report = {
@@ -309,6 +314,7 @@ def main() -> int:
         "layout_calibration_id": layout_id,
         "position": "linear interpolation of already Kalman+RTS filtered episode arrays",
         "orientation": "quaternion SLERP", "training_data_modified": False,
+        "camera_insets": has_camera_insets,
         "warning": "DISPLAY INTERPOLATED frames are visualization only and are not training measurements",
     }
     output.with_name(output.stem + "_audit.json").write_text(

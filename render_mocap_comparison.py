@@ -327,7 +327,7 @@ def main() -> int:
             status, status_color = "LOST", RED
         previous_direct = is_direct
 
-        text(canvas, "INSTA360 X6  /  OPTITRACK AUDIT", (30, 42), 0.86, WHITE, 2)
+        text(canvas, "INSTA360 X5  /  OPTITRACK AUDIT", (30, 42), 0.86, WHITE, 2)
         text(canvas, status, (30, 82), 0.75, status_color, 2)
         text(canvas, "Formal metrics use direct multi-tag frames only", (30, 112), 0.50, WHITE)
 

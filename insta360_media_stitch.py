@@ -11,9 +11,10 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from insta360_sdk_revision import DEFAULT_REVISION, load_insta360_sdk_revision
+
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_SDK_ROOT = ROOT / "work/insta360-sdk/media"
 BUNDLED_FFPROBE = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffprobe"
 
 
@@ -21,7 +22,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Official Insta360 MediaSDK raw-video stitcher")
     parser.add_argument("input", type=Path, nargs="+", help="one or more parts of one Insta360 clip")
     parser.add_argument("output", type=Path)
-    parser.add_argument("--sdk-root", type=Path, default=DEFAULT_SDK_ROOT)
+    parser.add_argument("--sdk-revision", type=Path, default=DEFAULT_REVISION)
     parser.add_argument("--width", type=int, choices=(1920, 3840, 6144, 7680), default=3840)
     parser.add_argument(
         "--stitch-type", choices=("template", "optflow", "dynamicstitch", "aistitch"),
@@ -110,13 +111,20 @@ def camera_model_hint(path: Path) -> str | None:
 
 def main() -> int:
     args = parse_args()
-    args.sdk_root = args.sdk_root.resolve()
+    sdk = load_insta360_sdk_revision(args.sdk_revision)
+    args.sdk_root = sdk["media_root"]
     args.output = args.output.resolve()
     if args.output.exists() and not args.force:
         print(f"INSTA360_STITCH_REUSE {args.output}")
         return 0
     command, environment = media_sdk_command(args)
     print("INSTA360_MEDIA_SDK " + " ".join(command))
+    print(
+        "INSTA360_SDK_REVISION "
+        + sdk["revision"]["revision_id"]
+        + " "
+        + sdk["revision_sha256"]
+    )
     if args.dry_run:
         return 0
     args.output.parent.mkdir(parents=True, exist_ok=True)

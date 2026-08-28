@@ -261,6 +261,13 @@ def _residuals(
     return np.asarray(positional), np.asarray(angular)
 
 
+def _wall_plane_angle_deg(rotation: Rotation) -> float:
+    """Return the acute angle between the two unoriented panel normals."""
+    transformed_normal = rotation.apply([0.0, 0.0, 1.0])
+    cosine = float(np.clip(abs(transformed_normal[2]), 0.0, 1.0))
+    return float(np.degrees(np.arccos(cosine)))
+
+
 def robust_panel_transform(
     primary: list[PoseSample],
     secondary: list[PoseSample],
@@ -268,6 +275,8 @@ def robust_panel_transform(
     max_position_residual_m: float = 0.05,
     max_orientation_residual_deg: float = 3.0,
     minimum_inliers: int = 20,
+    expected_wall_plane_angle_deg: float | None = 90.0,
+    wall_plane_angle_tolerance_deg: float = 5.0,
 ) -> tuple[Rotation, np.ndarray, np.ndarray, dict]:
     """Estimate ``T_primary_secondary`` without a similarity scale."""
     if len(primary) != len(secondary):
@@ -276,15 +285,38 @@ def robust_panel_transform(
         raise ValueError(f"need at least {minimum_inliers} paired poses, found {len(primary)}")
     candidates_r, candidates_t = _candidate_transforms(primary, secondary)
     quality = _quality_weights(primary, secondary)
+    candidate_wall_angles = np.asarray(
+        [_wall_plane_angle_deg(rotation) for rotation in candidates_r], dtype=np.float64
+    )
+    if expected_wall_plane_angle_deg is None:
+        geometry_keep = np.ones(len(candidates_r), dtype=bool)
+    else:
+        if not 0.0 <= expected_wall_plane_angle_deg <= 90.0:
+            raise ValueError("expected wall-plane angle must be in [0, 90] degrees")
+        if wall_plane_angle_tolerance_deg < 0.0:
+            raise ValueError("wall-plane angle tolerance must be non-negative")
+        geometry_keep = (
+            np.abs(candidate_wall_angles - expected_wall_plane_angle_deg)
+            <= wall_plane_angle_tolerance_deg
+        )
+    geometry_count = int(geometry_keep.sum())
+    if geometry_count < minimum_inliers:
+        raise ValueError(
+            "not enough panel-pose candidates satisfy the physical wall-angle gate: "
+            f"{geometry_count} < {minimum_inliers}; expected "
+            f"{expected_wall_plane_angle_deg} +/- {wall_plane_angle_tolerance_deg} deg"
+        )
 
     # Candidate medoid / deterministic RANSAC.  Each candidate is scored by
     # how many other candidates agree with both its rotation and translation.
     best_score = -1.0
     best_keep: np.ndarray | None = None
-    for center_r, center_t in zip(candidates_r, candidates_t):
+    for center_index, (center_r, center_t) in enumerate(zip(candidates_r, candidates_t)):
+        if not geometry_keep[center_index]:
+            continue
         angle = np.degrees((center_r.inv() * Rotation.concatenate(candidates_r)).magnitude())
         distance = np.linalg.norm(candidates_t - center_t, axis=1)
-        keep = (angle <= max_orientation_residual_deg) & (
+        keep = geometry_keep & (angle <= max_orientation_residual_deg) & (
             distance <= max_position_residual_m
         )
         score = float(quality[keep].sum())
@@ -316,7 +348,7 @@ def robust_panel_transform(
         position_residual, orientation_residual = _residuals(
             rotation, translation, primary, secondary
         )
-        keep = (position_residual <= max_position_residual_m) & (
+        keep = geometry_keep & (position_residual <= max_position_residual_m) & (
             orientation_residual <= max_orientation_residual_deg
         )
         if int(keep.sum()) < minimum_inliers:
@@ -347,7 +379,7 @@ def robust_panel_transform(
             break
 
     position_residual, orientation_residual = _residuals(rotation, translation, primary, secondary)
-    keep = (position_residual <= max_position_residual_m) & (
+    keep = geometry_keep & (position_residual <= max_position_residual_m) & (
         orientation_residual <= max_orientation_residual_deg
     )
     audit = {
@@ -357,6 +389,14 @@ def robust_panel_transform(
         "thresholds": {
             "position_m": max_position_residual_m,
             "orientation_deg": max_orientation_residual_deg,
+            "expected_wall_plane_angle_deg": expected_wall_plane_angle_deg,
+            "wall_plane_angle_tolerance_deg": wall_plane_angle_tolerance_deg,
+        },
+        "physical_geometry_gate": {
+            "candidate_frames_accepted": geometry_count,
+            "candidate_frames_rejected": int(len(geometry_keep) - geometry_count),
+            "candidate_wall_plane_angle_deg": _distribution(candidate_wall_angles),
+            "selected_wall_plane_angle_deg": _wall_plane_angle_deg(rotation),
         },
         "position_residual_m": _distribution(position_residual[keep]),
         "orientation_residual_deg": _distribution(orientation_residual[keep]),
@@ -482,6 +522,8 @@ def calibrate(
     secondary_frame: str = "right_wall_six_tag_panel_map",
     minimum_inliers: int = 20,
     bootstrap_samples: int = 500,
+    expected_wall_plane_angle_deg: float = 90.0,
+    wall_plane_angle_tolerance_deg: float = 5.0,
 ) -> dict:
     primary_map = load_tag_map(primary_map_path)
     secondary_observation_map = load_tag_map(secondary_observation_map_path)
@@ -497,7 +539,11 @@ def calibrate(
     secondary = [secondary_rows[frame] for frame in frames]
 
     observation_r, observation_t, keep, robust_audit = robust_panel_transform(
-        primary, secondary, minimum_inliers=minimum_inliers
+        primary,
+        secondary,
+        minimum_inliers=minimum_inliers,
+        expected_wall_plane_angle_deg=expected_wall_plane_angle_deg,
+        wall_plane_angle_tolerance_deg=wall_plane_angle_tolerance_deg,
     )
     # Map alignment is T_output_observation.  We need T_observation_output
     # before composing T_primary_observation * T_observation_output.
@@ -635,8 +681,9 @@ def calibrate(
         "geometry_audit": {
             "duplicate_tag_ids_across_panels": duplicate_ids,
             "estimated_wall_plane_angle_deg": wall_angle,
-            "expected_wall_plane_angle_deg": 90.0,
-            "wall_plane_angle_error_deg": abs(90.0 - wall_angle),
+            "expected_wall_plane_angle_deg": expected_wall_plane_angle_deg,
+            "wall_plane_angle_error_deg": abs(expected_wall_plane_angle_deg - wall_angle),
+            "wall_plane_angle_tolerance_deg": wall_plane_angle_tolerance_deg,
             "determinant": float(np.linalg.det(panel_r.as_matrix())),
             "orthonormal_error_frobenius": float(
                 np.linalg.norm(panel_r.as_matrix().T @ panel_r.as_matrix() - np.eye(3))
@@ -667,6 +714,8 @@ def main() -> int:
     parser.add_argument("--secondary-frame", default="secondary_wall_panel_map")
     parser.add_argument("--minimum-inliers", type=int, default=20)
     parser.add_argument("--bootstrap-samples", type=int, default=500)
+    parser.add_argument("--expected-wall-plane-angle-deg", type=float, default=90.0)
+    parser.add_argument("--wall-plane-angle-tolerance-deg", type=float, default=5.0)
     args = parser.parse_args()
     report = calibrate(
         args.primary_pose,
@@ -680,6 +729,8 @@ def main() -> int:
         secondary_frame=args.secondary_frame,
         minimum_inliers=args.minimum_inliers,
         bootstrap_samples=args.bootstrap_samples,
+        expected_wall_plane_angle_deg=args.expected_wall_plane_angle_deg,
+        wall_plane_angle_tolerance_deg=args.wall_plane_angle_tolerance_deg,
     )
     summary = {
         "output": str(args.output.resolve()),

@@ -1,0 +1,38 @@
+{
+  "schema_version": "dual-gripper-rig-revision/1.0",
+  "revision_id": "dual-gripper-v52-new-gripper-20260826-r2",
+  "status": "FUTURE_DATA_COLLECTION_NEW_GRIPPER_TCP_PENDING",
+  "training_ready": false,
+  "hardware": {
+    "path": "config/hardware_20260825_serial_bound_v1.json",
+    "sha256": "b7901918f860a2852f254d0b9954d868508f5b87a533aa756df4da763b17be6d"
+  },
+  "gripper_geometry": {
+    "path": "config/rig_revisions/gripper_geometry_v52_new_r2.json",
+    "sha256": "3aa0bf9cb9744674d3e0f8d48d9af6a1db6b24632cb72b148adbc91e7ab7e497"
+  },
+  "world_tag_map": {
+    "path": "/home/cenxi/Videos/umi-captures/20260825/world-map-room-corner-10tag-200mm-multicapture-v1.json",
+    "sha256": "7d7f246d1b08ffe2b7352438326365ebe745a1450f0bf32ef8ad8588913c71b6",
+    "compiled_sha256": "ac054aae49d3cf5f2c6e67f0abd330f488d887cbe79b72f370e053079b70239f",
+    "map_id": "room-corner-10tag-200mm-multicapture-v1"
+  },
+  "role_binding_source": "hardware",
+  "expected_frames": {
+    "world_frame": "tag_map",
+    "physical_up_vector": [0.0, -1.0, 0.0],
+    "pose_reference": "base_link",
+    "action_reference": "tcp"
+  },
+  "accuracy_first_policy": {
+    "maximum_pose_angular_rmse_deg": 2.0,
+    "require_both_wall_panels": true,
+    "wall_panel_id_groups": [[128, 129, 130, 131, 132, 133], [134, 135, 136, 137]],
+    "maximum_cross_bearing_error_deg": 5.0,
+    "maximum_trusted_position_step_m": 0.05,
+    "maximum_interpolation_gap_s": 0.25,
+    "allow_metric_smoothing": false,
+    "allow_dual_fisheye_position_fill": false,
+    "allow_hidden_contact_constraint": false
+  }
+}

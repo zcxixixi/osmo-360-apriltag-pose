@@ -27,6 +27,6 @@ def test_media_sdk_command_keeps_stabilization_disabled(tmp_path: Path):
 
 def test_camera_model_hint_reads_insv_footer(tmp_path: Path):
     source = tmp_path / "clip.insv"
-    source.write_bytes(b"video" + b"\x00" * 32 + b"Insta360 X6\x00metadata")
+    source.write_bytes(b"video" + b"\x00" * 32 + b"Insta360 X5\x00metadata")
 
-    assert camera_model_hint(source) == "Insta360 X6"
+    assert camera_model_hint(source) == "Insta360 X5"

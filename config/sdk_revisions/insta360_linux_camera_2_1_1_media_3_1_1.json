@@ -1,0 +1,44 @@
+{
+  "schema_version": "insta360-sdk-revision/1.0",
+  "revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+  "platform": "linux-x86_64",
+  "source_archive": {
+    "path": "/home/cenxi/Downloads/Linux_CameraSDK-2.1.1_MediaSDK-3.1.1.zip",
+    "sha256": "ffede4573c463b3ac4106f548e4e0c32ec0b8d1000aad11dcd0652f7dc98a46a"
+  },
+  "media_sdk": {
+    "version": "3.1.1.0-20250922_191110",
+    "root": "work/insta360-sdk/media-3.1.1",
+    "binary": {
+      "path": "usr/bin/MediaSDKTest",
+      "sha256": "e44e25680213e262064cba5378ed452f2f9d2f491cbdfbf4b3a8603e06da49f6"
+    },
+    "library": {
+      "path": "usr/lib/libMediaSDK.so",
+      "sha256": "a0c98c2ae8a5f6b734fbc14dc43a24c883d60fa7e1bd207b2c34dc0b3b33247d"
+    },
+    "model_probe": {
+      "path": "models/ai_stitcher_v2.ins",
+      "sha256": "d8e9fb7ef67b18cb1855d1600d3552f3f3c659d345be280abc3b70cc23e6d6e7"
+    },
+    "vendor_build_cuda": "11.7",
+    "vendor_build_gcc": "11.4"
+  },
+  "camera_sdk": {
+    "version": "2.1.1.1-20251104_115504",
+    "root": "work/insta360-sdk/camera-2.1.1",
+    "binary": {
+      "path": "bin/CameraSDKTest",
+      "sha256": "58b5afac4f3e2eeb1000f86d6359313bd54c185b49e81b595d371d8a9af0dec0"
+    },
+    "library": {
+      "path": "lib/libCameraSDK.so",
+      "sha256": "d55091f120fa04632decd2230c1ebf5e0c87037d7ec01ffae089eb4a9236b2ad"
+    }
+  },
+  "usage": {
+    "offline_stitching": "media_sdk",
+    "live_camera_control": "camera_sdk",
+    "metric_pose_input": "raw camera frames or official output with traceable source; stitching is not external ground truth"
+  }
+}

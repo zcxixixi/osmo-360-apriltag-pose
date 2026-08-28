@@ -1,0 +1,50 @@
+{
+  "schema_version": "gripper-visual-marker-layout/1.0",
+  "revision_id": "gripper-marker-layout-umi-iii-dxf-r2",
+  "status": "ACTIVE_FOR_IMAGE_RELATIVE_YELLOW_LAYOUT_ONLY",
+  "source": {
+    "path": "/home/cenxi/Downloads/标定.DXF",
+    "sha256": "82a5aab2a1392c93a793c4f27d68ca979bee66cfd591fdb056d06ae86a9e5c19",
+    "reference": "joint1",
+    "drawing_view_scale": 2.0,
+    "units": "mm"
+  },
+  "yellow_markers": {
+    "count_per_jaw": 3,
+    "diameter_mm": 4.0,
+    "centres_dxf_xy_mm": [
+      [-22.352067, 27.370798],
+      [-20.988930, 52.006052],
+      [-20.170538, 66.787188]
+    ]
+  },
+  "force_black_markers": {
+    "count_per_pad": 1,
+    "surface": "compliant_yellow_pad_tip",
+    "present_in_dxf": false,
+    "diameter_mm": "PENDING",
+    "centre_relative_to_joint": "PENDING"
+  },
+  "unidentified_dxf_small_circles": {
+    "diameter_mm": 1.7,
+    "centres_dxf_xy_mm": [
+      [-4.950000, 31.000000],
+      [-4.950000, 41.000000],
+      [-4.950000, 51.000000],
+      [-4.950000, 61.000000],
+      [-4.950000, 71.000000]
+    ],
+    "policy": "Do not use as compliant-pad force markers until the user identifies their physical function."
+  },
+  "image_use": {
+    "yellow_correspondence_order": "sort physical distance from joint descending to match image tip-to-base order",
+    "allow_per_jaw_similarity_fit": true,
+    "metric_3d_projection": false
+  },
+  "unresolved": {
+    "dxf_axes_to_link1": "PENDING",
+    "link2_mirror_transform": "PENDING",
+    "yellow_marker_plane_height_m": "PENDING",
+    "force_black_marker_geometry": "PENDING"
+  }
+}

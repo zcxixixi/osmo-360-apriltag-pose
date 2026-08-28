@@ -224,9 +224,30 @@ def main() -> None:
         "full_dataset_mse_normalized": float(np.mean((predicted_norm - ((truth - target_mean) / target_std)) ** 2)),
         "metrics": metrics,
     }
-    (args.output_dir / "overfit_report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+    checkpoint_path = args.output_dir / "overfit_policy.pt"
     torch.save({"model": model.state_dict(), "state_mean": state_mean, "state_std": state_std,
-                "target_mean": target_mean, "target_std": target_std, "report": report}, args.output_dir / "overfit_policy.pt")
+                "target_mean": target_mean, "target_std": target_std}, checkpoint_path)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    restored = DualCameraPolicy(states.shape[1]).to(device)
+    restored.load_state_dict(checkpoint["model"], strict=True)
+    restored.eval()
+    with torch.inference_mode():
+        restored_prediction = restored(left, right, state_t)
+    reload_max_abs_delta = float(torch.max(torch.abs(
+        restored_prediction - torch.from_numpy(predicted_norm).to(device)
+    )).cpu())
+    if reload_max_abs_delta > 1e-7:
+        raise RuntimeError(f"checkpoint reload changed predictions by {reload_max_abs_delta}")
+    report["checkpoint_reload"] = {
+        "status": "PASS",
+        "strict_state_dict": True,
+        "prediction_max_abs_delta": reload_max_abs_delta,
+    }
+    checkpoint["report"] = report
+    torch.save(checkpoint, checkpoint_path)
+    (args.output_dir / "overfit_report.json").write_text(
+        json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+    )
 
     with (args.output_dir / "predictions.csv").open("w", newline="") as handle:
         writer = csv.writer(handle)

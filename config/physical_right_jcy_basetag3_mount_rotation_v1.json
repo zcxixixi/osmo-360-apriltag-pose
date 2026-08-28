@@ -1,0 +1,11 @@
+{
+  "quaternion_xyzw": [
+    -0.04064249901500445,
+    0.6795101509310744,
+    0.7143903004970782,
+    -0.16205135177201774
+  ],
+  "camera_serial": "95SXNAD0425JCY",
+  "base_tag_id": 3,
+  "source": "config/hardware_20260825_serial_bound_v1.json"
+}

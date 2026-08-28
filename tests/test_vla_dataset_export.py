@@ -4,12 +4,14 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import cv2
 from scipy.spatial.transform import Rotation
 import zarr
 
 from vla_dataset_export import (
-    _compose_hardware_camera_to_tcp, _rot6d, apply_camera_to_tcp,
-    audit_multicamera_pair, build_episode, load_pose_csv, resample_pose,
+    _compose_hardware_camera_to_tcp, _hardware_role, _rot6d, apply_camera_to_tcp,
+    audit_multicamera_pair, build_episode, extract_rgb, load_gripper, load_pose_csv,
+    resample_pose,
 )
 from world_frames import compile_world_tag_map
 
@@ -39,6 +41,53 @@ def write_gripper(path: Path, duration: float = 4.0, fps: int = 20) -> None:
             writer.writerow({"time_s": frame / fps, "opening_angle_deg": frame / 2, "measured": 1})
 
 
+def test_gripper_loader_accepts_audio_aligned_common_time(tmp_path: Path) -> None:
+    path = tmp_path / "opening.csv"
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle, fieldnames=["common_time_s", "opening_angle_deg", "measured"]
+        )
+        writer.writeheader()
+        writer.writerows([
+            {"common_time_s": 3.0, "opening_angle_deg": 4.0, "measured": 1},
+            {"common_time_s": 4.0, "opening_angle_deg": 14.0, "measured": 0},
+        ])
+    angle, _, measured = load_gripper(path, np.asarray([3.0, 3.5, 4.0]), None)
+    np.testing.assert_allclose(angle, [4.0, 9.0, 14.0])
+    assert measured.tolist() == [True, False, False]
+
+
+def test_semantic_hand_can_bind_the_opposite_serialized_hardware_slot() -> None:
+    assert _hardware_role({"name": "left", "hardware_role": "right"}, "left") == "right"
+    assert _hardware_role({"name": "right"}, "right") == "right"
+
+
+def test_raw_fisheye_observation_is_resized_without_equirectangular_projection(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    bgr = np.zeros((6, 8, 3), dtype=np.uint8)
+    bgr[..., 0] = np.arange(8, dtype=np.uint8)[None, :] * 20
+    bgr[..., 1] = np.arange(6, dtype=np.uint8)[:, None] * 30
+    bgr[..., 2] = 111
+
+    class FakeCapture:
+        def isOpened(self): return True
+        def get(self, _): return 30.0
+        def set(self, *_): return True
+        def read(self): return True, bgr.copy()
+        def release(self): pass
+
+    monkeypatch.setattr(cv2, "VideoCapture", lambda *_: FakeCapture())
+    result = extract_rgb(
+        tmp_path / "stream1.mp4", np.asarray([0.0]), (3, 4),
+        {"projection": "raw_resize"},
+    )
+    expected = cv2.resize(
+        cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), (4, 3), interpolation=cv2.INTER_AREA,
+    )
+    np.testing.assert_array_equal(result[0], expected)
+
+
 def test_mount_tag2_can_be_the_eef_reference_without_tcp_lever() -> None:
     position = np.asarray([[1.0, 2.0, 3.0]])
     rotation = Rotation.identity(1)
@@ -49,6 +98,16 @@ def test_mount_tag2_can_be_the_eef_reference_without_tcp_lever() -> None:
     })
     np.testing.assert_allclose(transformed, [[1.04, 2.07, 3.0]])
     np.testing.assert_allclose(transformed_rotation.as_matrix(), np.eye(3)[None])
+
+
+def test_mount_tag3_can_be_the_eef_reference_after_id_migration() -> None:
+    position = np.asarray([[1.0, 2.0, 3.0]])
+    transformed, _ = apply_camera_to_tcp(position, Rotation.identity(1), {
+        "parent_frame": "panorama_camera", "child_frame": "left_mount_tag3",
+        "translation_m": [0.01, 0.02, 0.03],
+        "quaternion_xyzw": [0, 0, 0, 1],
+    })
+    np.testing.assert_allclose(transformed, [[1.01, 2.02, 3.03]])
 
 
 def test_pair_integrity_rejects_sequential_repetitions(tmp_path: Path) -> None:
@@ -129,6 +188,19 @@ def test_pose_resampling_and_rotation6d(tmp_path: Path) -> None:
     six = _rot6d(rotation)
     assert six.shape == (2, 6)
     assert np.allclose(np.linalg.norm(six[:, :3], axis=1), 1)
+
+
+def test_raw_fisheye_unit_bearing_is_a_direct_trusted_measurement(tmp_path: Path) -> None:
+    pose = tmp_path / "raw_pose.csv"
+    pose.write_text(
+        "timestamp,camera_x_m,camera_y_m,camera_z_m,qx,qy,qz,qw,measurement_source,quality_status\n"
+        "0,0,0,1,0,0,0,1,raw_fisheye_unit_bearing,valid\n"
+        "1,0.1,0,1,0,0,0,1,raw_fisheye_unit_bearing_edge_rectified,valid\n",
+        encoding="utf-8",
+    )
+    series = load_pose_csv(pose)
+    assert series.direct.tolist() == [True, True]
+    assert series.tracked.tolist() == [True, True]
 
 
 def test_verified_episode_exports_canonical_arrays(tmp_path: Path) -> None:

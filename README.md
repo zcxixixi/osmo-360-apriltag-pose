@@ -1,6 +1,6 @@
 # 360 Camera 6DoF Dataset Pipeline
 
-将 360 相机原始视频自动处理为带时间戳的 6DoF 轨迹数据集。当前生产入口优先支持 DJI Osmo 360，并为 Insta360 X6 官方 SDK 接入保留统一接口。
+将 360 相机原始视频自动处理为带时间戳的 6DoF 轨迹数据集。当前生产入口优先支持 DJI Osmo 360，并为 Insta360 X5 官方 SDK 接入保留统一接口。
 
 核心流程：
 
@@ -66,14 +66,17 @@ DJI 原始 `.OSV` 拼接依赖本机 PanoForge，默认查找与本仓库同级�
   --run-name production-001
 ```
 
-Insta360 `.insv/.lrv` 原片使用官方 Linux MediaSDK。默认从
-`work/insta360-sdk/media/` 查找免系统安装的 SDK，也可用 `--insta-sdk-root`
-指定解包目录。拼接阶段默认关闭 FlowState 和方向锁定，以保留用于 6DoF 解算的原始相机运动：
+Insta360 `.insv/.lrv` 原片使用官方 Linux MediaSDK。当前固定修订为
+CameraSDK 2.1.1 / MediaSDK 3.1.1，清单位于
+`config/sdk_revisions/insta360_linux_camera_2_1_1_media_3_1_1.json`。
+MediaSDK 与 CameraSDK 分别本地部署到版本化的 gitignored `work/` 目录；
+运行时会校验平台、二进制、动态库和模型哈希。拼接阶段默认关闭 FlowState
+和方向锁定，以保留用于 6DoF 解算的原始相机运动：
 
 ```bash
 ./camera-to-dataset /data/VID_xxx.insv \
-  --insta-sdk-root /opt/insta360-media-sdk \
-  --run-name insta-x6-001 \
+  --insta-sdk-revision config/sdk_revisions/insta360_linux_camera_2_1_1_media_3_1_1.json \
+  --run-name insta-x5-001 \
   --max-processed-frames 60
 ```
 
@@ -81,9 +84,9 @@ Insta360 `.insv/.lrv` 原片使用官方 Linux MediaSDK。默认从
 `--insta-soft-decode --insta-soft-encode`；若 CUDA 路径不兼容，可追加
 `--insta-disable-cuda`。
 
-截至 Linux MediaSDK 3.1.1，官方公开兼容列表到 X5，尚不包含 X6。X6
-原始 INSV 会被适配器明确阻止并报告相机型号；请使用 Insta360 Studio 导出的
-无 FlowState、无方向锁定 2:1 MP4，或由 Insta360 提供明确支持 X6 的 MediaSDK 构建。
+未来 Insta360 采集型号为 X5。开始大规模采集前，必须使用实际 X5
+序列号完成 CameraSDK 设备发现/录制测试，以及 MediaSDK 原始 INSV/LRV
+到官方 2:1 输出的端到端测试；二进制帮助和 dry-run 不能替代实机验证。
 
 ### 自动处理策略
 
@@ -91,7 +94,7 @@ Insta360 `.insv/.lrv` 原片使用官方 Linux MediaSDK。默认从
 | --- | --- |
 | DJI 3K 全景 | CPU 解码 + CPU 投影 + 4 路检测 |
 | DJI 高分辨率全景 | CPU 解码 + CUDA 投影（可用时） |
-| Insta360 X6 8K | CPU 解码 + CUDA 投影（可用时） |
+| Insta360 X5 8K | CPU 解码 + CUDA 投影（可用时） |
 | 未知 2:1 MP4 | 按文件名与分辨率选择保守配置 |
 
 NVDEC 目前保留为显式实验选项；由于帧仍需下载到 CPU 进行 AprilTag 检测，当前实测不一定比 CPU 解码快。部署时可使用 `--camera-model`、`--decoder` 和 `--projection-backend` 覆盖自动策略。
@@ -176,16 +179,16 @@ dataset/
 
 状态字段区分 `direct`、`optical_flow`、`recovered`、`predicted` 和 `lost`，下游训练或评估时不能把恢复帧当作直接真值。
 
-## Insta360 X6 与 OptiTrack 评估
+## Insta360 X5 与 OptiTrack 评估
 
 使用关闭 FlowState、方向锁定和地平线校正的官方 2:1 MP4：
 
 ```bash
-./x6-mocap-evaluate \
+./x5-mocap-evaluate \
   /data/VID_NO_FLOWSTATE.mp4 \
   /data/motive.csv \
   --confirm-flowstate-off \
-  --run-name x6-evaluation-001
+  --run-name x5-evaluation-001
 ```
 
 管线会完成 Motive 多行表头解析、异常刚体分支隔离、时间同步、前 30% 外参标定和后 70% 独立评估，并输出 ATE、姿态误差、RPE、漂移、失锁恢复和 Bootstrap 置信区间。
@@ -231,6 +234,20 @@ dataset/
 uv sync --extra test
 uv run pytest -q
 ```
+
+### 双夹爪 v50 冻结基线
+
+修改双夹爪定位、姿态融合、左右角色、外参、平滑或三维渲染前，必须先读
+[`DUAL_GRIPPER_V50_BASELINE.md`](DUAL_GRIPPER_V50_BASELINE.md)，并执行：
+
+```bash
+./.venv/bin/python verify_dual_gripper_v50_baseline.py
+./.venv/bin/pytest -q
+```
+
+机器可读的固定哈希、角色绑定、算法不变量和回归阈值保存在
+`config/baselines/dual_gripper_v50_accepted_baseline.json`。v15/v50 产物不可覆盖；
+实验必须写入新版本目录，经标定片段和完整爪对爪片段对比并由人工确认后才能成为新基线。
 
 ## UMI / VLA 数据集封装
 

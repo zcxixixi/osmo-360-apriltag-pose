@@ -55,7 +55,7 @@ def test_pipeline_commands_preserve_formal_evaluation_contract(tmp_path: Path):
     assert vision[vision.index("--projection-backend") + 1] == "cuda"
     assert "--temporal-flow" in vision
     assert vision[vision.index("--redetect-interval") + 1] == "3"
-    assert vision[vision.index("--camera-model") + 1] == "insta360-x6"
+    assert vision[vision.index("--camera-model") + 1] == "insta360-x5"
     assert vision[vision.index("--decoder") + 1] == "auto"
     assert vision[vision.index("--scan-workers") + 1] == "4"
     assert evaluation[evaluation.index("--calibration-fraction") + 1] == "0.3"

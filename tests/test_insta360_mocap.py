@@ -20,8 +20,8 @@ from osmo_360_offline import View, load_tag_map, perspective_intrinsics, solve_v
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_non_contiguous_x6_tag_map_geometry():
-    tag_map = load_tag_map(ROOT / "mocap-evaluation/config/insta360_x6_tag_map.json")
+def test_non_contiguous_x5_tag_map_geometry():
+    tag_map = load_tag_map(ROOT / "mocap-evaluation/config/insta360_x5_tag_map.json")
     assert tag_map.expected_ids == [128, 129, 130, 131]
     np.testing.assert_allclose(tag_map.center(130), [-0.33, 0.0, 0.0], atol=1e-7)
     np.testing.assert_allclose(tag_map.center(131), [-0.11, 0.0, 0.0], atol=1e-7)
@@ -47,7 +47,7 @@ def test_real_motive_parser_counts_and_quarantines_identity_swap():
 
 
 def test_non_contiguous_tag_map_pnp_recovers_camera_pose():
-    tag_map = load_tag_map(ROOT / "mocap-evaluation/config/insta360_x6_tag_map.json")
+    tag_map = load_tag_map(ROOT / "mocap-evaluation/config/insta360_x5_tag_map.json")
     view = View("synthetic", 0.0, 0.0, 90.0)
     camera_matrix = perspective_intrinsics(1200, view.fov)
     rvec = np.zeros(3)

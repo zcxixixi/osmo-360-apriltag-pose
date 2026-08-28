@@ -1,0 +1,181 @@
+{
+  "schema_version": "dual-gripper-baseline-lock/1.0",
+  "baseline_id": "dual-gripper-v50-accepted-20260826",
+  "status": "ACCEPTED_VISUAL_DIAGNOSTIC_NOT_GROUND_TRUTH",
+  "purpose": "Prevent future agents from silently regressing the accepted v15/v50 trajectory, orientation, role binding, and rendering semantics.",
+  "repository_commit_at_freeze": "aa375ee1e3a7a8edbffb8d1517a217a3c352f789",
+  "repository_was_dirty_at_freeze": true,
+  "policy": {
+    "overwrite_baseline_artifacts": false,
+    "new_algorithm_requires_new_version": true,
+    "must_run_verifier_before_accepting_replacement": true,
+    "must_visually_compare_calibration_and_claw_to_claw_action": true,
+    "fusion_verified_does_not_imply_ground_truth": true
+  },
+  "coordinate_frame": {
+    "frame_id": "tag_map",
+    "world_map_path": "/home/cenxi/Videos/umi-captures/20260825/world-map-room-corner-10tag-200mm-multicapture-v1.json",
+    "world_map_file_sha256": "7d7f246d1b08ffe2b7352438326365ebe745a1450f0bf32ef8ad8588913c71b6",
+    "compiled_world_map_sha256": "ac054aae49d3cf5f2c6e67f0abd330f488d887cbe79b72f370e053079b70239f",
+    "up_vector": [0.0, -1.0, 0.0],
+    "base_to_tcp_translation_m": [0.1356, 0.0, 0.0101]
+  },
+  "hardware_bindings": {
+    "physical_left": {
+      "camera_serial": "95SXN9H0423SGG",
+      "base_tag_id": 2,
+      "hardware_role": "left"
+    },
+    "physical_right": {
+      "camera_serial": "95SXNAD0425JCY",
+      "base_tag_id": 3,
+      "hardware_role": "right"
+    },
+    "calibration_capture_role_mapping": {
+      "physical_left": "source_right / serial 95SXN9H0423SGG / BaseTag ID2",
+      "physical_right": "source_left / serial 95SXNAD0425JCY / BaseTag ID3"
+    },
+    "action_capture_role_mapping": {
+      "physical_left": "left/action_stream1.mp4 / serial 95SXN9H0423SGG / BaseTag ID2",
+      "physical_right": "right/action_stream1.mp4 / serial 95SXNAD0425JCY / BaseTag ID3"
+    }
+  },
+  "algorithm_invariants": {
+    "weak_position_source": "opposite physical 20mm BaseTag instance track",
+    "weak_attitude_source": "audited cross-pose world rotation (bounded SLERP only)",
+    "forbidden_attitude_source": "raw IMU delta directly rebased from first pose without the calibrated IMU/body/camera chain",
+    "maximum_interpolation_gap_s": 0.25,
+    "long_gap_policy": "mark INTERPOLATED_UNTRUSTED, hide the gripper, and segment the trail",
+    "screen_same_id_used": false,
+    "contact_constraint_used": false,
+    "synthetic_frames_used": false,
+    "timeline_position_reference": "TCP",
+    "mesh_root_reference": "base_link",
+    "renderer_rule": "p_world_base = p_world_tcp - R_world_base * p_base_tcp"
+  },
+  "regression_gates": {
+    "calibration_vs_v15": {
+      "position_rigid_aligned_p95_mm_max": 35.0,
+      "orientation_constant_frame_aligned_p95_deg_max": 8.0,
+      "orientation_increment_correlation_min": 0.8
+    },
+    "claw_to_claw_action": {
+      "duration_s": 13.5,
+      "weak_tracked_ratio_min": 0.99,
+      "untrusted_long_gap_frames_max": 0,
+      "tcp_separation_min_m_range": [0.01, 0.025],
+      "tcp_separation_median_m_range": [0.02, 0.045],
+      "left_orientation_step_p95_deg_max": 6.0,
+      "right_orientation_step_p95_deg_max": 3.0
+    }
+  },
+  "accepted_metrics": {
+    "calibration_vs_v15": {
+      "left": {
+        "position_rigid_aligned_p95_mm": 26.610208616785915,
+        "orientation_constant_frame_aligned_p95_deg": 5.316480708776644,
+        "orientation_increment_correlation": 0.9013960651179556
+      },
+      "right": {
+        "position_rigid_aligned_p95_mm": 19.657666623576322,
+        "orientation_constant_frame_aligned_p95_deg": 4.788420196833562,
+        "orientation_increment_correlation": 0.8687751040499828
+      }
+    },
+    "claw_to_claw_action": {
+      "frames": 406,
+      "fps": 30.0,
+      "duration_s": 13.5,
+      "weak_tracked_ratio": 1.0,
+      "untrusted_long_gap_frames": 0,
+      "tcp_separation_min_m": 0.014978166737757018,
+      "tcp_separation_median_m": 0.03145230170913002,
+      "tcp_separation_p95_m": 0.05176993698771826,
+      "closest_time_s": 10.9,
+      "left_orientation_step_p95_deg": 5.15344878,
+      "right_orientation_step_p95_deg": 1.71220716
+    }
+  },
+  "protected_code": [
+    {
+      "path": "fuse_asymmetric_gripper_world_pose.py",
+      "sha256": "601adf776302bf6cf5d62317d93e5e4b1f2dbeb944e071307339f8d1daeff715"
+    },
+    {
+      "path": "render_fused_world_audit.py",
+      "sha256": "505491dbc39341edf06451081e08d276aaad9624a9a3713e94763cfc3ef16e1e"
+    },
+    {
+      "path": "dual_gripper_3d/scene.html",
+      "sha256": "c1281deeb60a35c7289fb69d6d6137fb99e62027862c0a31cbf188913b8bba76"
+    },
+    {
+      "path": "config/hardware_20260825_serial_bound_v1.json",
+      "sha256": "b7901918f860a2852f254d0b9954d868508f5b87a533aa756df4da763b17be6d"
+    },
+    {
+      "path": "tests/test_fuse_asymmetric_gripper_world_pose.py",
+      "sha256": "a804cf3ed1a627f58524e9d48e9a60f14214ee21cfdc4fa4a65d6ddb7017ff85"
+    }
+  ],
+  "protected_inputs": [
+    {
+      "path": "/home/cenxi/Videos/umi-captures/20260825/world-map-room-corner-10tag-200mm-multicapture-v1.json",
+      "sha256": "7d7f246d1b08ffe2b7352438326365ebe745a1450f0bf32ef8ad8588913c71b6"
+    },
+    {
+      "path": "/home/cenxi/Videos/umi-captures/20260825/world-map-room-corner-10tag-200mm-multicapture-v1-audit.json",
+      "sha256": "c572b89ba56bc779ab28aeab79d019c572b99713be72953c55402feb68ca3893"
+    },
+    {
+      "path": "/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new/left/action_stream1.mp4",
+      "sha256": "b4e24c604d5041f37f446b9aab4e53a0afe161cf5d6f6d3ded2b80deb8131171"
+    },
+    {
+      "path": "/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new/right/action_stream1.mp4",
+      "sha256": "6976fef098bd50edd9a9637a301845349602a8d44012d81144f1885fadd3a5fd"
+    },
+    {
+      "path": "/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new/world-pose-v45-multicapture-map/right_camera_pose.csv",
+      "sha256": "c618d17adc27fc46787b7040637d83818cc4d0bb19376ad7779a3c2985d6f0a1"
+    },
+    {
+      "path": "/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new/world-pose-v45-multicapture-map/left_base_pose.csv",
+      "sha256": "14aa106cb17d09091e8f5af022463f6910bce43d083ba31d59a86358ab7f96e8"
+    },
+    {
+      "path": "/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new/right/action_apriltag_factory_instance_id2_v1.npz",
+      "sha256": "949f9bb7f08428bb25a758e496058e164b8242da28029eab73e15b55bd3c785d"
+    }
+  ],
+  "protected_artifacts": [
+    {
+      "path": "/home/cenxi/Videos/umi-captures/20260825/dual-0055-0028-tag3-calibration/dual_gripper_3d_200mm_joint_v15_measured_angles_role_corrected_diagnostic_timeline.json",
+      "sha256": "90ac04ae9d1db0817ec4c5be09655e00be871ef1176e8207e0b30d7e0cccede0"
+    },
+    {
+      "path": "/home/cenxi/Videos/umi-captures/20260825/dual-0055-0028-tag3-calibration/together_fused_world_v50_v15_regression_fixed_full_timeline.json",
+      "sha256": "e9b4d029c975497e69d89da4faaf22b3541bc4228ec6d05a22180a42b8314b9c"
+    },
+    {
+      "path": "/home/cenxi/Videos/umi-captures/20260825/dual-0055-0028-tag3-calibration/v15_regression_audit_v49_vs_v50.json",
+      "sha256": "ea4197c8ec2e7ef380752b988669f13b42d74477df1724a6a1a7a9cf142bcda8"
+    },
+    {
+      "path": "/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new/dual_gripper_claw_to_claw_action_v50_fixed.mp4",
+      "sha256": "f80df45eccf523492507b4d88c903373c63a5b424c06b41d5fad8d9deb2fcc56"
+    },
+    {
+      "path": "/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new/dual_gripper_claw_to_claw_action_v50_fixed_timeline.json",
+      "sha256": "5f4c285c6172af66d36ee26b769036bffbe86850624932d5a50af4a6fd9cc9f4"
+    },
+    {
+      "path": "/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new/dual_gripper_claw_to_claw_action_v50_fixed_audit.json",
+      "sha256": "5b2610367affd1cab6d1e2d303bc29f898fb8d6d97e530948b8d585102a9792a"
+    },
+    {
+      "path": "/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new/fused-world-v50-v15-regression-fixed/report.json",
+      "sha256": "b479ca5bb8b40875a6b04f649456d5740ba13bd9d94e16c8c90800ff7298dcad"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "quaternion_xyzw": [
+    -0.11907518089192759,
+    0.6749550081615896,
+    0.72361918421456,
+    -0.08143779521695046
+  ],
+  "camera_serial": "95SXN9H0423SGG",
+  "base_tag_id": 2,
+  "source": "config/hardware_20260825_serial_bound_v1.json"
+}
