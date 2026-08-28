@@ -233,6 +233,7 @@ def main() -> int:
     included = fill_for_display(all_signals.included_angle_deg)[:frame_count]
     opening = fill_for_display(all_signals.opening_angle_deg)[:frame_count]
     intensity = fill_for_display(all_signals.contact_intensity_percent)[:frame_count]
+    source_intensity = all_signals.contact_intensity_percent[:frame_count]
     signal_states = all_signals.measurement_state[:frame_count]
 
     cad = rig["cad_revision"]
@@ -276,7 +277,10 @@ def main() -> int:
             "included_angle_deg": float(included[index]),
             "contact_measurement_state": left_contact_measurement_state,
             "cad_opening_width_mm": float(widths_mm[index]),
-            "source_contact_intensity_percent": float(intensity[index]),
+            "source_contact_intensity_percent": (
+                float(source_intensity[index])
+                if np.isfinite(source_intensity[index]) else None
+            ),
             "contact_intensity_percent": (
                 float(intensity[index]) if left_force_valid else 0.0
             ),
@@ -304,10 +308,19 @@ def main() -> int:
             ).as_quat().tolist()
             right_opening = float(right_row.get("opening_angle_deg", 0.0))
             right_included = float(right_row.get("included_jaw_angle_deg", 0.0))
-            right_contact = float(right_row.get("contact_intensity_percent", 0.0))
+            right_raw_contact = float(right_row.get("contact_intensity_percent", np.nan))
+            right_signal_state = right_row.get(
+                "gripper_measurement_state", "UNAVAILABLE"
+            )
             right_opening = right_opening if np.isfinite(right_opening) else 0.0
             right_included = right_included if np.isfinite(right_included) else 0.0
-            right_contact = right_contact if np.isfinite(right_contact) else 0.0
+            right_source_contact = (
+                right_raw_contact
+                if np.isfinite(right_raw_contact)
+                and right_signal_state != "UNAVAILABLE"
+                else None
+            )
+            right_contact = right_raw_contact if np.isfinite(right_raw_contact) else 0.0
             right_joint1, right_joint2 = cad_model.joint_angles(right_opening)
             right = {
                 "p": right_display_position.tolist(), "q": right_quaternion,
@@ -315,7 +328,7 @@ def main() -> int:
                 "source_q": right_source_rotation.as_quat().tolist(),
                 "opening": right_opening, "included_angle_deg": right_included,
                 "cad_opening_width_mm": float(cad_model.width_m(right_opening) * 1000),
-                "source_contact_intensity_percent": right_contact,
+                "source_contact_intensity_percent": right_source_contact,
                 "contact_intensity_percent": (
                     right_contact if right_force_valid else 0.0
                 ),
