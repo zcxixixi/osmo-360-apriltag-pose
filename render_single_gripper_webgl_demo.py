@@ -455,6 +455,11 @@ def main() -> int:
             "left": {
                 "validated_for_display": bool(left_force_valid),
                 "source_audit": str(paths["force_angle_audit"]),
+                "quantity": left_force_audit.get("force", {}).get("quantity"),
+                "application_point": left_force_audit.get("force", {}).get(
+                    "application_point"
+                ),
+                "direction": left_force_audit.get("force", {}).get("direction"),
                 "display_metric": (
                     "black_dot_gap_px"
                     if not left_force_valid and left_has_black_dot_gap

@@ -99,6 +99,14 @@ def parse_args() -> argparse.Namespace:
         metavar="TIME",
         help="user-labeled instant when the gripper is clamping an object",
     )
+    parser.add_argument(
+        "--display-relative-fingertip-force",
+        action="store_true",
+        help=(
+            "display the existing capture-local relative fingertip-force proxy for X5; "
+            "this is not a Newton calibration"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -727,6 +735,7 @@ def draw_detection_overlay(
     observation: FrameObservation,
     model: ForceModel,
     opening_angle_deg: float = np.nan,
+    fingertip_force_percent: float = np.nan,
 ) -> None:
     for points, color in (
         (observation.yellow_left, CYAN),
@@ -744,6 +753,33 @@ def draw_detection_overlay(
         cv2.line(image, left, right, RED, 3, cv2.LINE_AA)
         cv2.circle(image, left, 12, RED, 3, cv2.LINE_AA)
         cv2.circle(image, right, 12, RED, 3, cv2.LINE_AA)
+        if np.isfinite(fingertip_force_percent):
+            left_point = observation.dot_left.point
+            right_point = observation.dot_right.point
+            inward = right_point - left_point
+            inward /= np.linalg.norm(inward)
+            arrow_length = scaled(
+                20.0 + 0.8 * float(np.clip(fingertip_force_percent, 0.0, 100.0)),
+                image,
+            )
+            cv2.arrowedLine(
+                image,
+                tuple(np.round(left_point).astype(int)),
+                tuple(np.round(left_point + arrow_length * inward).astype(int)),
+                AMBER,
+                6,
+                cv2.LINE_AA,
+                tipLength=0.28,
+            )
+            cv2.arrowedLine(
+                image,
+                tuple(np.round(right_point).astype(int)),
+                tuple(np.round(right_point - arrow_length * inward).astype(int)),
+                AMBER,
+                6,
+                cv2.LINE_AA,
+                tipLength=0.28,
+            )
     if observation.yellow_left is not None and observation.yellow_right is not None:
         predicted_left = local_to_point(
             model.left_local, jaw_frame(observation.yellow_left, "left")
@@ -813,7 +849,7 @@ def draw_detection_overlay(
     cv2.rectangle(
         overlay,
         (round(600 * scale), round(65 * scale)),
-        (round(1390 * scale), round(245 * scale)),
+        (round(1390 * scale), round(315 * scale)),
         (8, 12, 18),
         -1,
     )
@@ -826,6 +862,11 @@ def draw_detection_overlay(
     included_text = (
         f"{observation.included_angle_deg:.1f} deg"
         if np.isfinite(observation.included_angle_deg)
+        else "N/A"
+    )
+    force_text = (
+        f"{float(fingertip_force_percent):.1f} %"
+        if np.isfinite(fingertip_force_percent)
         else "N/A"
     )
     draw_text(
@@ -842,6 +883,14 @@ def draw_detection_overlay(
         (round(640 * scale), round(205 * scale)),
         0.78 * scale,
         WHITE,
+        max(1, round(2 * scale)),
+    )
+    draw_text(
+        image,
+        f"REL FINGERTIP FORCE  {force_text}",
+        (round(640 * scale), round(275 * scale)),
+        0.78 * scale,
+        AMBER,
         max(1, round(2 * scale)),
     )
 
@@ -933,6 +982,8 @@ def render_measurement_overlay(
     fps: float,
     opening: np.ndarray,
     model: ForceModel,
+    force: np.ndarray,
+    force_display_enabled: bool,
 ) -> None:
     capture = cv2.VideoCapture(str(video))
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -950,11 +1001,17 @@ def render_measurement_overlay(
         ok, frame = capture.read()
         if not ok:
             break
-        draw_detection_overlay(frame, observation, model, opening[index])
+        draw_detection_overlay(
+            frame,
+            observation,
+            model,
+            opening[index],
+            force[index] if force_display_enabled else np.nan,
+        )
         draw_text(
             frame,
             f"t={index / fps:05.2f}s   frame={index}",
-            (scaled(640, frame), scaled(285, frame)),
+            (scaled(640, frame), scaled(350, frame)),
             0.62 * frame.shape[1] / 1920.0,
             MUTED,
             max(1, round(2 * frame.shape[1] / 1920.0)),
@@ -994,7 +1051,13 @@ def render_demo(
         ok, frame = capture.read()
         if not ok:
             break
-        draw_detection_overlay(frame, observation, model, opening[index])
+        draw_detection_overlay(
+            frame,
+            observation,
+            model,
+            opening[index],
+            force[index] if force_validated else np.nan,
+        )
         crop = frame[scaled(850, frame):scaled(1620, frame), scaled(450, frame):scaled(1470, frame)]
         crop = cv2.resize(crop, (940, 710), interpolation=cv2.INTER_AREA)
         canvas = np.full((900, 1600, 3), BG, dtype=np.uint8)
@@ -1177,7 +1240,10 @@ def main() -> int:
         fps,
         args.contact_event_s,
     )
-    x5_force_rejected = args.camera_profile == "insta360-x5-front"
+    x5_force_rejected = (
+        args.camera_profile == "insta360-x5-front"
+        and not args.display_relative_fingertip_force
+    )
 
     csv_path = output_dir / "force_angle_observations.csv"
     video_path = output_dir / "gripper_force_angle_demo.mp4"
@@ -1204,6 +1270,8 @@ def main() -> int:
         fps,
         opening,
         force_model,
+        force,
+        not x5_force_rejected,
     )
     render_demo(
         front_video,
@@ -1232,6 +1300,8 @@ def main() -> int:
         "status": (
             "REJECTED_X5_FORCE_MODEL_UNVALIDATED"
             if x5_force_rejected
+            else "DIAGNOSTIC_UNCALIBRATED_RELATIVE_FINGERTIP_FORCE"
+            if args.camera_profile == "insta360-x5-front"
             else "DIAGNOSTIC_UNCALIBRATED_RELATIVE_FORCE"
         ),
         "source": {
@@ -1268,6 +1338,9 @@ def main() -> int:
             "unit": "relative_percent",
             "newtons_calibrated": False,
             "validated_for_display": not x5_force_rejected,
+            "quantity": "capture_local_relative_fingertip_force_proxy",
+            "application_point": "two distal fingertip contact points",
+            "direction": "equal and opposite inward vectors along the jaw-closing axis",
             "rejection_reason": (
                 "Raw pad geometry depends on jaw opening, object shape, and contact "
                 "location; no load ground truth is available, so force remains unvalidated."
@@ -1283,7 +1356,10 @@ def main() -> int:
             "full_scale_99th_percentile": force_model.full_scale,
             "measured_frame_ratio": float((yellow_measured & black_measured).mean()),
             "relative_force_range_percent": [float(np.nanmin(force)), float(np.nanmax(force))],
-            "warning": "Relative force is normalized within this capture and must not be interpreted as Newtons.",
+            "warning": (
+                "Relative fingertip force is capture-local and must not be interpreted "
+                "as Newtons or compared across objects without load calibration."
+            ),
         },
         "contact_ground_truth": contact_ground_truth,
         "contact_events": contact_events,

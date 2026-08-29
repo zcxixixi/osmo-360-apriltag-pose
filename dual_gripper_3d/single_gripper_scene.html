@@ -45,7 +45,7 @@
     </div>
     <div class="force-track"><div class="force-fill" id="force-fill"></div></div>
     <div class="force-meta"><span class="force-warning" id="left-force-warning">UNCALIBRATED: not Newtons</span><span class="force-state" id="force-state">LOW / FREE</span></div>
-    <div class="force-axis-note">RAW DEFORMATION SCORE (UNVALIDATED): <strong id="left-raw-score">N/A</strong></div>
+    <div class="force-axis-note"><span id="left-secondary-label">RAW DEFORMATION SCORE (UNVALIDATED)</span>: <strong id="left-raw-score">N/A</strong></div>
     <div class="force-direction" id="force-direction"><div class="force-direction-head"><span>GRIP DIRECTION</span><strong>INWARD CLAMP AXIS</strong></div><div class="force-vector"><span>JAW 1</span><span class="arrow inward-left">━━▶</span><span class="contact-point">●</span><span class="arrow inward-right">◀━━</span><span>JAW 2</span></div></div>
     <div class="force-axis-note" id="left-force-axis-note">Direction follows the jaw closing axis; magnitude is relative pad deformation.</div>
   </div>
@@ -83,7 +83,11 @@
     const baseReference=timeline.eef_reference?.type==='base_link';
     const commonWorld=timeline.coordinate_status?.mode==='world';
     const frameConvention=timeline.coordinate_status?.frame_convention||{};
+    const baseTagLocalization=timeline.localization?.base_tag_id;
+    const baseTagLabel=baseTagLocalization?`BASETAG${baseTagLocalization}→BASE_LINK`:'';
     const leftForceModelValid=timeline.force_models?.left?.validated_for_display!==false;
+    const leftForceQuantity=timeline.force_models?.left?.quantity||'';
+    const leftFingertipForce=leftForceModelValid&&leftForceQuantity==='capture_local_relative_fingertip_force_proxy';
     const rightForceModelValid=timeline.force_models?.right?.validated_for_display!==false;
     const leftForceDisplayMetric=timeline.force_models?.left?.display_metric||'raw_deformation_score';
     const rightForceDisplayMetric=timeline.force_models?.right?.display_metric||'raw_deformation_score';
@@ -98,24 +102,29 @@
       const dualSmoke=timeline.right_gripper_tracking?.enabled===true;
       const trueDualX5=timeline.right_gripper_tracking?.source==='right X5 Grid';
       const forceCalibration=timeline.coordinate_status?.calibration_status==='X5_FORCE_MODEL_REJECTED';
-      if(forceCalibration){
-        document.body.classList.add('force-calibration');
-        document.querySelector('.live-camera-label').textContent='FRONT LENS · JAW-ANGLE ARC / BLACK-DOT GAP';
-      }
-      document.getElementById('main-title').textContent=forceCalibration?`${cameraLabel} · JAW-ANGLE + BLACK-DOT AUDIT · ${Number(timeline.fps).toFixed(2)} FPS`:`${cameraLabel} · ${dualSmoke?'DUAL GRIPPER':'SINGLE GRIPPER'} · ${Number(timeline.fps).toFixed(2)} FPS`;
-      document.getElementById('notice').textContent=forceCalibration?`JAW-ANGLE RAYS/ARC + BLACK-DOT GAP + SIX YELLOW MARKERS · RAW GEOMETRY ONLY${contactEventLabel}`:trueDualX5?'LEFT + RIGHT = OWN X5 GRID/CAD/ANGLE/CONTACT · DIAGNOSTIC':dualSmoke?'LEFT = FULL GRID/CAD/ANGLE/FORCE · RIGHT = RECIPROCAL BASETAG3 TRAJECTORY ONLY · DIAGNOSTIC':'TRAJECTORY = GRID WORLD → BASE_LINK · CONTACT INTENSITY IS RELATIVE, NOT NEWTONS · DIAGNOSTIC';
+      const forceReview=forceCalibration||leftFingertipForce;
       const displayFilter=timeline.display_filter?.mode||'raw';
+      if(baseTagLocalization){
+        document.getElementById('subtitle').innerHTML=`CAMERA-LOCAL · ${baseTagLabel} · UUID <span id="uuid"></span>`;
+      }
+      if(forceReview){
+        document.body.classList.add('force-calibration');
+        document.querySelector('.live-camera-label').textContent=leftFingertipForce?'FRONT LENS · FINGERTIP FORCE ARROWS / JAW ANGLE':'FRONT LENS · JAW-ANGLE ARC / BLACK-DOT GAP';
+      }
+      document.getElementById('main-title').textContent=leftFingertipForce?`${cameraLabel} · ${baseTagLocalization?`BASETAG${baseTagLocalization} + `:''}JAW-ANGLE + FINGERTIP FORCE · ${Number(timeline.fps).toFixed(2)} FPS`:forceCalibration?`${cameraLabel} · JAW-ANGLE + BLACK-DOT AUDIT · ${Number(timeline.fps).toFixed(2)} FPS`:`${cameraLabel} · ${dualSmoke?'DUAL GRIPPER':'SINGLE GRIPPER'} · ${Number(timeline.fps).toFixed(2)} FPS`;
+      document.getElementById('notice').textContent=leftFingertipForce?`${baseTagLocalization?`${baseTagLabel} · `:''}RELATIVE FINGERTIP FORCE AT TWO DISTAL CONTACT POINTS · INWARD VECTORS · NOT NEWTONS${contactEventLabel}`:forceCalibration?`JAW-ANGLE RAYS/ARC + BLACK-DOT GAP + SIX YELLOW MARKERS · RAW GEOMETRY ONLY${contactEventLabel}`:trueDualX5?'LEFT + RIGHT = OWN X5 GRID/CAD/ANGLE/CONTACT · DIAGNOSTIC':dualSmoke?'LEFT = FULL GRID/CAD/ANGLE/FORCE · RIGHT = RECIPROCAL BASETAG3 TRAJECTORY ONLY · DIAGNOSTIC':'TRAJECTORY = GRID WORLD → BASE_LINK · CONTACT INTENSITY IS RELATIVE, NOT NEWTONS · DIAGNOSTIC';
       document.getElementById('left-metric-label').textContent='INCLUDED JAW ANGLE';document.getElementById('right-metric-label').textContent='CAD OPENING';document.getElementById('metric3-label').textContent='CONTACT INTENSITY';
-      document.getElementById('pose-filter').textContent=displayFilter==='raw'?'raw visual pose · bounded recovery ≤0.25 s':`${displayFilter.toUpperCase()} DISPLAY ONLY · raw source_p/source_q preserved`;
+      document.getElementById('pose-filter').textContent=baseTagLocalization?`pose: camera→BaseTag${baseTagLocalization}→base_link · prior fitted mount calibration`:displayFilter==='raw'?'raw visual pose · bounded recovery ≤0.25 s':`${displayFilter.toUpperCase()} DISPLAY ONLY · raw source_p/source_q preserved`;
       document.querySelector('.pip-right').style.display='none';document.querySelector('.slot-right').style.display='none';document.querySelector('.pip-left').textContent=`${cameraLabel} LENS 0 + LENS 1 · ${Number(timeline.fps).toFixed(2)} FPS`;
-      document.getElementById('left-force-title').textContent=leftForceModelValid?'RELATIVE FORCE':leftGapDisplay?'BLACK-DOT GAP':'RAW DEFORMATION';
+      document.getElementById('left-force-title').textContent=leftFingertipForce?'RELATIVE FINGERTIP FORCE':leftForceModelValid?'RELATIVE FORCE':leftGapDisplay?'BLACK-DOT GAP':'RAW DEFORMATION';
       document.getElementById('left-force-unit').textContent=leftGapDisplay?'px':'%';
-      document.getElementById('left-force-warning').textContent=leftForceModelValid?'UNCALIBRATED: not Newtons':leftGapDisplay?'RAW MEASUREMENT ONLY':'UNVALIDATED SCORE';
+      document.getElementById('left-force-warning').textContent=leftForceModelValid?'CAPTURE-LOCAL: not Newtons':leftGapDisplay?'RAW MEASUREMENT ONLY':'UNVALIDATED SCORE';
       document.getElementById('right-force-title').textContent=rightForceModelValid?'RIGHT RELATIVE FORCE':rightGapDisplay?'RIGHT BLACK-DOT GAP':'RIGHT RAW DEFORMATION';
       document.getElementById('right-force-unit').textContent=rightGapDisplay?'px':'%';
-      document.getElementById('right-force-warning').textContent=rightForceModelValid?'UNCALIBRATED: not Newtons':rightGapDisplay?'RAW MEASUREMENT ONLY':'UNVALIDATED SCORE';
+      document.getElementById('right-force-warning').textContent=rightForceModelValid?'CAPTURE-LOCAL: not Newtons':rightGapDisplay?'RAW MEASUREMENT ONLY':'UNVALIDATED SCORE';
       document.getElementById('force-direction').style.display=leftForceModelValid?'block':'none';
-      document.getElementById('left-force-axis-note').textContent=leftGapDisplay?'Pixel distance between detected black dots.':leftForceModelValid?'Direction follows the jaw closing axis; magnitude is relative pad deformation.':'Unvalidated deformation score.';
+      document.getElementById('left-secondary-label').textContent=leftFingertipForce?'BLACK-DOT GAP':'RAW DEFORMATION SCORE (UNVALIDATED)';
+      document.getElementById('left-force-axis-note').textContent=leftGapDisplay?'Pixel distance between detected black dots.':leftFingertipForce?'Equal and opposite fingertip vectors along the jaw-closing axis.':leftForceModelValid?'Direction follows the jaw closing axis; magnitude is relative pad deformation.':'Unvalidated deformation score.';
     }
     if(singleMode){document.querySelector('.hud').style.display='none';document.getElementById('force-panel').style.display='block';document.getElementById('right-force-panel').style.display=timeline.right_gripper_tracking?.contact_intensity_available?'block':'none'}
     if(cameraMode){
@@ -305,8 +314,8 @@
         document.getElementById('force-value').textContent=leftDisplayAvailable?leftDisplayValue.toFixed(1):'N/A';
         document.getElementById('force-fill').style.width=leftDisplayAvailable?`${leftDisplayPercent}%`:'0%';
         const clampEvent=contactEventTimes.find(value=>Math.abs(value-Number(frame.t))<=.25);
-        document.getElementById('force-state').textContent=clampEvent!==undefined?`CLAMP SAMPLE @ ${clampEvent.toFixed(0)} s · ${leftGapAvailable?'BLACK DOTS MEASURED':'MARKERS UNAVAILABLE'}`:leftForceModelValid?(leftForceAvailable?String(frame.left.contact_state).toUpperCase():'UNAVAILABLE'):leftGapDisplay?(leftGapAvailable?'BLACK DOTS MEASURED':'BLACK DOTS UNAVAILABLE'):(leftRawAvailable?'RAW SCORE ONLY':'RAW SCORE UNAVAILABLE');
-        document.getElementById('left-raw-score').textContent=leftRawAvailable?leftRawScore.toFixed(1):'N/A';
+        document.getElementById('force-state').textContent=clampEvent!==undefined?`CLAMP SAMPLE @ ${clampEvent.toFixed(0)} s · ${leftForceModelValid?(leftForceAvailable?'FINGERTIP FORCE MEASURED':'FORCE UNAVAILABLE'):(leftGapAvailable?'BLACK DOTS MEASURED':'MARKERS UNAVAILABLE')}`:leftForceModelValid?(leftForceAvailable?String(frame.left.contact_state).toUpperCase():'UNAVAILABLE'):leftGapDisplay?(leftGapAvailable?'BLACK DOTS MEASURED':'BLACK DOTS UNAVAILABLE'):(leftRawAvailable?'RAW SCORE ONLY':'RAW SCORE UNAVAILABLE');
+        document.getElementById('left-raw-score').textContent=leftFingertipForce?(leftGapAvailable?`${leftGap.toFixed(1)} px`:'N/A'):(leftRawAvailable?leftRawScore.toFixed(1):'N/A');
         for(const arrow of forceArrows)arrow.visible=frame.left.visible!==false&&leftForceModelValid&&leftForceAvailable;
         const rightIntensity=THREE.MathUtils.clamp(Number(frame.right.contact_intensity_percent),0,100);
         const rightForceState=String(frame.right.contact_measurement_state||frame.right.angle_state);

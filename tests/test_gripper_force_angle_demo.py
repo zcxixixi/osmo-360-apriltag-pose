@@ -113,6 +113,7 @@ def test_x5_profile_detects_jaw_axes_and_pad_dots():
     cv2.ellipse(image, (995, 1280), (8, 6), 0, 0, 360, (20, 20, 20), -1)
 
     observation = observe_frame(image, "insta360-x5-front")
+    force_image = image.copy()
 
     assert np.isfinite(observation.included_angle_deg)
     assert 35.0 <= observation.included_angle_deg <= 80.0
@@ -129,6 +130,13 @@ def test_x5_profile_detects_jaw_axes_and_pad_dots():
         full_scale=1.0,
     )
     draw_detection_overlay(image, observation, model, opening_angle_deg=12.3)
+    draw_detection_overlay(
+        force_image,
+        observation,
+        model,
+        opening_angle_deg=12.3,
+        fingertip_force_percent=80.0,
+    )
 
     angle_arc_region = image[1380:1570, 820:1100]
     amber_like = (
@@ -138,4 +146,11 @@ def test_x5_profile_detects_jaw_axes_and_pad_dots():
     )
     assert np.count_nonzero(amber_like) > 20
     assert image[80:230, 620:1380].mean() < 200.0
+    force_arrow_region = force_image[1240:1320, 890:1030]
+    force_amber_like = (
+        (force_arrow_region[..., 0] < 120)
+        & (force_arrow_region[..., 1] > 120)
+        & (force_arrow_region[..., 2] > 180)
+    )
+    assert np.count_nonzero(force_amber_like) > 20
     assert observation.dot_right is not None
