@@ -44,7 +44,7 @@
     <div class="force-meta"><span class="force-warning" id="left-force-warning">UNCALIBRATED: not Newtons</span><span class="force-state" id="force-state">LOW / FREE</span></div>
     <div class="force-axis-note">RAW DEFORMATION SCORE (UNVALIDATED): <strong id="left-raw-score">N/A</strong></div>
     <div class="force-direction" id="force-direction"><div class="force-direction-head"><span>GRIP DIRECTION</span><strong>INWARD CLAMP AXIS</strong></div><div class="force-vector"><span>JAW 1</span><span class="arrow inward-left">━━▶</span><span class="contact-point">●</span><span class="arrow inward-right">◀━━</span><span>JAW 2</span></div></div>
-    <div class="force-axis-note">Direction follows the jaw closing axis; magnitude is relative pad deformation.</div>
+    <div class="force-axis-note" id="left-force-axis-note">Direction follows the jaw closing axis; magnitude is relative pad deformation.</div>
   </div>
   <div class="force-panel" id="right-force-panel">
     <div class="force-readouts">
@@ -93,18 +93,20 @@
       const dualSmoke=timeline.right_gripper_tracking?.enabled===true;
       const trueDualX5=timeline.right_gripper_tracking?.source==='right X5 Grid';
       const forceCalibration=timeline.coordinate_status?.calibration_status==='X5_FORCE_MODEL_REJECTED';
-      document.getElementById('main-title').textContent=forceCalibration?`${cameraLabel} · FORCE CALIBRATION AUDIT · ${Number(timeline.fps).toFixed(2)} FPS`:`${cameraLabel} · ${dualSmoke?'DUAL GRIPPER':'SINGLE GRIPPER'} · ${Number(timeline.fps).toFixed(2)} FPS`;
-      document.getElementById('notice').textContent=forceCalibration?'FORCE OUTPUT REJECTED · BLACK DOTS + RAW DEFORMATION SCORE ONLY':trueDualX5?'LEFT + RIGHT = OWN X5 GRID/CAD/ANGLE/CONTACT · DIAGNOSTIC':dualSmoke?'LEFT = FULL GRID/CAD/ANGLE/FORCE · RIGHT = RECIPROCAL BASETAG3 TRAJECTORY ONLY · DIAGNOSTIC':'TRAJECTORY = GRID WORLD → BASE_LINK · CONTACT INTENSITY IS RELATIVE, NOT NEWTONS · DIAGNOSTIC';
+      document.getElementById('main-title').textContent=forceCalibration?`${cameraLabel} · BLACK-DOT DEFORMATION AUDIT · ${Number(timeline.fps).toFixed(2)} FPS`:`${cameraLabel} · ${dualSmoke?'DUAL GRIPPER':'SINGLE GRIPPER'} · ${Number(timeline.fps).toFixed(2)} FPS`;
+      document.getElementById('notice').textContent=forceCalibration?'BLACK-DOT GAP + SIX YELLOW MARKERS · RAW GEOMETRY ONLY':trueDualX5?'LEFT + RIGHT = OWN X5 GRID/CAD/ANGLE/CONTACT · DIAGNOSTIC':dualSmoke?'LEFT = FULL GRID/CAD/ANGLE/FORCE · RIGHT = RECIPROCAL BASETAG3 TRAJECTORY ONLY · DIAGNOSTIC':'TRAJECTORY = GRID WORLD → BASE_LINK · CONTACT INTENSITY IS RELATIVE, NOT NEWTONS · DIAGNOSTIC';
       const displayFilter=timeline.display_filter?.mode||'raw';
       document.getElementById('left-metric-label').textContent='INCLUDED JAW ANGLE';document.getElementById('right-metric-label').textContent='CAD OPENING';document.getElementById('metric3-label').textContent='CONTACT INTENSITY';
       document.getElementById('pose-filter').textContent=displayFilter==='raw'?'raw visual pose · bounded recovery ≤0.25 s':`${displayFilter.toUpperCase()} DISPLAY ONLY · raw source_p/source_q preserved`;
       document.querySelector('.pip-right').style.display='none';document.querySelector('.slot-right').style.display='none';document.querySelector('.pip-left').textContent=`${cameraLabel} LENS 0 + LENS 1 · ${Number(timeline.fps).toFixed(2)} FPS`;
       document.getElementById('left-force-title').textContent=leftForceModelValid?'RELATIVE FORCE':leftGapDisplay?'BLACK-DOT GAP':'RAW DEFORMATION';
       document.getElementById('left-force-unit').textContent=leftGapDisplay?'px':'%';
-      document.getElementById('left-force-warning').textContent=leftForceModelValid?'UNCALIBRATED: not Newtons':leftGapDisplay?'RAW MEASUREMENT: not force':'UNVALIDATED: not force';
+      document.getElementById('left-force-warning').textContent=leftForceModelValid?'UNCALIBRATED: not Newtons':leftGapDisplay?'RAW MEASUREMENT ONLY':'UNVALIDATED SCORE';
       document.getElementById('right-force-title').textContent=rightForceModelValid?'RIGHT RELATIVE FORCE':rightGapDisplay?'RIGHT BLACK-DOT GAP':'RIGHT RAW DEFORMATION';
       document.getElementById('right-force-unit').textContent=rightGapDisplay?'px':'%';
-      document.getElementById('right-force-warning').textContent=rightForceModelValid?'UNCALIBRATED: not Newtons':rightGapDisplay?'RAW MEASUREMENT: not force':'UNVALIDATED: not force';
+      document.getElementById('right-force-warning').textContent=rightForceModelValid?'UNCALIBRATED: not Newtons':rightGapDisplay?'RAW MEASUREMENT ONLY':'UNVALIDATED SCORE';
+      document.getElementById('force-direction').style.display=leftForceModelValid?'block':'none';
+      document.getElementById('left-force-axis-note').textContent=leftGapDisplay?'Pixel distance between detected black dots.':leftForceModelValid?'Direction follows the jaw closing axis; magnitude is relative pad deformation.':'Unvalidated deformation score.';
     }
     if(singleMode){document.querySelector('.hud').style.display='none';document.getElementById('force-panel').style.display='block';document.getElementById('right-force-panel').style.display=timeline.right_gripper_tracking?.contact_intensity_available?'block':'none'}
     if(cameraMode){
