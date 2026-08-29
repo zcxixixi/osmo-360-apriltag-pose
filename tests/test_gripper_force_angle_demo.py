@@ -1,10 +1,15 @@
 import cv2
 import numpy as np
+import pytest
 
 from render_gripper_force_angle_demo import (
     JawFrame,
+    DotObservation,
+    FrameObservation,
     bounded_interpolate,
     local_to_point,
+    contact_event_audit,
+    labeled_contact_gap_audit,
     normalize_contact_intensity,
     observe_frame,
     point_to_local,
@@ -49,6 +54,48 @@ def test_contact_intensity_removes_unloaded_opening_angle_coupling():
     assert np.percentile(intensity[~contact], 90) < 5.0
     assert np.median(intensity[contact]) > 90.0
     assert abs(np.corrcoef(opening[~contact], intensity[~contact])[0, 1]) < 0.2
+
+
+def test_labeled_contact_audit_preserves_gap_and_uses_unloaded_opening_baseline():
+    opening = np.tile(np.linspace(0.0, 10.0, 20), 5)
+    times = np.arange(len(opening), dtype=float) / 10.0
+    contact = (times >= 4.0) & (times <= 6.0)
+    gaps = 100.0 + 5.0 * opening - 8.0 * contact
+    yellow = np.array([[0.0, 0.0], [0.0, 1.0], [0.0, 2.0]])
+    observations = [
+        FrameObservation(
+            yellow,
+            yellow,
+            DotObservation(np.array([0.0, 0.0]), 50.0, 0.8),
+            DotObservation(np.array([gap, 0.0]), 50.0, 0.8),
+            40.0,
+        )
+        for gap in gaps
+    ]
+
+    audit, labels, measured_gaps, residuals, supported = labeled_contact_gap_audit(
+        observations, opening, 10.0, [[4.0, 6.0]]
+    )
+
+    assert audit is not None
+    assert labels[39] == "UNLOADED"
+    assert labels[40] == "CONTACT"
+    assert labels[60] == "CONTACT"
+    assert labels[61] == "UNLOADED"
+    np.testing.assert_allclose(measured_gaps, gaps)
+    assert np.median(residuals[contact & supported]) == pytest.approx(-8.0)
+    assert audit["geometry_check"]["unloaded_model"]["slope_px_per_deg"] == pytest.approx(5.0)
+
+    no_label_audit, no_labels, no_label_gaps, _, _ = labeled_contact_gap_audit(
+        observations, opening, 10.0, []
+    )
+    assert no_label_audit is None
+    assert set(no_labels) == {"UNLABELED"}
+    np.testing.assert_allclose(no_label_gaps, gaps)
+
+    events = contact_event_audit(opening, measured_gaps, 10.0, [4.0])
+    assert events["events"][0]["nearest_frame_measured"] is True
+    assert events["events"][0]["nearest_black_dot_gap_px"] == pytest.approx(gaps[40])
 
 
 def test_x5_profile_detects_jaw_axes_and_pad_dots():

@@ -82,6 +82,23 @@ def parse_args() -> argparse.Namespace:
         choices=("osmo-front", "insta360-x5-front"),
         default="osmo-front",
     )
+    parser.add_argument(
+        "--contact-interval-s",
+        type=float,
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("START", "END"),
+        help="user-labeled contact interval; all frames outside supplied intervals are unloaded",
+    )
+    parser.add_argument(
+        "--contact-event-s",
+        type=float,
+        action="append",
+        default=[],
+        metavar="TIME",
+        help="user-labeled instant when the gripper is clamping an object",
+    )
     return parser.parse_args()
 
 
@@ -371,6 +388,176 @@ def opening_angles(observations: list[FrameObservation]) -> tuple[np.ndarray, fl
         raise ValueError(f"only {len(valid)} frames contain both yellow marker triads")
     closed_reference = float(np.percentile(valid, 97.0))
     return np.clip(closed_reference - included, 0.0, 55.0), closed_reference
+
+
+def labeled_contact_gap_audit(
+    observations: list[FrameObservation],
+    opening: np.ndarray,
+    fps: float,
+    intervals_s: list[list[float]],
+) -> tuple[dict | None, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    frame_count = len(observations)
+    labels = np.full(frame_count, "UNLABELED", dtype=object)
+    gaps = np.full(frame_count, np.nan)
+    residuals = np.full(frame_count, np.nan)
+    baseline_supported = np.zeros(frame_count, dtype=bool)
+
+    duration_s = (frame_count - 1) / fps
+    intervals = sorted((float(start), float(end)) for start, end in intervals_s)
+    previous_end = -np.inf
+    for start, end in intervals:
+        if start < 0.0 or end <= start or end > duration_s:
+            raise ValueError(
+                f"contact interval [{start}, {end}] must satisfy "
+                f"0 <= START < END <= {duration_s:.6f}"
+            )
+        if start <= previous_end:
+            raise ValueError("contact intervals must not overlap or share a boundary")
+        previous_end = end
+
+    times = np.arange(frame_count, dtype=float) / fps
+    contact = np.zeros(frame_count, dtype=bool)
+    for start, end in intervals:
+        contact |= (times >= start) & (times <= end)
+    labels[:] = "UNLOADED"
+    labels[contact] = "CONTACT"
+
+    complete = np.zeros(frame_count, dtype=bool)
+    for index, item in enumerate(observations):
+        if (
+            np.isfinite(opening[index])
+            and item.yellow_left is not None
+            and item.yellow_right is not None
+            and item.dot_left is not None
+            and item.dot_right is not None
+        ):
+            gaps[index] = float(np.linalg.norm(item.dot_right.point - item.dot_left.point))
+            complete[index] = True
+    if not intervals_s:
+        labels[:] = "UNLABELED"
+        return None, labels, gaps, residuals, baseline_supported
+
+    unloaded = complete & ~contact
+    if np.count_nonzero(unloaded) < 30:
+        raise ValueError("fewer than 30 complete unloaded frames remain outside contact intervals")
+    unloaded_opening = opening[unloaded]
+    opening_min = float(np.min(unloaded_opening))
+    opening_max = float(np.max(unloaded_opening))
+    if opening_max - opening_min <= 1e-6:
+        raise ValueError("unloaded frames do not span a usable jaw-opening range")
+
+    coefficients = np.polyfit(unloaded_opening, gaps[unloaded], 1)
+    residuals[complete] = gaps[complete] - np.polyval(coefficients, opening[complete])
+    baseline_supported = complete & (opening >= opening_min) & (opening <= opening_max)
+
+    def distribution(mask: np.ndarray, values: np.ndarray) -> dict:
+        selected = values[mask & np.isfinite(values)]
+        return {
+            "frames": int(len(selected)),
+            "median": float(np.median(selected)),
+            "p10": float(np.percentile(selected, 10.0)),
+            "p90": float(np.percentile(selected, 90.0)),
+        }
+
+    contact_complete = complete & contact
+    contact_supported = contact_complete & baseline_supported
+    audit = {
+        "source": "user-provided interval annotation",
+        "intervals_s": [
+            {"start_s": start, "end_s": end, "label": "CONTACT"}
+            for start, end in intervals
+        ],
+        "boundary_policy": "closed intervals: START <= t <= END",
+        "outside_intervals_label": "UNLOADED",
+        "complete_measurement_coverage": {
+            "contact": float(np.mean(complete[contact])),
+            "unloaded": float(np.mean(complete[~contact])),
+        },
+        "geometry_check": {
+            "metric": "black_dot_gap_px minus linear unloaded prediction at the same jaw opening",
+            "unloaded_model": {
+                "slope_px_per_deg": float(coefficients[0]),
+                "intercept_px": float(coefficients[1]),
+                "opening_support_deg": [opening_min, opening_max],
+                "residual_mad_px": float(
+                    np.median(np.abs(residuals[unloaded] - np.median(residuals[unloaded])))
+                ),
+            },
+            "black_dot_gap_px": {
+                "contact": distribution(contact_complete, gaps),
+                "unloaded": distribution(unloaded, gaps),
+            },
+            "opening_conditioned_gap_residual_px": {
+                "contact_within_unloaded_opening_support": distribution(
+                    contact_supported, residuals
+                ),
+                "unloaded": distribution(unloaded, residuals),
+                "contact_frames_outside_support": int(
+                    np.count_nonzero(contact_complete & ~baseline_supported)
+                ),
+            },
+            "interpretation": (
+                "Binary contact labels permit a contact-versus-unloaded geometry check only. "
+                "No load magnitude was supplied, so this cannot calibrate force or Newtons."
+            ),
+        },
+    }
+    return audit, labels, gaps, residuals, baseline_supported
+
+
+def contact_event_audit(
+    opening: np.ndarray,
+    gaps: np.ndarray,
+    fps: float,
+    event_times_s: list[float],
+    window_radius_s: float = 0.25,
+) -> dict | None:
+    if not event_times_s:
+        return None
+    duration_s = (len(opening) - 1) / fps
+    times = np.arange(len(opening), dtype=float) / fps
+    events = []
+    for event_time in event_times_s:
+        event_time = float(event_time)
+        if event_time < 0.0 or event_time > duration_s:
+            raise ValueError(
+                f"contact event {event_time} must be within [0, {duration_s:.6f}]"
+            )
+        frame = int(np.argmin(np.abs(times - event_time)))
+        measured = np.isfinite(opening) & np.isfinite(gaps)
+        window = measured & (np.abs(times - event_time) <= window_radius_s)
+        event = {
+            "requested_time_s": event_time,
+            "nearest_frame": frame,
+            "nearest_frame_time_s": float(times[frame]),
+            "nearest_frame_measured": bool(measured[frame]),
+            "nearest_opening_deg": (
+                float(opening[frame]) if measured[frame] else None
+            ),
+            "nearest_black_dot_gap_px": (
+                float(gaps[frame]) if measured[frame] else None
+            ),
+            "window_s": [
+                max(0.0, event_time - window_radius_s),
+                min(duration_s, event_time + window_radius_s),
+            ],
+            "window_complete_frames": int(np.count_nonzero(window)),
+            "window_opening_median_deg": (
+                float(np.median(opening[window])) if np.any(window) else None
+            ),
+            "window_black_dot_gap_median_px": (
+                float(np.median(gaps[window])) if np.any(window) else None
+            ),
+        }
+        events.append(event)
+    return {
+        "source": "user-provided clamping event times",
+        "events": events,
+        "interpretation": (
+            "These are contact samples, not equal-force labels. Different objects and "
+            "contact geometry can produce different deformation at the same force."
+        ),
+    }
 
 
 def normalize_contact_intensity(
@@ -666,6 +853,7 @@ def render_demo(
     urdf_model: UrdfWireframe,
     rig_id: str,
     force_validated: bool = True,
+    contact_labels: np.ndarray | None = None,
 ) -> None:
     capture = cv2.VideoCapture(str(video))
     intermediate = output.with_name(output.stem + "_mp4v.mp4")
@@ -720,8 +908,17 @@ def render_demo(
             "UNCALIBRATED: not Newtons" if force_validated else "REJECTED AS FORCE / UNVALIDATED",
             (1020, 725), 0.50, AMBER, 2,
         )
-        display_state = state if force_validated else "RAW SCORE ONLY"
-        display_state_color = state_color if force_validated else RED
+        ground_truth = (
+            str(contact_labels[index])
+            if contact_labels is not None and contact_labels[index] != "UNLABELED"
+            else None
+        )
+        display_state = (
+            state
+            if force_validated
+            else f"LABEL {ground_truth}" if ground_truth else "RAW SCORE ONLY"
+        )
+        display_state_color = state_color if force_validated else AMBER if ground_truth else RED
         draw_text(canvas, display_state, (1020, 770), 0.58, display_state_color, 2)
         yellow_count = int(observation.yellow_left is not None) * 3 + int(observation.yellow_right is not None) * 3
         black_count = int(observation.dot_left is not None) + int(observation.dot_right is not None)
@@ -756,6 +953,10 @@ def write_csv(
     force_recovered: np.ndarray,
     gap_component: np.ndarray,
     shape_component: np.ndarray,
+    contact_labels: np.ndarray,
+    black_dot_gap_px: np.ndarray,
+    gap_residual_px: np.ndarray,
+    baseline_supported: np.ndarray,
 ) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
@@ -767,6 +968,10 @@ def write_csv(
                 "opening_angle_deg",
                 "relative_force_percent",
                 "measurement_state",
+                "contact_ground_truth",
+                "black_dot_gap_px",
+                "opening_conditioned_gap_residual_px",
+                "unloaded_opening_support",
                 "yellow_measured",
                 "black_measured",
                 "gap_strain_component",
@@ -791,6 +996,10 @@ def write_csv(
                     opening[index],
                     force[index],
                     state,
+                    contact_labels[index],
+                    black_dot_gap_px[index],
+                    gap_residual_px[index],
+                    int(baseline_supported[index]),
                     int(item.yellow_left is not None and item.yellow_right is not None),
                     int(item.dot_left is not None and item.dot_right is not None),
                     gap_component[index],
@@ -824,6 +1033,24 @@ def main() -> int:
     force, force_recovered = bounded_interpolate(raw_force, maximum_gap)
     opening = np.where(np.isfinite(opening), nanmedian_filter(opening), np.nan)
     force = np.where(np.isfinite(force), nanmedian_filter(force), np.nan)
+    (
+        contact_ground_truth,
+        contact_labels,
+        black_dot_gap_px,
+        gap_residual_px,
+        baseline_supported,
+    ) = labeled_contact_gap_audit(
+        observations,
+        raw_opening,
+        fps,
+        args.contact_interval_s,
+    )
+    contact_events = contact_event_audit(
+        raw_opening,
+        black_dot_gap_px,
+        fps,
+        args.contact_event_s,
+    )
     x5_force_rejected = args.camera_profile == "insta360-x5-front"
 
     csv_path = output_dir / "force_angle_observations.csv"
@@ -838,6 +1065,10 @@ def main() -> int:
         force_recovered,
         gap_component,
         shape_component,
+        contact_labels,
+        black_dot_gap_px,
+        gap_residual_px,
+        baseline_supported,
     )
     render_demo(
         front_video,
@@ -852,6 +1083,7 @@ def main() -> int:
         urdf_model,
         rig["revision"]["revision_id"],
         not x5_force_rejected,
+        contact_labels,
     )
 
     yellow_measured = np.asarray(
@@ -902,8 +1134,8 @@ def main() -> int:
             "newtons_calibrated": False,
             "validated_for_display": not x5_force_rejected,
             "rejection_reason": (
-                "User-observed false positives during non-contact opening/closing; "
-                "the Osmo pad-deformation model is invalid for the X5 viewpoint."
+                "Raw pad geometry depends on jaw opening, object shape, and contact "
+                "location; no load ground truth is available, so force remains unvalidated."
                 if x5_force_rejected else None
             ),
             "method": "black-dot gap residual versus rigid yellow-marker prediction plus dot centroid and ellipse-shape change",
@@ -918,6 +1150,8 @@ def main() -> int:
             "relative_force_range_percent": [float(np.nanmin(force)), float(np.nanmax(force))],
             "warning": "Relative force is normalized within this capture and must not be interpreted as Newtons.",
         },
+        "contact_ground_truth": contact_ground_truth,
+        "contact_events": contact_events,
         "outputs": {
             "video": str(video_path),
             "video_sha256": sha256(video_path),

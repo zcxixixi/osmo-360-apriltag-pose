@@ -86,6 +86,8 @@
     const rightForceDisplayMetric=timeline.force_models?.right?.display_metric||'raw_deformation_score';
     const leftGapDisplay=!leftForceModelValid&&leftForceDisplayMetric==='black_dot_gap_px';
     const rightGapDisplay=!rightForceModelValid&&rightForceDisplayMetric==='black_dot_gap_px';
+    const contactEventTimes=(timeline.contact_events?.events||[]).map(event=>Number(event.requested_time_s)).filter(Number.isFinite);
+    const contactEventLabel=contactEventTimes.length?` · CLAMP SAMPLES ${contactEventTimes.map(value=>value.toFixed(0)).join('/')} s`:'';
     if(auditMode){document.getElementById('main-title').textContent='ZARR DATASET EXACT REPLAY';document.getElementById('subtitle').innerHTML=`TRAINING ARRAYS · SHA256 ${timeline.dataset_sha256.slice(0,16)}… · UUID <span id="uuid"></span>`;document.getElementById('notice').textContent='NO RECOMPUTE · NO EXTRA FILTERING · DISPLAY LANES ARE DECLARED STATIC TRANSFORMS';document.getElementById('metric3-label').textContent='DATA FRAME';document.getElementById('pose-filter').textContent='EXACT VALUES FROM dataset.zarr.zip';}
     if(commonWorld){document.getElementById('subtitle').innerHTML=`COMMON ${String(timeline.reference_frame||'FRAME').toUpperCase()} · SAME ARRAYS AS UMI · UUID <span id="uuid"></span>`;document.getElementById('notice').textContent=timeline.training_ready?'CALIBRATED COMMON FRAME · TRAINING READY':`PROVISIONAL COMMON FRAME · ${timeline.coordinate_status?.calibration_status||'CALIBRATION REQUIRED'} · NOT TRAINING READY`;}
     if(tagReference){document.getElementById('main-title').textContent='DUAL GRIPPER BASETAG REFERENCE';document.getElementById('notice').textContent='TRAJECTORY = EACH GRIPPER BASETAG CENTER · STL USES DISPLAY-ONLY TAG→BASE · NOT TCP · NOT TRAINING READY';document.getElementById('metric3-label').textContent='BASETAG SEPARATION';document.getElementById('pose-filter').textContent='data: camera→own BaseTag · mesh: display only';}
@@ -94,7 +96,7 @@
       const trueDualX5=timeline.right_gripper_tracking?.source==='right X5 Grid';
       const forceCalibration=timeline.coordinate_status?.calibration_status==='X5_FORCE_MODEL_REJECTED';
       document.getElementById('main-title').textContent=forceCalibration?`${cameraLabel} · BLACK-DOT DEFORMATION AUDIT · ${Number(timeline.fps).toFixed(2)} FPS`:`${cameraLabel} · ${dualSmoke?'DUAL GRIPPER':'SINGLE GRIPPER'} · ${Number(timeline.fps).toFixed(2)} FPS`;
-      document.getElementById('notice').textContent=forceCalibration?'BLACK-DOT GAP + SIX YELLOW MARKERS · RAW GEOMETRY ONLY':trueDualX5?'LEFT + RIGHT = OWN X5 GRID/CAD/ANGLE/CONTACT · DIAGNOSTIC':dualSmoke?'LEFT = FULL GRID/CAD/ANGLE/FORCE · RIGHT = RECIPROCAL BASETAG3 TRAJECTORY ONLY · DIAGNOSTIC':'TRAJECTORY = GRID WORLD → BASE_LINK · CONTACT INTENSITY IS RELATIVE, NOT NEWTONS · DIAGNOSTIC';
+      document.getElementById('notice').textContent=forceCalibration?`BLACK-DOT GAP + SIX YELLOW MARKERS · RAW GEOMETRY ONLY${contactEventLabel}`:trueDualX5?'LEFT + RIGHT = OWN X5 GRID/CAD/ANGLE/CONTACT · DIAGNOSTIC':dualSmoke?'LEFT = FULL GRID/CAD/ANGLE/FORCE · RIGHT = RECIPROCAL BASETAG3 TRAJECTORY ONLY · DIAGNOSTIC':'TRAJECTORY = GRID WORLD → BASE_LINK · CONTACT INTENSITY IS RELATIVE, NOT NEWTONS · DIAGNOSTIC';
       const displayFilter=timeline.display_filter?.mode||'raw';
       document.getElementById('left-metric-label').textContent='INCLUDED JAW ANGLE';document.getElementById('right-metric-label').textContent='CAD OPENING';document.getElementById('metric3-label').textContent='CONTACT INTENSITY';
       document.getElementById('pose-filter').textContent=displayFilter==='raw'?'raw visual pose · bounded recovery ≤0.25 s':`${displayFilter.toUpperCase()} DISPLAY ONLY · raw source_p/source_q preserved`;
@@ -295,7 +297,8 @@
         document.getElementById('force-opening').textContent=Number(frame.left.opening).toFixed(1);
         document.getElementById('force-value').textContent=leftDisplayAvailable?leftDisplayValue.toFixed(1):'N/A';
         document.getElementById('force-fill').style.width=leftDisplayAvailable?`${leftDisplayPercent}%`:'0%';
-        document.getElementById('force-state').textContent=leftForceModelValid?(leftForceAvailable?String(frame.left.contact_state).toUpperCase():'UNAVAILABLE'):leftGapDisplay?(leftGapAvailable?'BLACK DOTS MEASURED':'BLACK DOTS UNAVAILABLE'):(leftRawAvailable?'RAW SCORE ONLY':'RAW SCORE UNAVAILABLE');
+        const clampEvent=contactEventTimes.find(value=>Math.abs(value-Number(frame.t))<=.25);
+        document.getElementById('force-state').textContent=clampEvent!==undefined?`CLAMP SAMPLE @ ${clampEvent.toFixed(0)} s · ${leftGapAvailable?'BLACK DOTS MEASURED':'MARKERS UNAVAILABLE'}`:leftForceModelValid?(leftForceAvailable?String(frame.left.contact_state).toUpperCase():'UNAVAILABLE'):leftGapDisplay?(leftGapAvailable?'BLACK DOTS MEASURED':'BLACK DOTS UNAVAILABLE'):(leftRawAvailable?'RAW SCORE ONLY':'RAW SCORE UNAVAILABLE');
         document.getElementById('left-raw-score').textContent=leftRawAvailable?leftRawScore.toFixed(1):'N/A';
         for(const arrow of forceArrows)arrow.visible=frame.left.visible!==false&&leftForceModelValid&&leftForceAvailable;
         const rightIntensity=THREE.MathUtils.clamp(Number(frame.right.contact_intensity_percent),0,100);

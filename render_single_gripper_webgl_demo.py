@@ -133,6 +133,14 @@ def main() -> int:
         left_force_audit.get("source", {}).get("camera_profile")
         != "insta360-x5-front",
     )
+    with paths["force_angle_csv"].open(newline="", encoding="utf-8") as handle:
+        left_diagnostic_rows = {
+            int(row["frame"]): row for row in csv.DictReader(handle)
+        }
+    left_has_black_dot_gap = any(
+        row.get("black_dot_gap_px") not in (None, "", "nan", "NaN")
+        for row in left_diagnostic_rows.values()
+    )
     right_force_audit_path = (
         args.right_force_angle_audit.resolve(strict=True)
         if args.right_force_angle_audit else None
@@ -268,6 +276,24 @@ def main() -> int:
             "LOW / FREE"
         )
         joint1, joint2 = cad_model.joint_angles(opening[index])
+        left_diagnostic = left_diagnostic_rows.get(index, {})
+        left_gap_text = left_diagnostic.get("black_dot_gap_px", "")
+        left_gap = (
+            float(left_gap_text)
+            if left_gap_text not in ("", "nan", "NaN")
+            else None
+        )
+        left_gap_residual_text = left_diagnostic.get(
+            "opening_conditioned_gap_residual_px", ""
+        )
+        left_gap_residual = (
+            float(left_gap_residual_text)
+            if left_gap_residual_text not in ("", "nan", "NaN")
+            else None
+        )
+        left_contact_ground_truth = left_diagnostic.get(
+            "contact_ground_truth", "UNLABELED"
+        )
         left = {
             "p": positions[index].tolist(),
             "q": quaternion.tolist(),
@@ -288,6 +314,9 @@ def main() -> int:
                 contact_state if left_force_valid else "REJECTED"
             ),
             "joints": [joint1, joint2],
+            "black_dot_gap_px": left_gap,
+            "opening_conditioned_gap_residual_px": left_gap_residual,
+            "contact_ground_truth": left_contact_ground_truth,
             "pose_state": pose_state,
             "angle_state": angle_state,
             "visible": True,
@@ -420,10 +449,17 @@ def main() -> int:
             ),
         },
         "display_filter": display_filter_audit,
+        "contact_ground_truth": left_force_audit.get("contact_ground_truth"),
+        "contact_events": left_force_audit.get("contact_events"),
         "force_models": {
             "left": {
                 "validated_for_display": bool(left_force_valid),
                 "source_audit": str(paths["force_angle_audit"]),
+                "display_metric": (
+                    "black_dot_gap_px"
+                    if not left_force_valid and left_has_black_dot_gap
+                    else "raw_deformation_score"
+                ),
             },
             "right": {
                 "validated_for_display": bool(right_force_valid),
