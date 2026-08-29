@@ -195,11 +195,13 @@ def detect_black_dot(
     dark = cv2.inRange(hsv, DARK_LOW, DARK_HIGH)
     roi = np.zeros((height, width), dtype=np.uint8)
     if camera_profile == "insta360-x5-front":
-        x0, x1 = ((780, 970) if side == "left" else (950, 1140))
-        y0, y1 = 1180, 1450
+        x0, x1 = ((720, 970) if side == "left" else (970, 1200))
+        y0, y1 = 1120, 1510
+        area_min, area_max, annulus_min = 35.0, 350.0, 0.55
     else:
         x0, x1 = ((760, 960) if side == "left" else (960, 1160))
         y0, y1 = 1030, 1190
+        area_min, area_max, annulus_min = 45.0, 220.0, 0.75
     roi[round(y0 * scale):round(y1 * scale), round(x0 * scale):round(x1 * scale)] = 255
     dark = cv2.bitwise_and(dark, roi)
     dark = cv2.morphologyEx(dark, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
@@ -207,7 +209,7 @@ def detect_black_dot(
     candidates: list[tuple[float, DotObservation]] = []
     for contour in contours:
         area = float(cv2.contourArea(contour))
-        if not 45.0 * scale * scale <= area <= 220.0 * scale * scale:
+        if not area_min * scale * scale <= area <= area_max * scale * scale:
             continue
         x, y, box_width, box_height = cv2.boundingRect(contour)
         if not 0.35 <= box_width / max(box_height, 1) <= 2.8:
@@ -231,7 +233,7 @@ def detect_black_dot(
             & (patch[..., 2] >= 60)
         )
         yellow_fraction = float(yellow[annulus].mean()) if annulus.any() else 0.0
-        if yellow_fraction < 0.75:
+        if yellow_fraction < annulus_min:
             continue
         axes = cv2.fitEllipse(contour)[1] if len(contour) >= 5 else (box_width, box_height)
         minor, major = sorted(float(value) for value in axes)
@@ -291,11 +293,25 @@ def observe_frame(
             angle = candidate
         else:
             left = right = None
+    dot_left = detect_black_dot(hsv, "left", camera_profile)
+    dot_right = detect_black_dot(hsv, "right", camera_profile)
+    if (
+        camera_profile == "insta360-x5-front"
+        and dot_left is not None and dot_right is not None
+    ):
+        gap = float(np.linalg.norm(dot_left.point - dot_right.point))
+        pair_valid = (
+            65.0 <= gap <= 230.0
+            and dot_left.point[0] < dot_right.point[0]
+            and abs(dot_left.point[1] - dot_right.point[1]) <= 60.0
+        )
+        if not pair_valid:
+            dot_left = dot_right = None
     return FrameObservation(
         yellow_left=left,
         yellow_right=right,
-        dot_left=detect_black_dot(hsv, "left", camera_profile),
-        dot_right=detect_black_dot(hsv, "right", camera_profile),
+        dot_left=dot_left,
+        dot_right=dot_right,
         included_angle_deg=angle,
     )
 
