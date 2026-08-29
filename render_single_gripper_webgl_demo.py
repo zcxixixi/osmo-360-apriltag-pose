@@ -40,18 +40,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("front_video", type=Path)
     parser.add_argument("--source-osv", type=Path, required=True)
     parser.add_argument("--calibration", type=Path, required=True)
-    parser.add_argument("--camera-pose-csv", type=Path, required=True)
-    parser.add_argument("--camera-pose-summary", type=Path, required=True)
+    parser.add_argument("--camera-pose-csv", type=Path)
+    parser.add_argument("--camera-pose-summary", type=Path)
     parser.add_argument("--force-angle-csv", type=Path, required=True)
     parser.add_argument("--force-angle-audit", type=Path, required=True)
     parser.add_argument("--rig-revision", type=Path, required=True)
     parser.add_argument("--marker-layout", type=Path, required=True)
-    parser.add_argument("--world-tag-map", type=Path, required=True)
+    parser.add_argument("--world-tag-map", type=Path)
     parser.add_argument("--new-cad-source", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--max-frames", type=int, default=0)
     parser.add_argument("--timeline-only", action="store_true")
     parser.add_argument("--allow-diagnostic-rig", action="store_true")
+    parser.add_argument(
+        "--camera-local-basetag",
+        action="store_true",
+        help="use the rig's BaseTag-fitted camera-to-base transform without a world-pose claim",
+    )
     parser.add_argument(
         "--camera-hardware-model",
         choices=("dji-osmo-360", "insta360-x5"),
@@ -98,22 +103,33 @@ def tag_anchors(compiled: dict) -> list[dict]:
 
 def main() -> int:
     args = parse_args()
+    required_names = (
+        "front_video",
+        "source_osv",
+        "calibration",
+        "force_angle_csv",
+        "force_angle_audit",
+        "rig_revision",
+        "marker_layout",
+        "new_cad_source",
+    )
     paths = {
         name: getattr(args, name).resolve(strict=True)
-        for name in (
-            "front_video",
-            "source_osv",
-            "calibration",
-            "camera_pose_csv",
-            "camera_pose_summary",
-            "force_angle_csv",
-            "force_angle_audit",
-            "rig_revision",
-            "marker_layout",
-            "world_tag_map",
-            "new_cad_source",
-        )
+        for name in required_names
     }
+    if args.camera_local_basetag:
+        if args.camera_pose_csv or args.camera_pose_summary or args.world_tag_map:
+            raise ValueError(
+                "camera-local BaseTag mode must not accept world camera-pose or tag-map inputs"
+            )
+        if args.display_filter != "raw":
+            raise ValueError("camera-local BaseTag mode requires the raw display filter")
+    else:
+        for name in ("camera_pose_csv", "camera_pose_summary", "world_tag_map"):
+            value = getattr(args, name)
+            if value is None:
+                raise ValueError(f"--{name.replace('_', '-')} is required in world mode")
+            paths[name] = value.resolve(strict=True)
     right_pose_path = (
         args.right_base_pose_csv.resolve(strict=True)
         if args.right_base_pose_csv else None
@@ -194,24 +210,38 @@ def main() -> int:
     if args.max_frames > 0:
         frame_count = min(frame_count, args.max_frames)
     frame_times = np.arange(frame_count, dtype=float) / fps
-    camera = load_camera_track(paths["camera_pose_csv"])
-
     camera_base = camera_to_base(rig["hardware"], role)
     base_camera = camera_base.inverse()
-    direct_position, direct_rotation = compose_base_track(camera, camera_base)
-    positions, rotations = sample_pose(
-        camera.time_s, direct_position, direct_rotation, frame_times
-    )
-    source_positions = positions.copy()
-    source_rotations = rotations
-    display_filter_audit = {
-        "mode": args.display_filter,
-        "source_pose_preserved": True,
-    }
-    if args.display_filter == "kalman-rts":
-        positions, _, left_filter_audit = smooth_positions(positions, frame_times)
-        rotations = smooth_rotations(rotations)
-        display_filter_audit["left"] = left_filter_audit
+    if args.camera_local_basetag:
+        positions = np.tile(camera_base.p, (frame_count, 1))
+        rotations = Rotation.from_quat(
+            np.tile(camera_base.r.as_quat(), (frame_count, 1))
+        )
+        source_positions = positions.copy()
+        source_rotations = rotations
+        direct_frame_times = frame_times
+        display_filter_audit = {
+            "mode": "raw",
+            "source_pose_preserved": True,
+            "camera_local_basetag": True,
+        }
+    else:
+        camera = load_camera_track(paths["camera_pose_csv"])
+        direct_position, direct_rotation = compose_base_track(camera, camera_base)
+        positions, rotations = sample_pose(
+            camera.time_s, direct_position, direct_rotation, frame_times
+        )
+        source_positions = positions.copy()
+        source_rotations = rotations
+        direct_frame_times = camera.time_s
+        display_filter_audit = {
+            "mode": args.display_filter,
+            "source_pose_preserved": True,
+        }
+        if args.display_filter == "kalman-rts":
+            positions, _, left_filter_audit = smooth_positions(positions, frame_times)
+            rotations = smooth_rotations(rotations)
+            display_filter_audit["left"] = left_filter_audit
     right_display = {}
     if right_rows:
         right_keys = sorted(right_rows)
@@ -238,9 +268,9 @@ def main() -> int:
         paths["force_angle_csv"],
         int(cv2.VideoCapture(str(paths["front_video"])).get(cv2.CAP_PROP_FRAME_COUNT)),
     )
-    included = fill_for_display(all_signals.included_angle_deg)[:frame_count]
-    opening = fill_for_display(all_signals.opening_angle_deg)[:frame_count]
-    intensity = fill_for_display(all_signals.contact_intensity_percent)[:frame_count]
+    included = all_signals.included_angle_deg[:frame_count]
+    opening = all_signals.opening_angle_deg[:frame_count]
+    intensity = all_signals.contact_intensity_percent[:frame_count]
     source_intensity = all_signals.contact_intensity_percent[:frame_count]
     signal_states = all_signals.measurement_state[:frame_count]
 
@@ -249,33 +279,57 @@ def main() -> int:
         raise ValueError("rig revision has no renderable CAD revision")
     mesh_dir = (ROOT / cad["mesh_directory"]).resolve()
     cad_model = make_cad_opening_model(mesh_dir, rig["geometry"])
-    widths_mm = np.asarray([1000.0 * cad_model.width_m(value) for value in opening])
+    widths_mm = np.asarray([
+        1000.0 * cad_model.width_m(value) if np.isfinite(value) else np.nan
+        for value in opening
+    ])
 
-    compiled_map = compile_world_tag_map(paths["world_tag_map"])
+    compiled_map = (
+        None
+        if args.camera_local_basetag
+        else compile_world_tag_map(paths["world_tag_map"])
+    )
     frames = []
-    direct_frame_times = camera.time_s
-    display_rotation_correction = Rotation.from_euler("x", 180.0, degrees=True)
+    display_rotation_correction = Rotation.from_euler(
+        "x", 0.0 if args.camera_local_basetag else 180.0, degrees=True
+    )
     display_rotations = rotations * display_rotation_correction
     for index, now in enumerate(frame_times):
         quaternion = display_rotations[index].as_quat()
         source_quaternion = source_rotations[index].as_quat()
         nearest_age = float(np.min(np.abs(direct_frame_times - now)))
         pose_state = (
-            f"DISPLAY FILTER {args.display_filter.upper()}"
+            f"FIXED BASETAG{rig['hardware']['robots'][role]['base_tag_id']}-FITTED CAMERA→BASE_LINK"
+            if args.camera_local_basetag
+            else f"DISPLAY FILTER {args.display_filter.upper()}"
             if args.display_filter != "raw"
             else f"MEASURED {fps:.2f} HZ" if nearest_age <= 0.5 / fps
             else "DIRECT-BRACKETED DISPLAY"
         )
         angle_state = signal_states[index]
+        angle_available = bool(
+            np.isfinite(opening[index])
+            and np.isfinite(included[index])
+            and angle_state != "UNAVAILABLE"
+        )
+        force_available = bool(
+            left_force_valid
+            and np.isfinite(intensity[index])
+            and (angle_state == "MEASURED" or angle_state.startswith("RECOVERED"))
+        )
         left_contact_measurement_state = (
-            angle_state if left_force_valid else "REJECTED_X5_FORCE_MODEL"
+            angle_state if force_available else
+            "UNAVAILABLE" if left_force_valid else "REJECTED_X5_FORCE_MODEL"
         )
         contact_state = (
-            "HIGH" if intensity[index] >= 70.0 else
-            "CONTACT" if intensity[index] >= 20.0 else
-            "LOW / FREE"
+            "HIGH" if force_available and intensity[index] >= 70.0 else
+            "CONTACT" if force_available and intensity[index] >= 20.0 else
+            "LOW / FREE" if force_available else "UNAVAILABLE"
         )
-        joint1, joint2 = cad_model.joint_angles(opening[index])
+        joint1, joint2 = (
+            cad_model.joint_angles(opening[index])
+            if angle_available else (None, None)
+        )
         left_diagnostic = left_diagnostic_rows.get(index, {})
         left_gap_text = left_diagnostic.get("black_dot_gap_px", "")
         left_gap = (
@@ -299,21 +353,27 @@ def main() -> int:
             "q": quaternion.tolist(),
             "source_p": source_positions[index].tolist(),
             "source_q": source_quaternion.tolist(),
-            "opening": float(opening[index]),
-            "included_angle_deg": float(included[index]),
+            "opening": float(opening[index]) if angle_available else None,
+            "included_angle_deg": (
+                float(included[index]) if angle_available else None
+            ),
+            "angle_available": angle_available,
             "contact_measurement_state": left_contact_measurement_state,
-            "cad_opening_width_mm": float(widths_mm[index]),
+            "cad_opening_width_mm": (
+                float(widths_mm[index]) if angle_available else None
+            ),
             "source_contact_intensity_percent": (
                 float(source_intensity[index])
                 if np.isfinite(source_intensity[index]) else None
             ),
             "contact_intensity_percent": (
-                float(intensity[index]) if left_force_valid else 0.0
+                float(intensity[index]) if force_available else 0.0
             ),
             "contact_state": (
                 contact_state if left_force_valid else "REJECTED"
             ),
-            "joints": [joint1, joint2],
+            "joints": [joint1, joint2] if angle_available else [0.0, 0.0],
+            "source_joints": [joint1, joint2] if angle_available else None,
             "black_dot_gap_px": left_gap,
             "opening_conditioned_gap_residual_px": left_gap_residual,
             "contact_ground_truth": left_contact_ground_truth,
@@ -394,11 +454,12 @@ def main() -> int:
             }
         frames.append({"t": float(now), "source_index": index, "left": left, "right": right})
 
+    base_tag_id = int(rig["hardware"]["robots"][role]["base_tag_id"])
     timeline = {
         "schema_version": "single-gripper-webgl/v1",
         "audit_mode": False,
         "render_mode": "single_gripper_world_diagnostic",
-        "default_view": "human_corner",
+        "default_view": "camera_mount" if args.camera_local_basetag else "human_corner",
         "view_roll_deg": 0.0,
         "operator_eye_elevation_factor": 0.10,
         "operator_tag_look_fraction": 0.40,
@@ -416,13 +477,23 @@ def main() -> int:
                 "quaternion_xyzw": base_camera.r.as_quat().tolist(),
             },
             "geometry_status": (
-                "official X5 body dimensions; capture-fitted BaseTag2 mount"
+                (
+                    f"official X5 body dimensions; BaseTag{base_tag_id}-fitted "
+                    "camera-to-base mount"
+                )
                 if args.camera_hardware_model == "insta360-x5"
                 else "legacy display-only Osmo model"
             ),
         },
-        "layout_calibration_id": compiled_map["map_id"],
-        "reference_frame": compiled_map.get("world_frame", "tag_map"),
+        "layout_calibration_id": (
+            f"camera-local-BaseTag{base_tag_id}"
+            if args.camera_local_basetag else compiled_map["map_id"]
+        ),
+        "reference_frame": (
+            "panorama_camera"
+            if args.camera_local_basetag
+            else compiled_map.get("world_frame", "tag_map")
+        ),
         "fps": fps,
         "duration_s": frame_count / fps,
         "source_frames": frame_count,
@@ -430,8 +501,9 @@ def main() -> int:
         "training_episodes": 0,
         "training_ready": False,
         "sync": {"offset_s": 0.0, "correlation": 1.0},
+        "primary_hardware_role": role,
         "side_mapping": {
-            "left": "physical-left/X5-mounted",
+            "left": f"physical-{role}/X5-mounted",
             "right": args.right_tracking_source if right_rows else "hidden",
         },
         "right_gripper_tracking": {
@@ -450,7 +522,27 @@ def main() -> int:
         },
         "display_filter": display_filter_audit,
         "contact_ground_truth": left_force_audit.get("contact_ground_truth"),
+        "angle_models": {
+            "left": left_force_audit.get("angle"),
+            "right": (
+                right_force_audit.get("angle")
+                if right_force_audit is not None else None
+            ),
+        },
         "contact_events": left_force_audit.get("contact_events"),
+        "localization": (
+            {
+                "method": "rigid camera-to-BaseTag-to-base_link calibration",
+                "base_tag_id": base_tag_id,
+                "frame_id": "panorama_camera",
+                "pose_state": "fixed rigid mount; no world-pose claim",
+                "camera_to_base": {
+                    "translation_m": camera_base.p.tolist(),
+                    "quaternion_xyzw": camera_base.r.as_quat().tolist(),
+                },
+            }
+            if args.camera_local_basetag else None
+        ),
         "force_models": {
             "left": {
                 "validated_for_display": bool(left_force_valid),
@@ -475,34 +567,71 @@ def main() -> int:
             },
             "raw_diagnostics_preserved": True,
         },
-        "coordinate_mapping": {
-            "source": f"official stitched {args.camera_hardware_model} Grid camera pose composed with serial-bound camera_to_base",
-            "display": "tag_map position identity; display-only base-local X roll +180 deg",
-            "display_orientation_correction": {
-                "axis": "base_link +X",
-                "angle_deg": 180.0,
-                "scope": "rendering only",
-                "source_pose_modified": False,
-            },
-        },
-        "coordinate_status": {
-            "mode": "world",
-            "frame_id": compiled_map.get("world_frame", "tag_map"),
-            "tag_map_sha256": compiled_map["tag_map_sha256"],
-            "calibration_status": compiled_map.get("calibration_status", "DIAGNOSTIC"),
-            "frame_convention": {
-                "up_vector": compiled_map.get("physical_up_vector", [0.0, -1.0, 0.0]),
-                "units": "m",
-            },
-        },
+        "coordinate_mapping": (
+            {
+                "source": (
+                    f"existing BaseTag{base_tag_id}-fitted rigid "
+                    "camera_to_base calibration"
+                ),
+                "display": "panorama-camera coordinates; no world transform",
+                "display_orientation_correction": {
+                    "axis": None,
+                    "angle_deg": 0.0,
+                    "scope": "none",
+                    "source_pose_modified": False,
+                },
+            }
+            if args.camera_local_basetag
+            else {
+                "source": f"official stitched {args.camera_hardware_model} Grid camera pose composed with serial-bound camera_to_base",
+                "display": "tag_map position identity; display-only base-local X roll +180 deg",
+                "display_orientation_correction": {
+                    "axis": "base_link +X",
+                    "angle_deg": 180.0,
+                    "scope": "rendering only",
+                    "source_pose_modified": False,
+                },
+            }
+        ),
+        "coordinate_status": (
+            {
+                "mode": "camera_local_basetag",
+                "frame_id": "panorama_camera",
+                "calibration_status": rig["hardware"]["calibration_status"],
+                "frame_convention": {
+                    "up_vector": None,
+                    "units": "m",
+                    "transform_direction": "T_panorama_camera_base_link",
+                },
+            }
+            if args.camera_local_basetag
+            else {
+                "mode": "world",
+                "frame_id": compiled_map.get("world_frame", "tag_map"),
+                "tag_map_sha256": compiled_map["tag_map_sha256"],
+                "calibration_status": compiled_map.get(
+                    "calibration_status", "DIAGNOSTIC"
+                ),
+                "frame_convention": {
+                    "up_vector": compiled_map.get(
+                        "physical_up_vector", [0.0, -1.0, 0.0]
+                    ),
+                    "units": "m",
+                },
+            }
+        ),
         "eef_reference": {"type": "base_link"},
         "jaw_joint_origins_m": rig["geometry"]["jaw_joint_origins_m"],
         "attitude": {
-            "mode": f"visual Grid pose at {fps:.3f} Hz with display-only SLERP brackets",
+            "mode": (
+                f"fixed BaseTag{base_tag_id}-fitted camera-to-base rotation"
+                if args.camera_local_basetag
+                else f"visual Grid pose at {fps:.3f} Hz with display-only SLERP brackets"
+            ),
             "level_constraint": False,
         },
         "bounds_m": {},
-        "tag_anchors": tag_anchors(compiled_map),
+        "tag_anchors": [] if args.camera_local_basetag else tag_anchors(compiled_map),
         "validation_events": [],
         "segment_untrusted_tracks": False,
         "frames": frames,

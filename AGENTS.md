@@ -80,6 +80,18 @@ source `CAM_20260827134904_0063_D.OSV`, left serial, BaseTag ID2. Use
 `webgl-final-v5/` timeline/output. Earlier 0063 pose/force/WebGL variants are
 rejected.
 
+Latest X5 diagnostic:
+`/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/`,
+physical right identified by directly detecting BaseTag ID3 in 828/852 frames
+(ID2 in 0/852). Use angle revision
+`config/rig_revisions/x5_jaw_angle_yellow_dots_20260829_r1.json`, force output
+`force-angle-v8-yellow-dots-basetag3-bound-rig/`, and timeline
+`webgl-v5-yellow-dots-basetag3-bound-rig/`. The angle is defined by the
+three highlighted yellow circular dots on each black jaw pad; do not substitute
+yellow-body PCA or capture-percentile zeroing. Gaps over 0.25 s remain N/A and
+hide the CAD jaw links. The visible Grid subset did not yield a valid world
+pose, so this product is camera-local BaseTag3 diagnostic, not `tag_map`.
+
 `contact_intensity` is capture-local pad deformation, not force in Newtons and
 not cross-episode comparable. Preserve direct, recovered (maximum 0.25 s), and
 unavailable observations separately. Keep per-pad deformation before combining.
@@ -103,6 +115,9 @@ world inset.
 Apply a display-only 180-degree roll around base-local `+X` to the rendered
 gripper. Base-local `+Z` yaw is wrong. Preserve the source quaternion and never
 write the display correction into metric `tag_map` poses.
+For `camera_local_basetag` diagnostics, do not apply the world-view 180-degree
+display roll. Use the BaseTag-bound source rotation and a BaseTag-normal
+diagnostic camera view; never claim it is a world pose.
 
 ## Agent review platform
 

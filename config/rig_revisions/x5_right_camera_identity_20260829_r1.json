@@ -1,0 +1,11 @@
+{
+  "schema_version": "x5-camera-identity/1.0",
+  "status": "SERIAL_UNAVAILABLE_BINDING_BY_VISIBLE_BASETAG3_DIAGNOSTIC",
+  "serial": "INSTA360-X5-SERIAL-UNAVAILABLE-BASETAG3-BOUND-20260829",
+  "camera_model": "Insta360 X5",
+  "base_tag_id": 3,
+  "source_capture": "/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/raw/VID_20260829_114845_00_002.insv",
+  "source_sha256": "6182831beaae69c99c9943d3c5ea1771cd76385a8463448cd3995d6bc81bfa6f",
+  "observed_basetag_frames": 828,
+  "total_frames": 852
+}

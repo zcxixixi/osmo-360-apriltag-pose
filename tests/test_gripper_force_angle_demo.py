@@ -13,6 +13,7 @@ from render_gripper_force_angle_demo import (
     contact_event_audit,
     labeled_contact_gap_audit,
     normalize_contact_intensity,
+    opening_angles,
     observe_frame,
     point_to_local,
 )
@@ -100,6 +101,21 @@ def test_labeled_contact_audit_preserves_gap_and_uses_unloaded_opening_baseline(
     assert events["events"][0]["nearest_black_dot_gap_px"] == pytest.approx(gaps[40])
 
 
+def test_frozen_closed_reference_does_not_renormalize_each_capture():
+    observations = [
+        FrameObservation(None, None, None, None, included)
+        for included in np.linspace(40.0, 48.0, 40)
+    ]
+
+    opening, closed_reference = opening_angles(
+        observations, closed_reference=46.75
+    )
+
+    assert closed_reference == 46.75
+    assert opening[0] == pytest.approx(6.75)
+    assert opening[-1] == 0.0
+
+
 def test_x5_profile_detects_jaw_axes_and_pad_dots():
     image = np.full((1920, 1920, 3), 255, dtype=np.uint8)
     yellow = (0, 255, 255)
@@ -112,7 +128,9 @@ def test_x5_profile_detects_jaw_axes_and_pad_dots():
     cv2.ellipse(image, (925, 1280), (8, 6), 0, 0, 360, (20, 20, 20), -1)
     cv2.ellipse(image, (995, 1280), (8, 6), 0, 0, 360, (20, 20, 20), -1)
 
-    observation = observe_frame(image, "insta360-x5-front")
+    observation = observe_frame(
+        image, "insta360-x5-front", "physical-marker-triad"
+    )
     force_image = image.copy()
 
     assert np.isfinite(observation.included_angle_deg)
@@ -154,3 +172,17 @@ def test_x5_profile_detects_jaw_axes_and_pad_dots():
     )
     assert np.count_nonzero(force_amber_like) > 20
     assert observation.dot_right is not None
+
+
+def test_x5_accepted_pca_mode_tracks_yellow_jaw_contours():
+    image = np.full((1920, 1920, 3), 255, dtype=np.uint8)
+    yellow = (0, 255, 255)
+    for center, angle in (((760, 1450), 15.0), ((1160, 1450), -15.0)):
+        box = cv2.boxPoints((center, (80, 400), angle))
+        cv2.fillConvexPoly(image, np.round(box).astype(np.int32), yellow)
+
+    observation = observe_frame(image, "insta360-x5-front", "pca-axis")
+
+    assert observation.yellow_left is not None
+    assert observation.yellow_right is not None
+    assert observation.included_angle_deg == pytest.approx(30.0, abs=1.0)

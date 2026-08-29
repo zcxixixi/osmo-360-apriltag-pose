@@ -82,9 +82,13 @@
     const cameraLabel=isInstaX5?'INSTA360 X5':'OSMO 360';
     const baseReference=timeline.eef_reference?.type==='base_link';
     const commonWorld=timeline.coordinate_status?.mode==='world';
+    const cameraLocalBaseTag=timeline.coordinate_status?.mode==='camera_local_basetag';
+    const primaryHardwareRole=String(timeline.primary_hardware_role||'left').toUpperCase();
     const frameConvention=timeline.coordinate_status?.frame_convention||{};
     const baseTagLocalization=timeline.localization?.base_tag_id;
     const baseTagLabel=baseTagLocalization?`BASETAG${baseTagLocalization}→BASE_LINK`:'';
+    const leftAngleRevisionId=timeline.angle_models?.left?.revision?.id||'';
+    const yellowDotAngle=leftAngleRevisionId.includes('yellow-dots');
     const leftForceModelValid=timeline.force_models?.left?.validated_for_display!==false;
     const leftForceQuantity=timeline.force_models?.left?.quantity||'';
     const leftFingertipForce=leftForceModelValid&&leftForceQuantity==='capture_local_relative_fingertip_force_proxy';
@@ -109,10 +113,10 @@
       }
       if(forceReview){
         document.body.classList.add('force-calibration');
-        document.querySelector('.live-camera-label').textContent=leftFingertipForce?'FRONT LENS · FINGERTIP FORCE ARROWS / JAW ANGLE':'FRONT LENS · JAW-ANGLE ARC / BLACK-DOT GAP';
+        document.querySelector('.live-camera-label').textContent=leftFingertipForce?`FRONT LENS · ${yellowDotAngle?'6 YELLOW PAD DOTS / ':''}FINGERTIP FORCE`:'FRONT LENS · JAW-ANGLE ARC / BLACK-DOT GAP';
       }
-      document.getElementById('main-title').textContent=leftFingertipForce?`${cameraLabel} · ${baseTagLocalization?`BASETAG${baseTagLocalization} + `:''}JAW-ANGLE + FINGERTIP FORCE · ${Number(timeline.fps).toFixed(2)} FPS`:forceCalibration?`${cameraLabel} · JAW-ANGLE + BLACK-DOT AUDIT · ${Number(timeline.fps).toFixed(2)} FPS`:`${cameraLabel} · ${dualSmoke?'DUAL GRIPPER':'SINGLE GRIPPER'} · ${Number(timeline.fps).toFixed(2)} FPS`;
-      document.getElementById('notice').textContent=leftFingertipForce?`${baseTagLocalization?`${baseTagLabel} · `:''}RELATIVE FINGERTIP FORCE AT TWO DISTAL CONTACT POINTS · INWARD VECTORS · NOT NEWTONS${contactEventLabel}`:forceCalibration?`JAW-ANGLE RAYS/ARC + BLACK-DOT GAP + SIX YELLOW MARKERS · RAW GEOMETRY ONLY${contactEventLabel}`:trueDualX5?'LEFT + RIGHT = OWN X5 GRID/CAD/ANGLE/CONTACT · DIAGNOSTIC':dualSmoke?'LEFT = FULL GRID/CAD/ANGLE/FORCE · RIGHT = RECIPROCAL BASETAG3 TRAJECTORY ONLY · DIAGNOSTIC':'TRAJECTORY = GRID WORLD → BASE_LINK · CONTACT INTENSITY IS RELATIVE, NOT NEWTONS · DIAGNOSTIC';
+      document.getElementById('main-title').textContent=leftFingertipForce?`${cameraLabel} · ${baseTagLocalization?`BASETAG${baseTagLocalization} + `:''}${yellowDotAngle?'YELLOW-DOT ANGLE':'JAW-ANGLE'} + FINGERTIP FORCE · ${Number(timeline.fps).toFixed(2)} FPS`:forceCalibration?`${cameraLabel} · JAW-ANGLE + BLACK-DOT AUDIT · ${Number(timeline.fps).toFixed(2)} FPS`:`${cameraLabel} · ${dualSmoke?'DUAL GRIPPER':'SINGLE GRIPPER'} · ${Number(timeline.fps).toFixed(2)} FPS`;
+      document.getElementById('notice').textContent=leftFingertipForce?`${baseTagLocalization?`${baseTagLabel} · `:''}${yellowDotAngle?'ANGLE = THREE HIGHLIGHTED YELLOW PAD DOTS PER JAW · ':''}RELATIVE FINGERTIP FORCE · NOT NEWTONS${contactEventLabel}`:forceCalibration?`JAW-ANGLE RAYS/ARC + BLACK-DOT GAP + SIX YELLOW MARKERS · RAW GEOMETRY ONLY${contactEventLabel}`:trueDualX5?'LEFT + RIGHT = OWN X5 GRID/CAD/ANGLE/CONTACT · DIAGNOSTIC':dualSmoke?'LEFT = FULL GRID/CAD/ANGLE/FORCE · RIGHT = RECIPROCAL BASETAG3 TRAJECTORY ONLY · DIAGNOSTIC':'TRAJECTORY = GRID WORLD → BASE_LINK · CONTACT INTENSITY IS RELATIVE, NOT NEWTONS · DIAGNOSTIC';
       document.getElementById('left-metric-label').textContent='INCLUDED JAW ANGLE';document.getElementById('right-metric-label').textContent='CAD OPENING';document.getElementById('metric3-label').textContent='CONTACT INTENSITY';
       document.getElementById('pose-filter').textContent=baseTagLocalization?`pose: camera→BaseTag${baseTagLocalization}→base_link · prior fitted mount calibration`:displayFilter==='raw'?'raw visual pose · bounded recovery ≤0.25 s':`${displayFilter.toUpperCase()} DISPLAY ONLY · raw source_p/source_q preserved`;
       document.querySelector('.pip-right').style.display='none';document.querySelector('.slot-right').style.display='none';document.querySelector('.pip-left').textContent=`${cameraLabel} LENS 0 + LENS 1 · ${Number(timeline.fps).toFixed(2)} FPS`;
@@ -204,7 +208,7 @@
       ));
       left.add(new THREE.AxesHelper(.14))
     }
-    if(singleMode&&timeline.mounted_camera?.model==='insta360-x5'){
+    if(singleMode&&timeline.mounted_camera?.model==='insta360-x5'&&!cameraLocalBaseTag){
       const mounted=timeline.mounted_camera,T=mounted.T_base_camera,group=new THREE.Group();
       group.position.fromArray(T.translation_m);group.quaternion.fromArray(T.quaternion_xyzw);
       const bodySize=mounted.body_size_m;
@@ -236,7 +240,7 @@
       addForceArrow(new THREE.Vector3(.11,-.10,.016),new THREE.Vector3(0,1,0))
     }
     function roleLabel(text,color){const canvas=document.createElement('canvas');canvas.width=512;canvas.height=112;const context=canvas.getContext('2d');context.fillStyle='rgba(6,13,20,.90)';context.roundRect(4,4,504,104,20);context.fill();context.strokeStyle=color;context.lineWidth=7;context.roundRect(4,4,504,104,20);context.stroke();context.fillStyle='#ffffff';context.font='bold 44px system-ui';context.textAlign='center';context.textBaseline='middle';context.fillText(text,256,56);const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;const sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:texture,transparent:true,opacity:.10,depthTest:false,depthWrite:false}));sprite.scale.set(.10,.022,1);sprite.renderOrder=100;scene.add(sprite);return sprite}
-    const leftRoleLabel=roleLabel(cameraMode?`${cameraLabel} CAMERA`:singleMode?`${cameraLabel} · LEFT GRIPPER`:tagReference?'左路 TAG2 / LEFT · view2':'左路 / LEFT · view2', '#37c8ff');
+    const leftRoleLabel=roleLabel(cameraMode?`${cameraLabel} CAMERA`:singleMode?`${cameraLabel} · ${primaryHardwareRole} GRIPPER`:tagReference?'左路 TAG2 / LEFT · view2':'左路 / LEFT · view2', '#37c8ff');
     const rightRoleLabel=roleLabel(tagReference?'右路 TAG2 / RIGHT · view1':'右路 / RIGHT · view1', '#58df91');
     const tagFramingPoints=[],tagObjects=[],tagSidePoints={left:[],right:[]},panelPlanes={};
     function tagLabel(text,color){const canvas=document.createElement('canvas');canvas.width=256;canvas.height=128;const context=canvas.getContext('2d');context.fillStyle='rgba(7,11,16,.82)';context.fillRect(0,0,256,128);context.strokeStyle=color;context.lineWidth=8;context.strokeRect(5,5,246,118);context.fillStyle='#ffffff';context.font='bold 62px system-ui';context.textAlign='center';context.textBaseline='middle';context.fillText('ID '+text,128,64);const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;const sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:texture,transparent:true,opacity:.10,depthTest:false,depthWrite:false}));sprite.scale.set(timeline.render_mode==='single_gripper_world_diagnostic'?.039:.065,timeline.render_mode==='single_gripper_world_diagnostic'?.0195:.0325,1);return sprite}
@@ -256,7 +260,27 @@
     let overviewRenderer=null,overviewCamera=null;if(commonWorld&&!interactive&&!singleMode&&tagFramingPoints.length){const overviewBox=new THREE.Box3().setFromPoints(all).expandByScalar(.10),overviewCenter=overviewBox.getCenter(new THREE.Vector3()),overviewSize=overviewBox.getSize(new THREE.Vector3()),overviewRadius=Math.max(overviewSize.x,overviewSize.y,overviewSize.z,.45);overviewCamera=new THREE.PerspectiveCamera(38,420/260,.01,20);overviewCamera.up.copy(displayUp);overviewCamera.position.copy(overviewCenter).addScaledVector(viewDirection,overviewRadius*1.75).addScaledVector(worldUp,overviewRadius*.12);overviewCamera.lookAt(overviewCenter);overviewRenderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true,alpha:false});overviewRenderer.setSize(420,260,false);overviewRenderer.setPixelRatio(1);overviewRenderer.outputColorSpace=THREE.SRGBColorSpace;overviewRenderer.toneMapping=THREE.ACESFilmicToneMapping;overviewRenderer.toneMappingExposure=1.25;overviewRenderer.domElement.className='world-inset-canvas';document.getElementById('scene').appendChild(overviewRenderer.domElement)}
     const orbit=new OrbitControls(camera,renderer.domElement);orbit.target.copy(center);orbit.enableDamping=true;orbit.dampingFactor=.08;orbit.enabled=interactive;orbit.update();
     function fitView(points){if(!points.length)return;const targetBox=new THREE.Box3().setFromPoints(points).expandByScalar(.10),target=targetBox.getCenter(new THREE.Vector3()),extent=targetBox.getSize(new THREE.Vector3()),r=Math.max(extent.x,extent.y,extent.z,.35);camera.position.copy(target).addScaledVector(viewDirection,r*2.05);camera.near=.005;camera.far=Math.max(10,r*8);camera.updateProjectionMatrix();orbit.target.copy(target);orbit.update()}
-    if(singleMode&&!interactive)fitView(all);
+    function fitCameraMountView(){
+      const data=timeline.frames[0].left;
+      const base=new THREE.Vector3(...data.p);
+      const orientation=new THREE.Quaternion(...data.q);
+      const fingertipDirection=new THREE.Vector3(1,0,0).applyQuaternion(orientation).normalize();
+      const planeNormal=new THREE.Vector3(0,0,1).applyQuaternion(orientation).normalize();
+      const target=base.clone().addScaledVector(fingertipDirection,.07);
+      camera.position.copy(target).addScaledVector(planeNormal,.42);
+      camera.up.copy(fingertipDirection);
+      camera.fov=38;
+      camera.near=.003;
+      camera.far=10;
+      camera.updateProjectionMatrix();
+      camera.lookAt(target);
+      orbit.target.copy(target);
+      orbit.update()
+    }
+    if(singleMode&&!interactive){
+      if(cameraLocalBaseTag)fitCameraMountView();
+      else fitView(all)
+    }
     const startMarker=g=>{const s=new THREE.Mesh(new THREE.SphereGeometry(.006,24,12),new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:.35}));s.position.fromArray(timeline.frames[0][g].p);s.visible=!tagReference;scene.add(s);return s};const leftStart=startMarker('left'),rightStart=startMarker('right');
     const validationEvent=timeline.validation_events?.[0];
     if(validationEvent?.observations?.left&&validationEvent?.observations?.right){const lp=new THREE.Vector3(...validationEvent.observations.left.position_m),rp=new THREE.Vector3(...validationEvent.observations.right.position_m),mid=lp.clone().add(rp).multiplyScalar(.5);const leftEventPoint=new THREE.Mesh(new THREE.SphereGeometry(.014,24,12),new THREE.MeshBasicMaterial({color:0x37c8ff,depthTest:false})),rightEventPoint=new THREE.Mesh(new THREE.SphereGeometry(.010,24,12),new THREE.MeshBasicMaterial({color:0x58df91,depthTest:false}));leftEventPoint.position.copy(lp);rightEventPoint.position.copy(rp);leftEventPoint.renderOrder=90;rightEventPoint.renderOrder=91;scene.add(leftEventPoint,rightEventPoint);const eventLink=new THREE.Line(new THREE.BufferGeometry().setFromPoints([lp,rp]),new THREE.LineBasicMaterial({color:0xff5ca8,depthTest:false}));eventLink.renderOrder=89;scene.add(eventLink);const ring=new THREE.Mesh(new THREE.TorusGeometry(.038,.004,12,48),new THREE.MeshBasicMaterial({color:0xff5ca8,depthTest:false}));ring.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),worldUp);ring.position.copy(mid);ring.renderOrder=92;scene.add(ring);const gapMm=Number(validationEvent.distance_m)*1000,eventLabel=roleLabel(`${validationEvent.label} · ${gapMm.toFixed(1)} mm`,'#ff5ca8');eventLabel.position.copy(mid).addScaledVector(worldUp,.075);eventLabel.scale.set(.23,.05,1);document.getElementById('event-audit').textContent=`同一物理 A 点：右爪放下 → 左爪取走 · 当前两次观测距离 ${gapMm.toFixed(1)} mm`;document.getElementById('event-audit').style.display=interactive?'block':'none'}
@@ -264,7 +288,26 @@
     // T_base_tcp is fixed by CAD, so place the mesh at
     // p_world_base = p_world_tcp - R_world_base * p_base_tcp.
     const tcpInBase=new THREE.Vector3(.1356,0,.0101);
-    function apply(root,data){const visible=data.visible!==false;root.visible=visible;root.userData.tcpMarker.visible=visible&&!cameraMode;root.userData.tipArrow.visible=visible;root.quaternion.fromArray(data.q);root.userData.tcpWorld.fromArray(data.p);if(cameraMode||tagReference||baseReference)root.position.copy(root.userData.tcpWorld);else root.position.copy(root.userData.tcpWorld).sub(tcpInBase.clone().applyQuaternion(root.quaternion));root.userData.tcpMarker.position.copy(root.userData.tcpWorld);root.userData.tipArrow.position.copy(root.userData.tcpWorld);root.userData.tipArrow.setDirection(new THREE.Vector3(1,0,0).applyQuaternion(root.quaternion).normalize());root.userData.j1.rotation.z=THREE.MathUtils.degToRad(data.joints[0]);root.userData.j2.rotation.z=THREE.MathUtils.degToRad(data.joints[1])}
+    function apply(root,data){
+      const visible=data.visible!==false;
+      const angleAvailable=data.angle_available!==false&&Array.isArray(data.joints)&&data.joints.every(Number.isFinite);
+      root.visible=visible;
+      root.userData.j1.visible=visible&&angleAvailable;
+      root.userData.j2.visible=visible&&angleAvailable;
+      root.userData.tcpMarker.visible=visible&&!cameraMode;
+      root.userData.tipArrow.visible=visible;
+      root.quaternion.fromArray(data.q);
+      root.userData.tcpWorld.fromArray(data.p);
+      if(cameraMode||tagReference||baseReference)root.position.copy(root.userData.tcpWorld);
+      else root.position.copy(root.userData.tcpWorld).sub(tcpInBase.clone().applyQuaternion(root.quaternion));
+      root.userData.tcpMarker.position.copy(root.userData.tcpWorld);
+      root.userData.tipArrow.position.copy(root.userData.tcpWorld);
+      root.userData.tipArrow.setDirection(new THREE.Vector3(1,0,0).applyQuaternion(root.quaternion).normalize());
+      if(angleAvailable){
+        root.userData.j1.rotation.z=THREE.MathUtils.degToRad(data.joints[0]);
+        root.userData.j2.rotation.z=THREE.MathUtils.degToRad(data.joints[1])
+      }
+    }
     const scrubber=document.getElementById('scrubber'),playButton=document.getElementById('play');let currentFrame=0,playing=true,lastTick=performance.now();scrubber.max=String(timeline.frames.length-1);
     const renderScene=()=>{if(overviewRenderer){camera.position.copy(operatorEyePosition);camera.lookAt(operatorLookTarget);const showTags=timeline.render_mode==='single_gripper_world_diagnostic';if(!showTags)tagObjects.forEach(item=>item.visible=false);renderer.render(scene,camera);if(!showTags)tagObjects.forEach(item=>item.visible=true);overviewRenderer.render(scene,overviewCamera)}else renderer.render(scene,camera)};
     window.renderFrame=index=>{
@@ -310,7 +353,7 @@
         const leftDisplayValue=leftForceModelValid?intensity:leftGapDisplay?leftGap:leftRawScore;
         const leftDisplayAvailable=leftForceModelValid?leftForceAvailable:leftGapDisplay?leftGapAvailable:leftRawAvailable;
         const leftDisplayPercent=leftGapDisplay?THREE.MathUtils.clamp(leftGap/2,0,100):leftDisplayValue;
-        document.getElementById('force-opening').textContent=Number(frame.left.opening).toFixed(1);
+        document.getElementById('force-opening').textContent=frame.left.angle_available===false||frame.left.opening===null?'N/A':Number(frame.left.opening).toFixed(1);
         document.getElementById('force-value').textContent=leftDisplayAvailable?leftDisplayValue.toFixed(1):'N/A';
         document.getElementById('force-fill').style.width=leftDisplayAvailable?`${leftDisplayPercent}%`:'0%';
         const clampEvent=contactEventTimes.find(value=>Math.abs(value-Number(frame.t))<=.25);
@@ -394,7 +437,11 @@
       document.getElementById('view-all').onclick=event=>choose(event.currentTarget,all,true);
       document.getElementById('view-tags').onclick=event=>choose(event.currentTarget,tagFramingPoints,true);
       if(timeline.default_view==='operator')chooseOperator(document.getElementById('view-operator'));
-      else choose(document.getElementById('view-all'),all,true);
+      else if(timeline.default_view==='camera_mount'){
+        activate(document.getElementById('view-grippers'));
+        tagObjects.forEach(item=>item.visible=false);
+        fitCameraMountView()
+      }else choose(document.getElementById('view-all'),all,true);
       playButton.onclick=()=>{
         playing=!playing;
         playButton.textContent=playing?'暂停':'播放';

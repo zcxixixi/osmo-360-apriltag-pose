@@ -32,6 +32,13 @@ GREEN = (99, 214, 135)
 AMBER = (72, 174, 240)
 RED = (86, 91, 238)
 YELLOW = (54, 214, 242)
+APRILTAG_DICTIONARY = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
+APRILTAG_PARAMETERS = cv2.aruco.DetectorParameters()
+APRILTAG_PARAMETERS.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+APRILTAG_PARAMETERS.adaptiveThreshWinSizeMax = 63
+APRILTAG_DETECTOR = cv2.aruco.ArucoDetector(
+    APRILTAG_DICTIONARY, APRILTAG_PARAMETERS
+)
 
 
 @dataclass
@@ -48,6 +55,7 @@ class FrameObservation:
     dot_left: DotObservation | None
     dot_right: DotObservation | None
     included_angle_deg: float
+    base_tag_ids: tuple[int, ...] = ()
 
 
 @dataclass
@@ -107,6 +115,9 @@ def parse_args() -> argparse.Namespace:
             "this is not a Newton calibration"
         ),
     )
+    parser.add_argument("--x5-angle-revision", type=Path)
+    parser.add_argument("--base-tag-id", type=int, choices=(2, 3))
+    parser.add_argument("--allow-diagnostic-rig", action="store_true")
     return parser.parse_args()
 
 
@@ -122,6 +133,51 @@ def contour_centroid(contour: np.ndarray) -> np.ndarray | None:
         [moments["m10"] / moments["m00"], moments["m01"] / moments["m00"]],
         dtype=float,
     )
+
+
+def detect_x5_yellow_axis(hsv: np.ndarray, side: str) -> np.ndarray | None:
+    height, width = hsv.shape[:2]
+    scale = width / 1920.0
+    mask = cv2.inRange(hsv, YELLOW_LOW, YELLOW_HIGH)
+    roi = np.zeros((height, width), dtype=np.uint8)
+    x0, x1 = ((550, 960) if side == "left" else (960, 1350))
+    roi[
+        round(1100 * scale):round(1720 * scale),
+        round(x0 * scale):round(x1 * scale),
+    ] = 255
+    mask = cv2.bitwise_and(mask, roi)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    candidates: list[tuple[float, np.ndarray]] = []
+    for contour in contours:
+        area = float(cv2.contourArea(contour))
+        centre = contour_centroid(contour)
+        if centre is None or not 5000 * scale * scale <= area <= 50000 * scale * scale:
+            continue
+        if centre[1] < 1200 * scale:
+            continue
+        if (side == "left" and centre[0] >= 960 * scale) or (
+            side == "right" and centre[0] < 960 * scale
+        ):
+            continue
+        points = contour.reshape(-1, 2).astype(np.float64)
+        mean, eigenvectors, _ = cv2.PCACompute2(points, mean=None)
+        axis = eigenvectors[0]
+        if axis[1] > 0:
+            axis = -axis
+        projections = (points - mean[0]) @ axis
+        base_offset, middle_offset, tip_offset = np.percentile(
+            projections, [5, 50, 95]
+        )
+        base = mean[0] + base_offset * axis
+        middle = mean[0] + middle_offset * axis
+        tip = mean[0] + tip_offset * axis
+        span = float(np.linalg.norm(tip - base))
+        if 250 * scale <= span <= 550 * scale:
+            candidates.append((area, np.asarray([tip, middle, base])))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item[0])[1]
 
 
 def detect_x5_yellow_triad(hsv: np.ndarray, side: str) -> np.ndarray | None:
@@ -165,10 +221,17 @@ def detect_x5_yellow_triad(hsv: np.ndarray, side: str) -> np.ndarray | None:
 
 
 def detect_yellow_triad(
-    hsv: np.ndarray, side: str, camera_profile: str = "osmo-front"
+    hsv: np.ndarray,
+    side: str,
+    camera_profile: str = "osmo-front",
+    x5_angle_mode: str = "pca-axis",
 ) -> np.ndarray | None:
     if camera_profile == "insta360-x5-front":
-        return detect_x5_yellow_triad(hsv, side)
+        return (
+            detect_x5_yellow_axis(hsv, side)
+            if x5_angle_mode == "pca-axis"
+            else detect_x5_yellow_triad(hsv, side)
+        )
     height, width = hsv.shape[:2]
     scale = width / 1920.0
     mask = cv2.inRange(hsv, YELLOW_LOW, YELLOW_HIGH)
@@ -305,15 +368,23 @@ def included_jaw_angle(left: np.ndarray, right: np.ndarray) -> float:
 
 
 def observe_frame(
-    image: np.ndarray, camera_profile: str = "osmo-front"
+    image: np.ndarray,
+    camera_profile: str = "osmo-front",
+    x5_angle_mode: str = "pca-axis",
 ) -> FrameObservation:
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    left = detect_yellow_triad(hsv, "left", camera_profile)
-    right = detect_yellow_triad(hsv, "right", camera_profile)
+    left = detect_yellow_triad(hsv, "left", camera_profile, x5_angle_mode)
+    right = detect_yellow_triad(hsv, "right", camera_profile, x5_angle_mode)
     angle = np.nan
     if left is not None and right is not None:
         candidate = included_jaw_angle(left, right)
-        low, high = ((35.0, 80.0) if camera_profile == "insta360-x5-front" else (40.0, 80.0))
+        low, high = (
+            (5.0, 50.0)
+            if camera_profile == "insta360-x5-front" and x5_angle_mode == "pca-axis"
+            else (35.0, 80.0)
+            if camera_profile == "insta360-x5-front"
+            else (40.0, 80.0)
+        )
         if low <= candidate <= high:
             angle = candidate
         else:
@@ -322,7 +393,8 @@ def observe_frame(
     dot_right = detect_black_dot(hsv, "right", camera_profile)
     if (
         camera_profile == "insta360-x5-front"
-        and dot_left is not None and dot_right is not None
+        and dot_left is not None
+        and dot_right is not None
     ):
         gap = float(np.linalg.norm(dot_left.point - dot_right.point))
         pair_valid = (
@@ -332,12 +404,17 @@ def observe_frame(
         )
         if not pair_valid:
             dot_left = dot_right = None
+    _, tag_ids, _ = APRILTAG_DETECTOR.detectMarkers(image)
+    observed_tag_ids = (
+        () if tag_ids is None else tuple(sorted(int(value) for value in tag_ids.flat))
+    )
     return FrameObservation(
         yellow_left=left,
         yellow_right=right,
         dot_left=dot_left,
         dot_right=dot_right,
         included_angle_deg=angle,
+        base_tag_ids=observed_tag_ids,
     )
 
 
@@ -367,7 +444,9 @@ def nanmedian_filter(values: np.ndarray, radius: int = 2) -> np.ndarray:
 
 
 def analyze_video(
-    path: Path, camera_profile: str = "osmo-front"
+    path: Path,
+    camera_profile: str = "osmo-front",
+    x5_angle_mode: str = "pca-axis",
 ) -> tuple[list[FrameObservation], float, tuple[int, int]]:
     capture = cv2.VideoCapture(str(path))
     if not capture.isOpened():
@@ -382,20 +461,26 @@ def analyze_video(
         ok, image = capture.read()
         if not ok:
             break
-        observations.append(observe_frame(image, camera_profile))
+        observations.append(observe_frame(image, camera_profile, x5_angle_mode))
     capture.release()
     if not observations:
         raise ValueError("front-lens video has no decodable frames")
     return observations, fps, (width, height)
 
 
-def opening_angles(observations: list[FrameObservation]) -> tuple[np.ndarray, float]:
+def opening_angles(
+    observations: list[FrameObservation],
+    closed_reference: float | None = None,
+) -> tuple[np.ndarray, float]:
     included = np.asarray([item.included_angle_deg for item in observations], dtype=float)
     valid = included[np.isfinite(included)]
     if len(valid) < 30:
-        raise ValueError(f"only {len(valid)} frames contain both yellow marker triads")
-    closed_reference = float(np.percentile(valid, 97.0))
-    return np.clip(closed_reference - included, 0.0, 55.0), closed_reference
+        raise ValueError(f"only {len(valid)} frames contain both measured jaw axes")
+    if closed_reference is None:
+        closed_reference = float(np.percentile(valid, 97.0))
+    return np.clip(float(closed_reference) - included, 0.0, 55.0), float(
+        closed_reference
+    )
 
 
 def labeled_contact_gap_audit(
@@ -1203,17 +1288,84 @@ def main() -> int:
     args = parse_args()
     front_video = args.front_video.resolve(strict=True)
     source_osv = args.source_osv.resolve(strict=True)
-    rig = load_rig_revision(args.rig_revision)
+    rig = load_rig_revision(
+        args.rig_revision,
+        allow_diagnostic_world=args.allow_diagnostic_rig,
+    )
     cad = rig["cad_revision"]
     if cad is None:
         raise ValueError("rig revision does not reference a current CAD revision")
     urdf_path = (Path(__file__).resolve().parent / cad["urdf"]["path"]).resolve()
     urdf_model = load_urdf_wireframe(urdf_path, max_triangles_per_mesh=180)
+    angle_revision = None
+    angle_revision_path = None
+    closed_reference_override = None
+    x5_angle_mode = "pca-axis"
+    if args.camera_profile == "insta360-x5-front":
+        if args.x5_angle_revision is None or args.base_tag_id is None:
+            raise ValueError(
+                "X5 processing requires --x5-angle-revision and --base-tag-id"
+            )
+        angle_revision_path = args.x5_angle_revision.resolve(strict=True)
+        angle_revision = json.loads(angle_revision_path.read_text(encoding="utf-8"))
+        detector = angle_revision.get("detector", {})
+        algorithm = detector.get("algorithm")
+        angle_modes = {
+            "yellow_jaw_contour_pca_axis": "pca-axis",
+            "three_yellow_pad_dot_centroids": "physical-marker-triad",
+        }
+        if algorithm not in angle_modes:
+            raise ValueError(f"unsupported X5 angle algorithm: {algorithm!r}")
+        x5_angle_mode = angle_modes[algorithm]
+        role = "physical_left" if args.base_tag_id == 2 else "physical_right"
+        hardware_angle = angle_revision.get("hardware", {}).get(role, {})
+        if hardware_angle.get("base_tag_id") != args.base_tag_id:
+            raise ValueError("X5 angle revision BaseTag binding mismatch")
+        if "evidence_audit" in hardware_angle:
+            evidence_path = Path(hardware_angle["evidence_audit"])
+            if sha256(evidence_path) != hardware_angle["evidence_audit_sha256"]:
+                raise ValueError("X5 angle revision evidence hash mismatch")
+        elif "zero_evidence" in hardware_angle:
+            evidence_path = Path(hardware_angle["zero_evidence"]["source_video"])
+            if sha256(evidence_path) != hardware_angle["zero_evidence"]["source_sha256"]:
+                raise ValueError("X5 angle zero-evidence hash mismatch")
+        else:
+            raise ValueError("X5 angle revision has no immutable zero evidence")
+        closed_reference_override = float(
+            hardware_angle["closed_reference_included_angle_deg"]
+        )
+        if abs(args.maximum_recovery_gap_s - 0.25) > 1e-9:
+            raise ValueError("accepted X5 angle revision requires a 0.25 s recovery gap")
+    elif args.x5_angle_revision is not None or args.base_tag_id is not None:
+        raise ValueError("X5 angle revision arguments require insta360-x5-front")
+
 
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=False)
-    observations, fps, size = analyze_video(front_video, args.camera_profile)
-    raw_opening, closed_reference = opening_angles(observations)
+    observations, fps, size = analyze_video(
+        front_video, args.camera_profile, x5_angle_mode
+    )
+    raw_opening, closed_reference = opening_angles(
+        observations, closed_reference_override
+    )
+    base_tag_counts = {
+        tag_id: sum(tag_id in item.base_tag_ids for item in observations)
+        for tag_id in (2, 3)
+    }
+    if args.camera_profile == "insta360-x5-front":
+        assert args.base_tag_id is not None
+        expected_count = base_tag_counts[args.base_tag_id]
+        if expected_count < max(10, round(0.10 * len(observations))):
+            raise ValueError(
+                f"expected BaseTag{args.base_tag_id} is visible in only "
+                f"{expected_count}/{len(observations)} frames"
+            )
+        other_tag_id = 3 if args.base_tag_id == 2 else 2
+        if base_tag_counts[other_tag_id] > base_tag_counts[args.base_tag_id]:
+            raise ValueError(
+                f"BaseTag binding mismatch: ID{other_tag_id} is more visible than "
+                f"ID{args.base_tag_id}"
+            )
     force_model, raw_force, gap_component, shape_component = fit_force_model(
         observations, raw_opening
     )
@@ -1314,6 +1466,8 @@ def main() -> int:
             "fps": fps,
             "camera_profile": args.camera_profile,
             "frame_count": len(observations),
+            "base_tag_id": args.base_tag_id,
+            "base_tag_frame_counts": base_tag_counts,
         },
         "rig_revision": {
             "path": str(rig["revision_path"]),
@@ -1325,9 +1479,32 @@ def main() -> int:
         },
         "angle": {
             "method": (
-                "three physical yellow marker centroids per jaw; included-line angle relative to capture closed reference"
-                if args.camera_profile == "insta360-x5-front"
+                {
+                    "yellow_jaw_contour_pca_axis": (
+                        "yellow jaw-contour PCA axes; included-line angle relative "
+                        "to frozen hardware closed reference"
+                    ),
+                    "three_yellow_pad_dot_centroids": (
+                        "three highlighted yellow pad-dot centroids per jaw; "
+                        "included-line angle relative to frozen hardware closed reference"
+                    ),
+                }[angle_revision["detector"]["algorithm"]]
+                if angle_revision is not None
                 else "three yellow centroids per jaw; included-line angle relative to capture closed reference"
+            ),
+            "revision": (
+                {
+                    "path": str(angle_revision_path),
+                    "id": angle_revision["revision_id"],
+                    "sha256": sha256(angle_revision_path),
+                }
+                if angle_revision is not None and angle_revision_path is not None
+                else None
+            ),
+            "closed_reference_source": (
+                "frozen hardware revision"
+                if closed_reference_override is not None
+                else "capture 97th percentile"
             ),
             "closed_reference_included_angle_deg": closed_reference,
             "measured_frame_ratio": float(yellow_measured.mean()),
