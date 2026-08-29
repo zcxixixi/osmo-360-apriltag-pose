@@ -38,7 +38,7 @@
   <div class="force-panel" id="force-panel">
     <div class="force-readouts">
       <div><div class="force-label">JAW OPENING</div><div class="force-number opening"><span id="force-opening">0.0</span> <span class="force-unit">deg</span></div></div>
-      <div><div class="force-label" id="left-force-title">RELATIVE FORCE</div><div class="force-number relative"><span id="force-value">0.0</span> <span class="force-unit">%</span></div></div>
+      <div><div class="force-label" id="left-force-title">RELATIVE FORCE</div><div class="force-number relative"><span id="force-value">0.0</span> <span class="force-unit" id="left-force-unit">%</span></div></div>
     </div>
     <div class="force-track"><div class="force-fill" id="force-fill"></div></div>
     <div class="force-meta"><span class="force-warning" id="left-force-warning">UNCALIBRATED: not Newtons</span><span class="force-state" id="force-state">LOW / FREE</span></div>
@@ -49,7 +49,7 @@
   <div class="force-panel" id="right-force-panel">
     <div class="force-readouts">
       <div><div class="force-label">RIGHT JAW OPENING</div><div class="force-number opening"><span id="right-force-opening">N/A</span> <span class="force-unit">deg</span></div></div>
-      <div><div class="force-label" id="right-force-title">RIGHT RELATIVE FORCE</div><div class="force-number relative"><span id="right-force-value">N/A</span> <span class="force-unit">%</span></div></div>
+      <div><div class="force-label" id="right-force-title">RIGHT RELATIVE FORCE</div><div class="force-number relative"><span id="right-force-value">N/A</span> <span class="force-unit" id="right-force-unit">%</span></div></div>
     </div>
     <div class="force-track"><div class="force-fill" id="right-force-fill"></div></div>
     <div class="force-meta"><span class="force-warning" id="right-force-warning">UNCALIBRATED: not Newtons</span><span class="force-state" id="right-force-state">UNAVAILABLE</span></div>
@@ -82,6 +82,10 @@
     const frameConvention=timeline.coordinate_status?.frame_convention||{};
     const leftForceModelValid=timeline.force_models?.left?.validated_for_display!==false;
     const rightForceModelValid=timeline.force_models?.right?.validated_for_display!==false;
+    const leftForceDisplayMetric=timeline.force_models?.left?.display_metric||'raw_deformation_score';
+    const rightForceDisplayMetric=timeline.force_models?.right?.display_metric||'raw_deformation_score';
+    const leftGapDisplay=!leftForceModelValid&&leftForceDisplayMetric==='black_dot_gap_px';
+    const rightGapDisplay=!rightForceModelValid&&rightForceDisplayMetric==='black_dot_gap_px';
     if(auditMode){document.getElementById('main-title').textContent='ZARR DATASET EXACT REPLAY';document.getElementById('subtitle').innerHTML=`TRAINING ARRAYS · SHA256 ${timeline.dataset_sha256.slice(0,16)}… · UUID <span id="uuid"></span>`;document.getElementById('notice').textContent='NO RECOMPUTE · NO EXTRA FILTERING · DISPLAY LANES ARE DECLARED STATIC TRANSFORMS';document.getElementById('metric3-label').textContent='DATA FRAME';document.getElementById('pose-filter').textContent='EXACT VALUES FROM dataset.zarr.zip';}
     if(commonWorld){document.getElementById('subtitle').innerHTML=`COMMON ${String(timeline.reference_frame||'FRAME').toUpperCase()} · SAME ARRAYS AS UMI · UUID <span id="uuid"></span>`;document.getElementById('notice').textContent=timeline.training_ready?'CALIBRATED COMMON FRAME · TRAINING READY':`PROVISIONAL COMMON FRAME · ${timeline.coordinate_status?.calibration_status||'CALIBRATION REQUIRED'} · NOT TRAINING READY`;}
     if(tagReference){document.getElementById('main-title').textContent='DUAL GRIPPER BASETAG REFERENCE';document.getElementById('notice').textContent='TRAJECTORY = EACH GRIPPER BASETAG CENTER · STL USES DISPLAY-ONLY TAG→BASE · NOT TCP · NOT TRAINING READY';document.getElementById('metric3-label').textContent='BASETAG SEPARATION';document.getElementById('pose-filter').textContent='data: camera→own BaseTag · mesh: display only';}
@@ -95,10 +99,12 @@
       document.getElementById('left-metric-label').textContent='INCLUDED JAW ANGLE';document.getElementById('right-metric-label').textContent='CAD OPENING';document.getElementById('metric3-label').textContent='CONTACT INTENSITY';
       document.getElementById('pose-filter').textContent=displayFilter==='raw'?'raw visual pose · bounded recovery ≤0.25 s':`${displayFilter.toUpperCase()} DISPLAY ONLY · raw source_p/source_q preserved`;
       document.querySelector('.pip-right').style.display='none';document.querySelector('.slot-right').style.display='none';document.querySelector('.pip-left').textContent=`${cameraLabel} LENS 0 + LENS 1 · ${Number(timeline.fps).toFixed(2)} FPS`;
-      document.getElementById('left-force-title').textContent=leftForceModelValid?'RELATIVE FORCE':'RAW DEFORMATION';
-      document.getElementById('left-force-warning').textContent=leftForceModelValid?'UNCALIBRATED: not Newtons':'UNVALIDATED: not force';
-      document.getElementById('right-force-title').textContent=rightForceModelValid?'RIGHT RELATIVE FORCE':'RIGHT RAW DEFORMATION';
-      document.getElementById('right-force-warning').textContent=rightForceModelValid?'UNCALIBRATED: not Newtons':'UNVALIDATED: not force';
+      document.getElementById('left-force-title').textContent=leftForceModelValid?'RELATIVE FORCE':leftGapDisplay?'BLACK-DOT GAP':'RAW DEFORMATION';
+      document.getElementById('left-force-unit').textContent=leftGapDisplay?'px':'%';
+      document.getElementById('left-force-warning').textContent=leftForceModelValid?'UNCALIBRATED: not Newtons':leftGapDisplay?'RAW MEASUREMENT: not force':'UNVALIDATED: not force';
+      document.getElementById('right-force-title').textContent=rightForceModelValid?'RIGHT RELATIVE FORCE':rightGapDisplay?'RIGHT BLACK-DOT GAP':'RIGHT RAW DEFORMATION';
+      document.getElementById('right-force-unit').textContent=rightGapDisplay?'px':'%';
+      document.getElementById('right-force-warning').textContent=rightForceModelValid?'UNCALIBRATED: not Newtons':rightGapDisplay?'RAW MEASUREMENT: not force':'UNVALIDATED: not force';
     }
     if(singleMode){document.querySelector('.hud').style.display='none';document.getElementById('force-panel').style.display='block';document.getElementById('right-force-panel').style.display=timeline.right_gripper_tracking?.contact_intensity_available?'block':'none'}
     if(cameraMode){
@@ -278,12 +284,16 @@
         const leftRawValue=frame.left.source_contact_intensity_percent;
         const leftRawScore=Number(leftRawValue);
         const leftRawAvailable=leftRawValue!==null&&Number.isFinite(leftRawScore);
-        const leftDisplayValue=leftForceModelValid?intensity:leftRawScore;
-        const leftDisplayAvailable=leftForceModelValid?leftForceAvailable:leftRawAvailable;
+        const leftGapValue=frame.left.black_dot_gap_px;
+        const leftGap=Number(leftGapValue);
+        const leftGapAvailable=leftGapValue!==null&&Number.isFinite(leftGap);
+        const leftDisplayValue=leftForceModelValid?intensity:leftGapDisplay?leftGap:leftRawScore;
+        const leftDisplayAvailable=leftForceModelValid?leftForceAvailable:leftGapDisplay?leftGapAvailable:leftRawAvailable;
+        const leftDisplayPercent=leftGapDisplay?THREE.MathUtils.clamp(leftGap/2,0,100):leftDisplayValue;
         document.getElementById('force-opening').textContent=Number(frame.left.opening).toFixed(1);
         document.getElementById('force-value').textContent=leftDisplayAvailable?leftDisplayValue.toFixed(1):'N/A';
-        document.getElementById('force-fill').style.width=leftDisplayAvailable?`${leftDisplayValue}%`:'0%';
-        document.getElementById('force-state').textContent=leftForceModelValid?(leftForceAvailable?String(frame.left.contact_state).toUpperCase():'UNAVAILABLE'):(leftRawAvailable?'RAW SCORE ONLY':'RAW SCORE UNAVAILABLE');
+        document.getElementById('force-fill').style.width=leftDisplayAvailable?`${leftDisplayPercent}%`:'0%';
+        document.getElementById('force-state').textContent=leftForceModelValid?(leftForceAvailable?String(frame.left.contact_state).toUpperCase():'UNAVAILABLE'):leftGapDisplay?(leftGapAvailable?'BLACK DOTS MEASURED':'BLACK DOTS UNAVAILABLE'):(leftRawAvailable?'RAW SCORE ONLY':'RAW SCORE UNAVAILABLE');
         document.getElementById('left-raw-score').textContent=leftRawAvailable?leftRawScore.toFixed(1):'N/A';
         for(const arrow of forceArrows)arrow.visible=frame.left.visible!==false&&leftForceModelValid&&leftForceAvailable;
         const rightIntensity=THREE.MathUtils.clamp(Number(frame.right.contact_intensity_percent),0,100);
@@ -292,12 +302,16 @@
         const rightRawValue=frame.right.source_contact_intensity_percent;
         const rightRawScore=Number(rightRawValue);
         const rightRawAvailable=frame.right.visible!==false&&rightRawValue!==null&&Number.isFinite(rightRawScore);
-        const rightDisplayValue=rightForceModelValid?rightIntensity:rightRawScore;
-        const rightDisplayAvailable=rightForceModelValid?rightForceAvailable:rightRawAvailable;
+        const rightGapValue=frame.right.black_dot_gap_px;
+        const rightGap=Number(rightGapValue);
+        const rightGapAvailable=frame.right.visible!==false&&rightGapValue!==null&&Number.isFinite(rightGap);
+        const rightDisplayValue=rightForceModelValid?rightIntensity:rightGapDisplay?rightGap:rightRawScore;
+        const rightDisplayAvailable=rightForceModelValid?rightForceAvailable:rightGapDisplay?rightGapAvailable:rightRawAvailable;
+        const rightDisplayPercent=rightGapDisplay?THREE.MathUtils.clamp(rightGap/2,0,100):rightDisplayValue;
         document.getElementById('right-force-opening').textContent=frame.right.visible!==false?Number(frame.right.opening).toFixed(1):'N/A';
         document.getElementById('right-force-value').textContent=rightDisplayAvailable?rightDisplayValue.toFixed(1):'N/A';
-        document.getElementById('right-force-fill').style.width=rightDisplayAvailable?`${rightDisplayValue}%`:'0%';
-        document.getElementById('right-force-state').textContent=rightForceModelValid?(rightForceAvailable?String(frame.right.contact_state).toUpperCase():'UNAVAILABLE'):(rightRawAvailable?'RAW SCORE ONLY':'RAW SCORE UNAVAILABLE');
+        document.getElementById('right-force-fill').style.width=rightDisplayAvailable?`${rightDisplayPercent}%`:'0%';
+        document.getElementById('right-force-state').textContent=rightForceModelValid?(rightForceAvailable?String(frame.right.contact_state).toUpperCase():'UNAVAILABLE'):rightGapDisplay?(rightGapAvailable?'BLACK DOTS MEASURED':'BLACK DOTS UNAVAILABLE'):(rightRawAvailable?'RAW SCORE ONLY':'RAW SCORE UNAVAILABLE');
         document.getElementById('right-raw-score').textContent=rightRawAvailable?rightRawScore.toFixed(1):'N/A';
         const direction=document.getElementById('force-direction');
         direction.style.setProperty('--force-arrow-scale',String(.45+.0055*intensity));

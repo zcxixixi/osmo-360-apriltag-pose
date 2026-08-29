@@ -99,50 +99,51 @@ def contour_centroid(contour: np.ndarray) -> np.ndarray | None:
     )
 
 
-def detect_x5_yellow_axis(hsv: np.ndarray, side: str) -> np.ndarray | None:
+def detect_x5_yellow_triad(hsv: np.ndarray, side: str) -> np.ndarray | None:
     height, width = hsv.shape[:2]
     scale = width / 1920.0
     mask = cv2.inRange(hsv, YELLOW_LOW, YELLOW_HIGH)
     roi = np.zeros((height, width), dtype=np.uint8)
-    roi[round(1100 * scale):round(1720 * scale), round(550 * scale):round(1350 * scale)] = 255
+    x0, x1 = ((600, 900) if side == "left" else (1050, 1320))
+    roi[
+        round(1250 * scale):round(1660 * scale),
+        round(x0 * scale):round(x1 * scale),
+    ] = 255
     mask = cv2.bitwise_and(mask, roi)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    candidates = []
+    candidates: list[tuple[float, np.ndarray]] = []
     for contour in contours:
         area = float(cv2.contourArea(contour))
+        if not 50 * scale * scale <= area <= 1200 * scale * scale:
+            continue
+        _, _, box_width, box_height = cv2.boundingRect(contour)
+        if not 0.35 <= box_width / max(box_height, 1) <= 2.8:
+            continue
         centre = contour_centroid(contour)
-        if centre is None or not 5000 * scale * scale <= area <= 50000 * scale * scale:
-            continue
-        if centre[1] < 1200 * scale:
-            continue
-        if (side == "left" and centre[0] >= 960 * scale) or (
-            side == "right" and centre[0] < 960 * scale
-        ):
-            continue
-        points = contour.reshape(-1, 2).astype(np.float64)
-        mean, eigenvectors, _ = cv2.PCACompute2(points, mean=None)
-        axis = eigenvectors[0]
-        if axis[1] > 0:
-            axis = -axis
-        projections = (points - mean[0]) @ axis
-        base_offset, middle_offset, tip_offset = np.percentile(projections, [5, 50, 95])
-        base = mean[0] + base_offset * axis
-        middle = mean[0] + middle_offset * axis
-        tip = mean[0] + tip_offset * axis
-        span = float(np.linalg.norm(tip - base))
-        if 250 * scale <= span <= 550 * scale:
-            candidates.append((area, np.asarray([tip, middle, base])))
-    if not candidates:
+        if centre is not None:
+            candidates.append((area, centre))
+    points = []
+    for y0, y1 in ((1250, 1415), (1415, 1505), (1505, 1660)):
+        band = [
+            item for item in candidates
+            if y0 * scale <= item[1][1] < y1 * scale
+        ]
+        if not band:
+            return None
+        points.append(max(band, key=lambda item: item[0])[1])
+    result = np.asarray(points)
+    span = float(np.linalg.norm(result[0] - result[2]))
+    if not 150 * scale <= span <= 320 * scale:
         return None
-    return max(candidates, key=lambda item: item[0])[1]
+    return result
 
 
 def detect_yellow_triad(
     hsv: np.ndarray, side: str, camera_profile: str = "osmo-front"
 ) -> np.ndarray | None:
     if camera_profile == "insta360-x5-front":
-        return detect_x5_yellow_axis(hsv, side)
+        return detect_x5_yellow_triad(hsv, side)
     height, width = hsv.shape[:2]
     scale = width / 1920.0
     mask = cv2.inRange(hsv, YELLOW_LOW, YELLOW_HIGH)
@@ -285,7 +286,7 @@ def observe_frame(
     angle = np.nan
     if left is not None and right is not None:
         candidate = included_jaw_angle(left, right)
-        low, high = ((5.0, 50.0) if camera_profile == "insta360-x5-front" else (40.0, 80.0))
+        low, high = ((35.0, 80.0) if camera_profile == "insta360-x5-front" else (40.0, 80.0))
         if low <= candidate <= high:
             angle = candidate
         else:
@@ -871,7 +872,7 @@ def main() -> int:
         },
         "angle": {
             "method": (
-                "yellow jaw-contour PCA axes; included-line angle relative to capture closed reference"
+                "three physical yellow marker centroids per jaw; included-line angle relative to capture closed reference"
                 if args.camera_profile == "insta360-x5-front"
                 else "three yellow centroids per jaw; included-line angle relative to capture closed reference"
             ),

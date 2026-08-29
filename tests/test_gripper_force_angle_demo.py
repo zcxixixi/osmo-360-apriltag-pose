@@ -52,24 +52,20 @@ def test_contact_intensity_removes_unloaded_opening_angle_coupling():
 
 
 def test_x5_profile_detects_jaw_axes_and_pad_dots():
-    image = np.zeros((1920, 1920, 3), dtype=np.uint8)
+    image = np.full((1920, 1920, 3), 255, dtype=np.uint8)
     yellow = (0, 255, 255)
-    cv2.fillConvexPoly(
-        image,
-        np.array([[840, 1620], [910, 1200], [950, 1210], [890, 1640]], np.int32),
-        yellow,
-    )
-    cv2.fillConvexPoly(
-        image,
-        np.array([[1080, 1620], [1010, 1200], [970, 1210], [1030, 1640]], np.int32),
-        yellow,
-    )
+    for point in [(800, 1360), (770, 1450), (720, 1560)]:
+        cv2.circle(image, point, 12, yellow, -1)
+    for point in [(1120, 1360), (1150, 1450), (1200, 1560)]:
+        cv2.circle(image, point, 12, yellow, -1)
+    cv2.circle(image, (925, 1280), 32, yellow, -1)
+    cv2.circle(image, (995, 1280), 32, yellow, -1)
     cv2.ellipse(image, (925, 1280), (8, 6), 0, 0, 360, (20, 20, 20), -1)
     cv2.ellipse(image, (995, 1280), (8, 6), 0, 0, 360, (20, 20, 20), -1)
 
     observation = observe_frame(image, "insta360-x5-front")
 
     assert np.isfinite(observation.included_angle_deg)
-    assert 5.0 <= observation.included_angle_deg <= 50.0
+    assert 35.0 <= observation.included_angle_deg <= 80.0
     assert observation.dot_left is not None
     assert observation.dot_right is not None
