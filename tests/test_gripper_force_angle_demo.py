@@ -5,9 +5,11 @@ import pytest
 from render_gripper_force_angle_demo import (
     JawFrame,
     DotObservation,
+    ForceModel,
     FrameObservation,
     bounded_interpolate,
     local_to_point,
+    draw_detection_overlay,
     contact_event_audit,
     labeled_contact_gap_audit,
     normalize_contact_intensity,
@@ -115,4 +117,25 @@ def test_x5_profile_detects_jaw_axes_and_pad_dots():
     assert np.isfinite(observation.included_angle_deg)
     assert 35.0 <= observation.included_angle_deg <= 80.0
     assert observation.dot_left is not None
+
+    model = ForceModel(
+        left_local=np.zeros(2),
+        right_local=np.zeros(2),
+        left_shape=np.ones(2),
+        right_shape=np.ones(2),
+        baseline=0.0,
+        noise_mad=0.0,
+        noise_floor=0.0,
+        full_scale=1.0,
+    )
+    draw_detection_overlay(image, observation, model, opening_angle_deg=12.3)
+
+    angle_arc_region = image[1380:1570, 820:1100]
+    amber_like = (
+        (angle_arc_region[..., 0] < 120)
+        & (angle_arc_region[..., 1] > 120)
+        & (angle_arc_region[..., 2] > 180)
+    )
+    assert np.count_nonzero(amber_like) > 20
+    assert image[80:230, 620:1380].mean() < 200.0
     assert observation.dot_right is not None

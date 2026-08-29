@@ -723,7 +723,10 @@ def draw_text(
 
 
 def draw_detection_overlay(
-    image: np.ndarray, observation: FrameObservation, model: ForceModel
+    image: np.ndarray,
+    observation: FrameObservation,
+    model: ForceModel,
+    opening_angle_deg: float = np.nan,
 ) -> None:
     for points, color in (
         (observation.yellow_left, CYAN),
@@ -758,6 +761,89 @@ def draw_detection_overlay(
                 2,
                 cv2.LINE_AA,
             )
+
+        left_axis = observation.yellow_left[0] - observation.yellow_left[2]
+        right_axis = observation.yellow_right[0] - observation.yellow_right[2]
+        left_axis /= np.linalg.norm(left_axis)
+        right_axis /= np.linalg.norm(right_axis)
+        vertex = (
+            observation.yellow_left[2] + observation.yellow_right[2]
+        ) / 2.0
+        ray_length = 0.95 * min(
+            np.linalg.norm(observation.yellow_left[0] - observation.yellow_left[2]),
+            np.linalg.norm(observation.yellow_right[0] - observation.yellow_right[2]),
+        )
+        left_ray = vertex + ray_length * left_axis
+        right_ray = vertex + ray_length * right_axis
+        cv2.line(
+            image,
+            tuple(np.round(vertex).astype(int)),
+            tuple(np.round(left_ray).astype(int)),
+            CYAN,
+            6,
+            cv2.LINE_AA,
+        )
+        cv2.line(
+            image,
+            tuple(np.round(vertex).astype(int)),
+            tuple(np.round(right_ray).astype(int)),
+            GREEN,
+            6,
+            cv2.LINE_AA,
+        )
+        left_heading = float(np.arctan2(left_axis[1], left_axis[0]))
+        right_heading = float(np.arctan2(right_axis[1], right_axis[0]))
+        sweep = (right_heading - left_heading + np.pi) % (2.0 * np.pi) - np.pi
+        headings = left_heading + np.linspace(0.0, sweep, 40)
+        radius = 0.30 * ray_length
+        arc = vertex + radius * np.column_stack(
+            [np.cos(headings), np.sin(headings)]
+        )
+        cv2.polylines(
+            image,
+            [np.round(arc).astype(int)],
+            False,
+            AMBER,
+            5,
+            cv2.LINE_AA,
+        )
+
+    scale = image.shape[1] / 1920.0
+    overlay = image.copy()
+    cv2.rectangle(
+        overlay,
+        (round(600 * scale), round(65 * scale)),
+        (round(1390 * scale), round(245 * scale)),
+        (8, 12, 18),
+        -1,
+    )
+    cv2.addWeighted(overlay, 0.78, image, 0.22, 0.0, image)
+    opening_text = (
+        f"{float(opening_angle_deg):.1f} deg"
+        if np.isfinite(opening_angle_deg)
+        else "N/A"
+    )
+    included_text = (
+        f"{observation.included_angle_deg:.1f} deg"
+        if np.isfinite(observation.included_angle_deg)
+        else "N/A"
+    )
+    draw_text(
+        image,
+        f"JAW OPENING  {opening_text}",
+        (round(640 * scale), round(135 * scale)),
+        1.25 * scale,
+        CYAN,
+        max(2, round(3 * scale)),
+    )
+    draw_text(
+        image,
+        f"INCLUDED AXIS ANGLE  {included_text}",
+        (round(640 * scale), round(205 * scale)),
+        0.78 * scale,
+        WHITE,
+        max(1, round(2 * scale)),
+    )
 
 
 def project_cad(edges: np.ndarray, origin: tuple[int, int], size: tuple[int, int]) -> np.ndarray:
@@ -840,6 +926,46 @@ def transcode_h264(intermediate: Path, output: Path) -> None:
     )
 
 
+def render_measurement_overlay(
+    video: Path,
+    output: Path,
+    observations: list[FrameObservation],
+    fps: float,
+    opening: np.ndarray,
+    model: ForceModel,
+) -> None:
+    capture = cv2.VideoCapture(str(video))
+    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    intermediate = output.with_name(output.stem + "_mp4v.mp4")
+    writer = cv2.VideoWriter(
+        str(intermediate),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        fps,
+        (width, height),
+    )
+    if not writer.isOpened():
+        raise ValueError(f"cannot create measurement overlay video: {output}")
+    for index, observation in enumerate(observations):
+        ok, frame = capture.read()
+        if not ok:
+            break
+        draw_detection_overlay(frame, observation, model, opening[index])
+        draw_text(
+            frame,
+            f"t={index / fps:05.2f}s   frame={index}",
+            (scaled(640, frame), scaled(285, frame)),
+            0.62 * frame.shape[1] / 1920.0,
+            MUTED,
+            max(1, round(2 * frame.shape[1] / 1920.0)),
+        )
+        writer.write(frame)
+    capture.release()
+    writer.release()
+    transcode_h264(intermediate, output)
+    intermediate.unlink()
+
+
 def render_demo(
     video: Path,
     output: Path,
@@ -868,7 +994,7 @@ def render_demo(
         ok, frame = capture.read()
         if not ok:
             break
-        draw_detection_overlay(frame, observation, model)
+        draw_detection_overlay(frame, observation, model, opening[index])
         crop = frame[scaled(850, frame):scaled(1620, frame), scaled(450, frame):scaled(1470, frame)]
         crop = cv2.resize(crop, (940, 710), interpolation=cv2.INTER_AREA)
         canvas = np.full((900, 1600, 3), BG, dtype=np.uint8)
@@ -1055,6 +1181,7 @@ def main() -> int:
 
     csv_path = output_dir / "force_angle_observations.csv"
     video_path = output_dir / "gripper_force_angle_demo.mp4"
+    overlay_video_path = output_dir / "jaw_angle_marker_overlay.mp4"
     write_csv(
         csv_path,
         observations,
@@ -1069,6 +1196,14 @@ def main() -> int:
         black_dot_gap_px,
         gap_residual_px,
         baseline_supported,
+    )
+    render_measurement_overlay(
+        front_video,
+        overlay_video_path,
+        observations,
+        fps,
+        opening,
+        force_model,
     )
     render_demo(
         front_video,
@@ -1155,6 +1290,8 @@ def main() -> int:
         "outputs": {
             "video": str(video_path),
             "video_sha256": sha256(video_path),
+            "jaw_angle_marker_overlay_video": str(overlay_video_path),
+            "jaw_angle_marker_overlay_video_sha256": sha256(overlay_video_path),
             "csv": str(csv_path),
             "csv_sha256": sha256(csv_path),
         },
