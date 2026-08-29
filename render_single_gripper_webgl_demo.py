@@ -307,9 +307,10 @@ def main() -> int:
             else "DIRECT-BRACKETED DISPLAY"
         )
         angle_state = signal_states[index]
+        one_sided_angle = "ONE_SIDED" in angle_state
         angle_available = bool(
             np.isfinite(opening[index])
-            and np.isfinite(included[index])
+            and (np.isfinite(included[index]) or one_sided_angle)
             and angle_state != "UNAVAILABLE"
         )
         force_available = bool(
@@ -355,7 +356,7 @@ def main() -> int:
             "source_q": source_quaternion.tolist(),
             "opening": float(opening[index]) if angle_available else None,
             "included_angle_deg": (
-                float(included[index]) if angle_available else None
+                float(included[index]) if np.isfinite(included[index]) else None
             ),
             "angle_available": angle_available,
             "contact_measurement_state": left_contact_measurement_state,

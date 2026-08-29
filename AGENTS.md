@@ -84,13 +84,17 @@ Latest X5 diagnostic:
 `/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/`,
 physical right identified by directly detecting BaseTag ID3 in 828/852 frames
 (ID2 in 0/852). Use angle revision
-`config/rig_revisions/x5_jaw_angle_yellow_dots_20260829_r1.json`, force output
-`force-angle-v8-yellow-dots-basetag3-bound-rig/`, and timeline
-`webgl-v5-yellow-dots-basetag3-bound-rig/`. The angle is defined by the
-three highlighted yellow circular dots on each black jaw pad; do not substitute
-yellow-body PCA or capture-percentile zeroing. Gaps over 0.25 s remain N/A and
-hide the CAD jaw links. The visible Grid subset did not yield a valid world
-pose, so this product is camera-local BaseTag3 diagnostic, not `tag_map`.
+`config/rig_revisions/x5_jaw_angle_yellow_dots_20260829_r2.json`, rig
+`config/rig_revisions/x5_right_basetag3_gridAB_20260829_r2.json`, force output
+`force-angle-v12-one-sided-immutable-rig/`, and timeline
+`webgl-v8-one-sided-immutable-rig/`. The angle is defined by the three
+highlighted yellow circular dots on each black jaw pad; do not substitute
+yellow-body PCA or capture-percentile zeroing. Bilateral measurement is
+preferred. A right-pad-only quadratic fallback is explicitly low-confidence
+(blocked holdout MAE 0.82 deg, P95 2.03 deg) and never produces force. Gaps over
+0.25 s remain N/A and hide the CAD jaw links. The visible Grid subset did not
+yield a valid world pose, so this product is camera-local BaseTag3 diagnostic,
+not `tag_map`.
 
 `contact_intensity` is capture-local pad deformation, not force in Newtons and
 not cross-episode comparable. Preserve direct, recovered (maximum 0.25 s), and

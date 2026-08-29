@@ -483,6 +483,80 @@ def opening_angles(
     )
 
 
+def axis_heading_deg(points: np.ndarray) -> float:
+    axis = points[0] - points[2]
+    return float(np.degrees(np.arctan2(axis[1], axis[0])))
+
+
+def apply_one_sided_opening_fallback(
+    observations: list[FrameObservation],
+    opening: np.ndarray,
+    hardware_angle: dict,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    result = np.asarray(opening, dtype=float).copy()
+    states = np.full(len(observations), "UNAVAILABLE", dtype=object)
+    states[np.isfinite(result)] = "MEASURED"
+    fallback = hardware_angle.get("single_side_fallback")
+    audit = {
+        "enabled": fallback is not None,
+        "bilateral_frames": int(np.count_nonzero(np.isfinite(result))),
+        "one_sided_left_frames": 0,
+        "one_sided_right_frames": 0,
+        "continuity_rejected_frames": 0,
+        "extrapolation_rejected_frames": 0,
+    }
+    if fallback is None:
+        return result, states, audit
+
+    side = fallback["available_side"]
+    center = float(fallback["heading_center_deg"])
+    coefficients = np.asarray(fallback["coefficients_high_to_low"], dtype=float)
+    low, high = map(float, fallback["validated_output_range_deg"])
+    state = str(fallback["measurement_state"])
+    maximum_step = float(fallback.get("maximum_step_deg", np.inf))
+    maximum_age = int(fallback.get("continuity_max_age_frames", 0))
+    previous_index: int | None = None
+    previous_value: float | None = None
+    for index, observation in enumerate(observations):
+        if np.isfinite(result[index]):
+            previous_index = index
+            previous_value = float(result[index])
+            continue
+        points = (
+            observation.yellow_right
+            if side == "right" and observation.yellow_left is None
+            else observation.yellow_left
+            if side == "left" and observation.yellow_right is None
+            else None
+        )
+        if points is None:
+            continue
+        heading = axis_heading_deg(points)
+        relative = float(
+            np.degrees(np.angle(np.exp(1j * np.radians(heading - center))))
+        )
+        candidate = float(np.polyval(coefficients, relative))
+        if not low <= candidate <= high:
+            audit["extrapolation_rejected_frames"] += 1
+            continue
+        if (
+            previous_index is not None
+            and previous_value is not None
+            and index - previous_index <= maximum_age
+            and abs(candidate - previous_value) > maximum_step
+        ):
+            audit["continuity_rejected_frames"] += 1
+            continue
+        result[index] = candidate
+        states[index] = state
+        previous_index = index
+        previous_value = candidate
+        audit[f"one_sided_{side}_frames"] += 1
+    audit["holdout"] = fallback.get("blocked_holdout")
+    audit["model"] = fallback.get("model")
+    return result, states, audit
+
+
 def labeled_contact_gap_audit(
     observations: list[FrameObservation],
     opening: np.ndarray,
@@ -782,8 +856,13 @@ def fit_force_model(
 
 
 def measurement_state(
-    observation: FrameObservation, angle_recovered: bool, force_recovered: bool
+    observation: FrameObservation,
+    angle_recovered: bool,
+    force_recovered: bool,
+    angle_source: str | None = None,
 ) -> str:
+    if angle_source is not None:
+        return angle_source
     if (
         np.isfinite(observation.included_angle_deg)
         and observation.dot_left is not None
@@ -1122,6 +1201,7 @@ def render_demo(
     rig_id: str,
     force_validated: bool = True,
     contact_labels: np.ndarray | None = None,
+    angle_sources: np.ndarray | None = None,
 ) -> None:
     capture = cv2.VideoCapture(str(video))
     intermediate = output.with_name(output.stem + "_mp4v.mp4")
@@ -1156,9 +1236,16 @@ def render_demo(
         if np.isfinite(force[index]):
             last_force = float(force[index])
         state = measurement_state(
-            observation, bool(opening_recovered[index]), bool(force_recovered[index])
+            observation,
+            bool(opening_recovered[index]),
+            bool(force_recovered[index]),
+            None if angle_sources is None else str(angle_sources[index]),
         )
-        state_color = GREEN if state == "MEASURED" else AMBER if state.startswith("RECOVERED") else RED
+        state_color = (
+            GREEN if state == "MEASURED"
+            else AMBER if state.startswith("RECOVERED") or "ONE_SIDED" in state
+            else RED
+        )
 
         cv2.rectangle(canvas, (995, 25), (1575, 875), PANEL, -1)
         draw_text(canvas, "CURRENT HARDWARE", (1020, 65), 0.72, WHITE, 2)
@@ -1231,6 +1318,7 @@ def write_csv(
     black_dot_gap_px: np.ndarray,
     gap_residual_px: np.ndarray,
     baseline_supported: np.ndarray,
+    angle_sources: np.ndarray | None = None,
 ) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
@@ -1247,6 +1335,8 @@ def write_csv(
                 "opening_conditioned_gap_residual_px",
                 "unloaded_opening_support",
                 "yellow_measured",
+                "left_yellow_axis_measured",
+                "right_yellow_axis_measured",
                 "black_measured",
                 "gap_strain_component",
                 "shape_change_component",
@@ -1258,7 +1348,10 @@ def write_csv(
         )
         for index, item in enumerate(observations):
             state = measurement_state(
-                item, bool(opening_recovered[index]), bool(force_recovered[index])
+                item,
+                bool(opening_recovered[index]),
+                bool(force_recovered[index]),
+                None if angle_sources is None else str(angle_sources[index]),
             )
             left = item.dot_left.point if item.dot_left is not None else [np.nan, np.nan]
             right = item.dot_right.point if item.dot_right is not None else [np.nan, np.nan]
@@ -1275,6 +1368,8 @@ def write_csv(
                     gap_residual_px[index],
                     int(baseline_supported[index]),
                     int(item.yellow_left is not None and item.yellow_right is not None),
+                    int(item.yellow_left is not None),
+                    int(item.yellow_right is not None),
                     int(item.dot_left is not None and item.dot_right is not None),
                     gap_component[index],
                     shape_component[index],
@@ -1300,6 +1395,7 @@ def main() -> int:
     angle_revision = None
     angle_revision_path = None
     closed_reference_override = None
+    hardware_angle: dict = {}
     x5_angle_mode = "pca-axis"
     if args.camera_profile == "insta360-x5-front":
         if args.x5_angle_revision is None or args.base_tag_id is None:
@@ -1348,6 +1444,11 @@ def main() -> int:
     raw_opening, closed_reference = opening_angles(
         observations, closed_reference_override
     )
+    raw_opening, angle_sources, one_sided_audit = (
+        apply_one_sided_opening_fallback(
+            observations, raw_opening, hardware_angle
+        )
+    )
     base_tag_counts = {
         tag_id: sum(tag_id in item.base_tag_ids for item in observations)
         for tag_id in (2, 3)
@@ -1371,6 +1472,7 @@ def main() -> int:
     )
     maximum_gap = round(args.maximum_recovery_gap_s * fps)
     opening, opening_recovered = bounded_interpolate(raw_opening, maximum_gap)
+    angle_sources[opening_recovered] = "RECOVERED <= 0.25 s"
     force, force_recovered = bounded_interpolate(raw_force, maximum_gap)
     opening = np.where(np.isfinite(opening), nanmedian_filter(opening), np.nan)
     force = np.where(np.isfinite(force), nanmedian_filter(force), np.nan)
@@ -1414,6 +1516,7 @@ def main() -> int:
         black_dot_gap_px,
         gap_residual_px,
         baseline_supported,
+        angle_sources,
     )
     render_measurement_overlay(
         front_video,
@@ -1439,6 +1542,7 @@ def main() -> int:
         rig["revision"]["revision_id"],
         not x5_force_rejected,
         contact_labels,
+        angle_sources,
     )
 
     yellow_measured = np.asarray(
@@ -1447,6 +1551,10 @@ def main() -> int:
     black_measured = np.asarray(
         [item.dot_left is not None and item.dot_right is not None for item in observations]
     )
+    angle_source_counts = {
+        str(state): int(np.count_nonzero(angle_sources == state))
+        for state in np.unique(angle_sources)
+    }
     audit = {
         "schema_version": "gripper-force-angle-demo/1.0",
         "status": (
@@ -1510,6 +1618,9 @@ def main() -> int:
             "measured_frame_ratio": float(yellow_measured.mean()),
             "opening_range_deg": [float(np.nanmin(opening)), float(np.nanmax(opening))],
             "maximum_recovery_gap_s": args.maximum_recovery_gap_s,
+            "available_frame_ratio": float(np.isfinite(opening).mean()),
+            "measurement_source_counts": angle_source_counts,
+            "one_sided_fallback": one_sided_audit,
         },
         "force": {
             "unit": "relative_percent",

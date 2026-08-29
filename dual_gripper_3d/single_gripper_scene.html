@@ -342,6 +342,8 @@
           arrow.line.material.opacity=arrowOpacity;
           arrow.cone.material.opacity=arrowOpacity
         }
+        const leftAngleState=String(frame.left.angle_state||'UNAVAILABLE');
+        const leftOneSided=leftAngleState.includes('ONE_SIDED');
         const leftForceState=String(frame.left.contact_measurement_state||frame.left.angle_state);
         const leftForceAvailable=leftForceState==='MEASURED'||leftForceState.startsWith('RECOVERED');
         const leftRawValue=frame.left.source_contact_intensity_percent;
@@ -357,7 +359,7 @@
         document.getElementById('force-value').textContent=leftDisplayAvailable?leftDisplayValue.toFixed(1):'N/A';
         document.getElementById('force-fill').style.width=leftDisplayAvailable?`${leftDisplayPercent}%`:'0%';
         const clampEvent=contactEventTimes.find(value=>Math.abs(value-Number(frame.t))<=.25);
-        document.getElementById('force-state').textContent=clampEvent!==undefined?`CLAMP SAMPLE @ ${clampEvent.toFixed(0)} s · ${leftForceModelValid?(leftForceAvailable?'FINGERTIP FORCE MEASURED':'FORCE UNAVAILABLE'):(leftGapAvailable?'BLACK DOTS MEASURED':'MARKERS UNAVAILABLE')}`:leftForceModelValid?(leftForceAvailable?String(frame.left.contact_state).toUpperCase():'UNAVAILABLE'):leftGapDisplay?(leftGapAvailable?'BLACK DOTS MEASURED':'BLACK DOTS UNAVAILABLE'):(leftRawAvailable?'RAW SCORE ONLY':'RAW SCORE UNAVAILABLE');
+        document.getElementById('force-state').textContent=leftOneSided?`${clampEvent!==undefined?`CLAMP @ ${clampEvent.toFixed(0)} s · `:''}ANGLE: RIGHT DOTS ONLY · LOW CONFIDENCE · FORCE N/A`:clampEvent!==undefined?`CLAMP SAMPLE @ ${clampEvent.toFixed(0)} s · ${leftForceModelValid?(leftForceAvailable?'FINGERTIP FORCE MEASURED':'FORCE UNAVAILABLE'):(leftGapAvailable?'BLACK DOTS MEASURED':'MARKERS UNAVAILABLE')}`:leftForceModelValid?(leftForceAvailable?String(frame.left.contact_state).toUpperCase():'UNAVAILABLE'):leftGapDisplay?(leftGapAvailable?'BLACK DOTS MEASURED':'BLACK DOTS UNAVAILABLE'):(leftRawAvailable?'RAW SCORE ONLY':'RAW SCORE UNAVAILABLE');
         document.getElementById('left-raw-score').textContent=leftFingertipForce?(leftGapAvailable?`${leftGap.toFixed(1)} px`:'N/A'):(leftRawAvailable?leftRawScore.toFixed(1):'N/A');
         for(const arrow of forceArrows)arrow.visible=frame.left.visible!==false&&leftForceModelValid&&leftForceAvailable;
         const rightIntensity=THREE.MathUtils.clamp(Number(frame.right.contact_intensity_percent),0,100);

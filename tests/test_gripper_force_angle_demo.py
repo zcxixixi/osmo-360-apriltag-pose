@@ -7,6 +7,7 @@ from render_gripper_force_angle_demo import (
     DotObservation,
     ForceModel,
     FrameObservation,
+    apply_one_sided_opening_fallback,
     bounded_interpolate,
     local_to_point,
     draw_detection_overlay,
@@ -115,6 +116,37 @@ def test_frozen_closed_reference_does_not_renormalize_each_capture():
     assert opening[0] == pytest.approx(6.75)
     assert opening[-1] == 0.0
 
+
+
+def test_one_sided_right_axis_is_explicit_low_confidence_measurement():
+    right_axis = np.array([[1.0, -1.0], [0.5, -0.5], [0.0, 0.0]])
+    observations = [
+        FrameObservation(None, right_axis, None, None, np.nan),
+        FrameObservation(right_axis, right_axis, None, None, 45.0),
+    ]
+    bilateral = np.array([np.nan, 1.75])
+    hardware_angle = {
+        "single_side_fallback": {
+            "available_side": "right",
+            "heading_center_deg": -45.0,
+            "coefficients_high_to_low": [0.0, 1.0, 2.0],
+            "validated_output_range_deg": [0.0, 15.0],
+            "measurement_state": "MEASURED_ONE_SIDED_RIGHT_LOW_CONFIDENCE",
+            "model": "quadratic_relative_axis_heading",
+            "blocked_holdout": {"p95_deg": 2.0},
+        }
+    }
+
+    opening, states, audit = apply_one_sided_opening_fallback(
+        observations, bilateral, hardware_angle
+    )
+
+    assert opening.tolist() == pytest.approx([2.0, 1.75])
+    assert states.tolist() == [
+        "MEASURED_ONE_SIDED_RIGHT_LOW_CONFIDENCE",
+        "MEASURED",
+    ]
+    assert audit["one_sided_right_frames"] == 1
 
 def test_x5_profile_detects_jaw_axes_and_pad_dots():
     image = np.full((1920, 1920, 3), 255, dtype=np.uint8)
