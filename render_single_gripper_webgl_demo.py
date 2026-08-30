@@ -85,6 +85,20 @@ def single_capture_id(source_osv: Path, fps: float) -> str:
     return f"{source_osv.stem}-single-{fps_label}fps"
 
 
+def force_measurement_available(
+    force_model_valid: bool, intensity: float, measurement_state: str
+) -> bool:
+    return bool(
+        force_model_valid
+        and np.isfinite(intensity)
+        and (
+            measurement_state == "MEASURED"
+            or measurement_state.startswith("RECOVERED")
+            or "ONE_SIDED" in measurement_state
+        )
+    )
+
+
 def tag_anchors(compiled: dict) -> list[dict]:
     anchors = []
     for tag in compiled["tags"]:
@@ -313,10 +327,8 @@ def main() -> int:
             and (np.isfinite(included[index]) or one_sided_angle)
             and angle_state != "UNAVAILABLE"
         )
-        force_available = bool(
-            left_force_valid
-            and np.isfinite(intensity[index])
-            and (angle_state == "MEASURED" or angle_state.startswith("RECOVERED"))
+        force_available = force_measurement_available(
+            left_force_valid, intensity[index], angle_state
         )
         left_contact_measurement_state = (
             angle_state if force_available else

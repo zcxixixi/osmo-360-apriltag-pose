@@ -346,7 +346,8 @@
         const leftAngleState=String(frame.left.angle_state||'UNAVAILABLE');
         const leftOneSided=leftAngleState.includes('ONE_SIDED');
         const leftForceState=String(frame.left.contact_measurement_state||frame.left.angle_state);
-        const leftForceAvailable=leftForceState==='MEASURED'||leftForceState.startsWith('RECOVERED');
+        const leftForceAvailable=leftForceState==='MEASURED'||leftForceState.startsWith('RECOVERED')||leftForceState.includes('ONE_SIDED');
+        const leftVisibleSide=leftForceState.includes('_LEFT_')?'LEFT':leftForceState.includes('_RIGHT_')?'RIGHT':'ONE SIDE';
         const leftRawValue=frame.left.source_contact_intensity_percent;
         const leftRawScore=Number(leftRawValue);
         const leftRawAvailable=leftRawValue!==null&&Number.isFinite(leftRawScore);
@@ -360,12 +361,12 @@
         document.getElementById('force-value').textContent=leftDisplayAvailable?leftDisplayValue.toFixed(1):'N/A';
         document.getElementById('force-fill').style.width=leftDisplayAvailable?`${leftDisplayPercent}%`:'0%';
         const clampEvent=contactEventTimes.find(value=>Math.abs(value-Number(frame.t))<=.25);
-        document.getElementById('force-state').textContent=leftOneSided?`${clampEvent!==undefined?`CLAMP @ ${clampEvent.toFixed(0)} s · `:''}ANGLE: RIGHT DOTS ONLY · LOW CONFIDENCE · FORCE N/A`:clampEvent!==undefined?`CLAMP SAMPLE @ ${clampEvent.toFixed(0)} s · ${leftForceModelValid?(leftForceAvailable?'FINGERTIP FORCE MEASURED':'FORCE UNAVAILABLE'):(leftGapAvailable?'BLACK DOTS MEASURED':'MARKERS UNAVAILABLE')}`:leftForceModelValid?(leftForceAvailable?String(frame.left.contact_state).toUpperCase():'UNAVAILABLE'):leftGapDisplay?(leftGapAvailable?'BLACK DOTS MEASURED':'BLACK DOTS UNAVAILABLE'):(leftRawAvailable?'RAW SCORE ONLY':'RAW SCORE UNAVAILABLE');
+        document.getElementById('force-state').textContent=leftOneSided?`${clampEvent!==undefined?`CLAMP @ ${clampEvent.toFixed(0)} s · `:''}${leftVisibleSide} ONLY · LOW CONFIDENCE · ${leftForceAvailable?String(frame.left.contact_state).toUpperCase():'FORCE N/A'}`:clampEvent!==undefined?`CLAMP SAMPLE @ ${clampEvent.toFixed(0)} s · ${leftForceModelValid?(leftForceAvailable?'FINGERTIP FORCE MEASURED':'FORCE UNAVAILABLE'):(leftGapAvailable?'BLACK DOTS MEASURED':'MARKERS UNAVAILABLE')}`:leftForceModelValid?(leftForceAvailable?String(frame.left.contact_state).toUpperCase():'UNAVAILABLE'):leftGapDisplay?(leftGapAvailable?'BLACK DOTS MEASURED':'BLACK DOTS UNAVAILABLE'):(leftRawAvailable?'RAW SCORE ONLY':'RAW SCORE UNAVAILABLE');
         document.getElementById('left-raw-score').textContent=leftFingertipForce?(leftGapAvailable?`${leftGap.toFixed(1)} px`:'N/A'):(leftRawAvailable?leftRawScore.toFixed(1):'N/A');
         for(const arrow of forceArrows)arrow.visible=frame.left.visible!==false&&leftForceModelValid&&leftForceAvailable;
         const rightIntensity=THREE.MathUtils.clamp(Number(frame.right.contact_intensity_percent),0,100);
         const rightForceState=String(frame.right.contact_measurement_state||frame.right.angle_state);
-        const rightForceAvailable=frame.right.visible!==false&&(rightForceState==='MEASURED'||rightForceState.startsWith('RECOVERED'));
+        const rightForceAvailable=frame.right.visible!==false&&(rightForceState==='MEASURED'||rightForceState.startsWith('RECOVERED')||rightForceState.includes('ONE_SIDED'));
         const rightRawValue=frame.right.source_contact_intensity_percent;
         const rightRawScore=Number(rightRawValue);
         const rightRawAvailable=frame.right.visible!==false&&rightRawValue!==null&&Number.isFinite(rightRawScore);

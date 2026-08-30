@@ -106,11 +106,14 @@ project-versioned renderer. The current X5 manifest is
 `manifests/captures/x5-20260829-114845-fixed-relative-force-r4.json`.
 
 The latest direct-SD demo capture is
-`manifests/captures/x5-20260830-162856-iahea2606km43a-sd-r5.json`: X5
+`manifests/captures/x5-20260830-162856-iahea2606km43a-one-sided-r8.json`: X5
 `IAHEA2606KM43A`, physical left, BaseTag2, 2880x2880 at 29.97 FPS. Its serial
 comes from embedded INSV metadata matched against the prior SDK-verified fleet
 inventory; do not claim that CameraSDK read the file from the directly mounted
 SD card.
+This revision prefers bilateral force measurement, falls back to the one
+complete jaw as `MEASURED_ONE_SIDED_{LEFT,RIGHT}_LOW_CONFIDENCE`, and preserves
+`N/A` when neither jaw is complete; it never fabricates the hidden marker.
 
 Fleet identity is stored in `config/devices/x5_inventory.json`. Prefer the
 visual manager (`umi devices ui`, desktop launcher `X5设备管理`) or use

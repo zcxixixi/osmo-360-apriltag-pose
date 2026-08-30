@@ -1,0 +1,59 @@
+{
+  "schema_version": "capture-manifest/1.0",
+  "capture_id": "x5-20260830-162856-iahea2606km43a-one-sided-r8",
+  "status": "ACTIVE_DIAGNOSTIC_SINGLE_SIDE_OCCLUSION_FALLBACK_CAPTURE_LOCAL_FORCE_NOT_TRAINING",
+  "camera": {
+    "model": "Insta360 X5",
+    "serial": "IAHEA2606KM43A",
+    "role": "physical_left",
+    "base_tag_id": 2,
+    "serial_status": "INSV metadata matched CameraSDK-verified fleet inventory; source copied directly from SD card"
+  },
+  "inputs": {
+    "raw_video": {
+      "path": "/home/cenxi/Videos/umi-captures/20260830/insta360-x5-162856-v1/raw/VID_20260830_162856_00_004.insv",
+      "sha256": "68c3bfaa4da762c6f3da2f1a2973cf731d999884ff0efa743a8a19f2191e132a"
+    },
+    "camera_identity": {
+      "path": "config/rig_revisions/x5_left_camera_identity_20260830_r4.json",
+      "sha256": "46fc6d9ebfbd3c6a78a42cd4db7c4c266193902e406e85dbd9690fe3a0195f3b"
+    },
+    "new_cad_source": {
+      "path": "/home/cenxi/Downloads/UMI-III.zip",
+      "sha256": "d928aee7ea6694444c35291515719a5c54204a2375e3bec3c8ffe0e3ee1e8959"
+    }
+  },
+  "revisions": {
+    "rig": {
+      "path": "config/rig_revisions/x5_left_basetag2_sd_20260830_r7.json",
+      "sha256": "100c1e19cc0d2ce29d1a696830c26ded243028b6c16d5fe4d05e53d1ff5bf31b"
+    },
+    "jaw_angle": {
+      "path": "config/rig_revisions/x5_jaw_angle_yellow_dots_left_20260830_r5.json",
+      "sha256": "c76bc28f9467ac18eff03de8b96d53f6d124e8cc615040b9bf6bbb37ee037ac5"
+    },
+    "marker_layout": {
+      "path": "config/rig_revisions/gripper_marker_layout_umi_iii_dxf_r2.json",
+      "sha256": "53d81ea9392de5b36f222a5c283130e01fced3f653d8fcd39217e1266b39850d"
+    },
+    "renderer": {
+      "path": "dual_gripper_3d/single_gripper_scene.html",
+      "sha256": "50f696c897631c726551749b87c40704ce039a218cb1cf098b52e67827a1af0a"
+    }
+  },
+  "pipeline": {
+    "profile": "single_x5_camera_local",
+    "maximum_recovery_gap_s": 0.25,
+    "contact_events_s": [],
+    "world_pose": "unavailable; never claim tag_map"
+  },
+  "outputs": {
+    "force_angle_dir": "/home/cenxi/Videos/umi-captures/20260830/insta360-x5-162856-v1/force-angle-v18-one-sided-occlusion-r2",
+    "timeline_dir": "/home/cenxi/Videos/umi-captures/20260830/insta360-x5-162856-v1/webgl-v16-one-sided-force-visible-r3",
+    "review_bundle_dir": "/home/cenxi/Videos/umi-captures/20260830/insta360-x5-162856-v1/review-bundle-v12-one-sided-force-ui-r4"
+  },
+  "review": {
+    "name": "Latest X5 SD video · single-side occlusion fallback relative-force demo",
+    "server": "http://192.168.111.62:7865"
+  }
+}

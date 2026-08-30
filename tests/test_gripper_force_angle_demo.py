@@ -13,6 +13,7 @@ from render_gripper_force_angle_demo import (
     local_to_point,
     draw_detection_overlay,
     contact_event_audit,
+    fit_force_model,
     labeled_contact_gap_audit,
     normalize_contact_intensity,
     opening_angles,
@@ -148,6 +149,93 @@ def test_one_sided_right_axis_is_explicit_low_confidence_measurement():
         "MEASURED",
     ]
     assert audit["one_sided_right_frames"] == 1
+
+
+def test_two_one_sided_axis_models_recover_either_visible_jaw():
+    axis = np.array([[1.0, -1.0], [0.5, -0.5], [0.0, 0.0]])
+    observations = [
+        FrameObservation(axis, None, None, None, np.nan),
+        FrameObservation(None, axis, None, None, np.nan),
+        FrameObservation(axis, axis, None, None, 45.0),
+    ]
+    hardware_angle = {
+        "single_side_fallbacks": [
+            {
+                "available_side": "left",
+                "heading_center_deg": -45.0,
+                "coefficients_high_to_low": [0.0, 0.0, 3.0],
+                "validated_output_range_deg": [0.0, 15.0],
+                "measurement_state": "MEASURED_ONE_SIDED_LEFT_LOW_CONFIDENCE",
+            },
+            {
+                "available_side": "right",
+                "heading_center_deg": -45.0,
+                "coefficients_high_to_low": [0.0, 0.0, 4.0],
+                "validated_output_range_deg": [0.0, 15.0],
+                "measurement_state": "MEASURED_ONE_SIDED_RIGHT_LOW_CONFIDENCE",
+            },
+        ]
+    }
+
+    opening, states, audit = apply_one_sided_opening_fallback(
+        observations, np.array([np.nan, np.nan, 1.75]), hardware_angle
+    )
+
+    assert opening.tolist() == pytest.approx([3.0, 4.0, 1.75])
+    assert states.tolist() == [
+        "MEASURED_ONE_SIDED_LEFT_LOW_CONFIDENCE",
+        "MEASURED_ONE_SIDED_RIGHT_LOW_CONFIDENCE",
+        "MEASURED",
+    ]
+    assert audit["one_sided_left_frames"] == 1
+    assert audit["one_sided_right_frames"] == 1
+
+
+def test_capture_local_force_uses_one_complete_jaw_when_other_is_hidden():
+    left_yellow = np.array([[0.0, 0.0], [0.0, 5.0], [0.0, 10.0]])
+    right_yellow = np.array([[100.0, 0.0], [100.0, 5.0], [100.0, 10.0]])
+    left_frame = JawFrame(
+        origin=np.array([0.0, 0.0]),
+        axis=np.array([0.0, -1.0]),
+        normal=np.array([-1.0, 0.0]),
+        scale_px=10.0,
+    )
+    right_frame = JawFrame(
+        origin=np.array([100.0, 0.0]),
+        axis=np.array([0.0, -1.0]),
+        normal=np.array([1.0, 0.0]),
+        scale_px=10.0,
+    )
+    opening = np.tile(np.linspace(0.0, 10.0, 20), 10)
+    observations = []
+    for index in range(len(opening)):
+        deformation = 0.08 if index % 20 in {5, 6} else 0.0
+        local = np.array([0.2, -0.2 + deformation])
+        observations.append(
+            FrameObservation(
+                left_yellow,
+                right_yellow,
+                DotObservation(local_to_point(local, left_frame), 50.0, 0.8),
+                DotObservation(local_to_point(local, right_frame), 50.0, 0.8),
+                45.0,
+            )
+        )
+    opening = np.append(opening, 5.0)
+    local = np.array([0.2, -0.12])
+    observations.append(
+        FrameObservation(
+            left_yellow,
+            None,
+            DotObservation(local_to_point(local, left_frame), 50.0, 0.8),
+            None,
+            np.nan,
+        )
+    )
+
+    _, force, _, _ = fit_force_model(observations, opening)
+
+    assert np.isfinite(force[-1])
+    assert force[-1] > 50.0
 
 
 def test_fixed_relative_force_rejects_free_motion_noise():

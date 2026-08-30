@@ -156,9 +156,10 @@ manifests/captures/x5-20260829-114845-fixed-relative-force-r4.json
 `webgl-v13-fixed-relative-scale/`。该方案只需要现有标记，不要求 TPU 打印件。
 
 最新直接从 SD 卡导入的高分辨率演示为
-`manifests/captures/x5-20260830-162856-iahea2606km43a-sd-r5.json`：
-`IAHEA2606KM43A`、物理左夹爪、BaseTag2、2880×2880、29.97 FPS。该演示使用
-本次视频的局部 0–100% 形变尺度，仅用于可视化，不与其他硬件版本直接比较。
+`manifests/captures/x5-20260830-162856-iahea2606km43a-one-sided-r8.json`：
+`IAHEA2606KM43A`、物理左夹爪、BaseTag2、2880×2880、29.97 FPS。双侧完整时
+使用双侧结果；遮挡一侧时使用可见侧并标低置信度；两侧都不完整时保留 `N/A`。
+该演示使用本次视频的局部 0–100% 形变尺度，不与其他硬件版本直接比较。
 
 未来 Insta360 采集型号为 X5。开始大规模采集前，必须使用实际 X5
 序列号完成 CameraSDK 设备发现/录制测试，以及 MediaSDK 原始 INSV/LRV

@@ -592,25 +592,34 @@ def apply_one_sided_opening_fallback(
     result = np.asarray(opening, dtype=float).copy()
     states = np.full(len(observations), "UNAVAILABLE", dtype=object)
     states[np.isfinite(result)] = "MEASURED"
-    fallback = hardware_angle.get("single_side_fallback")
+    configured = hardware_angle.get("single_side_fallbacks")
+    if configured is None:
+        single = hardware_angle.get("single_side_fallback")
+        fallbacks = [] if single is None else [single]
+    else:
+        fallbacks = list(configured)
+    fallback_by_side = {
+        str(fallback["available_side"]): fallback for fallback in fallbacks
+    }
     audit = {
-        "enabled": fallback is not None,
+        "enabled": bool(fallbacks),
         "bilateral_frames": int(np.count_nonzero(np.isfinite(result))),
         "one_sided_left_frames": 0,
         "one_sided_right_frames": 0,
         "continuity_rejected_frames": 0,
         "extrapolation_rejected_frames": 0,
+        "holdout": {
+            side: fallback.get("blocked_holdout")
+            for side, fallback in fallback_by_side.items()
+        },
+        "model": {
+            side: fallback.get("model")
+            for side, fallback in fallback_by_side.items()
+        },
     }
-    if fallback is None:
+    if not fallbacks:
         return result, states, audit
 
-    side = fallback["available_side"]
-    center = float(fallback["heading_center_deg"])
-    coefficients = np.asarray(fallback["coefficients_high_to_low"], dtype=float)
-    low, high = map(float, fallback["validated_output_range_deg"])
-    state = str(fallback["measurement_state"])
-    maximum_step = float(fallback.get("maximum_step_deg", np.inf))
-    maximum_age = int(fallback.get("continuity_max_age_frames", 0))
     previous_index: int | None = None
     previous_value: float | None = None
     for index, observation in enumerate(observations):
@@ -618,15 +627,25 @@ def apply_one_sided_opening_fallback(
             previous_index = index
             previous_value = float(result[index])
             continue
-        points = (
-            observation.yellow_right
-            if side == "right" and observation.yellow_left is None
-            else observation.yellow_left
-            if side == "left" and observation.yellow_right is None
+        side = (
+            "left"
+            if observation.yellow_left is not None
+            and observation.yellow_right is None
+            else "right"
+            if observation.yellow_right is not None
+            and observation.yellow_left is None
             else None
         )
-        if points is None:
+        if side is None or side not in fallback_by_side:
             continue
+        fallback = fallback_by_side[side]
+        points = getattr(observation, f"yellow_{side}")
+        assert points is not None
+        center = float(fallback["heading_center_deg"])
+        coefficients = np.asarray(
+            fallback["coefficients_high_to_low"], dtype=float
+        )
+        low, high = map(float, fallback["validated_output_range_deg"])
         heading = axis_heading_deg(points)
         relative = float(
             np.degrees(np.angle(np.exp(1j * np.radians(heading - center))))
@@ -635,6 +654,8 @@ def apply_one_sided_opening_fallback(
         if not low <= candidate <= high:
             audit["extrapolation_rejected_frames"] += 1
             continue
+        maximum_age = int(fallback.get("continuity_max_age_frames", 0))
+        maximum_step = float(fallback.get("maximum_step_deg", np.inf))
         if (
             previous_index is not None
             and previous_value is not None
@@ -644,12 +665,10 @@ def apply_one_sided_opening_fallback(
             audit["continuity_rejected_frames"] += 1
             continue
         result[index] = candidate
-        states[index] = state
+        states[index] = str(fallback["measurement_state"])
         previous_index = index
         previous_value = candidate
         audit[f"one_sided_{side}_frames"] += 1
-    audit["holdout"] = fallback.get("blocked_holdout")
-    audit["model"] = fallback.get("model")
     return result, states, audit
 
 
@@ -921,16 +940,18 @@ def normalize_contact_intensity(
 def fit_force_model(
     observations: list[FrameObservation], opening: np.ndarray
 ) -> tuple[ForceModel, np.ndarray, np.ndarray, np.ndarray]:
-    complete = np.asarray(
+    bilateral = np.asarray(
         [
-            np.isfinite(item.included_angle_deg)
+            np.isfinite(opening[index])
+            and item.yellow_left is not None
+            and item.yellow_right is not None
             and item.dot_left is not None
             and item.dot_right is not None
-            for item in observations
+            for index, item in enumerate(observations)
         ],
         dtype=bool,
     )
-    valid_indices = np.flatnonzero(complete)
+    valid_indices = np.flatnonzero(bilateral)
     if len(valid_indices) < 30:
         raise ValueError(f"only {len(valid_indices)} frames contain yellow and black markers")
     open_threshold = float(np.percentile(opening[valid_indices], 65.0))
@@ -954,52 +975,94 @@ def fit_force_model(
         )
         left_shape.append([item.dot_left.area_px2, item.dot_left.minor_major_ratio])
         right_shape.append([item.dot_right.area_px2, item.dot_right.minor_major_ratio])
-    left_local_median = np.median(left_local, axis=0)
-    right_local_median = np.median(right_local, axis=0)
-    left_shape_median = np.median(left_shape, axis=0)
-    right_shape_median = np.median(right_shape, axis=0)
+    local_median = {
+        "left": np.median(left_local, axis=0),
+        "right": np.median(right_local, axis=0),
+    }
+    shape_median = {
+        "left": np.median(left_shape, axis=0),
+        "right": np.median(right_shape, axis=0),
+    }
 
     raw = np.full(len(observations), np.nan)
+    side_raw = {
+        "left": np.full(len(observations), np.nan),
+        "right": np.full(len(observations), np.nan),
+    }
     gap_component = np.full(len(observations), np.nan)
     shape_component = np.full(len(observations), np.nan)
-    for index in valid_indices:
-        item = observations[index]
-        assert item.yellow_left is not None and item.yellow_right is not None
+    for index, item in enumerate(observations):
+        side_frames: dict[str, JawFrame] = {}
+        side_scores: dict[str, float] = {}
+        side_shapes: list[float] = []
+        for side in ("left", "right"):
+            yellow = getattr(item, f"yellow_{side}")
+            dot = getattr(item, f"dot_{side}")
+            if not np.isfinite(opening[index]) or yellow is None or dot is None:
+                continue
+            frame = jaw_frame(yellow, side)
+            local_residual = float(
+                np.linalg.norm(
+                    point_to_local(dot.point, frame) - local_median[side]
+                )
+            )
+            shape_change = (
+                abs(np.log(dot.area_px2 / shape_median[side][0]))
+                + abs(np.log(dot.minor_major_ratio / shape_median[side][1]))
+            ) / 2.0
+            side_frames[side] = frame
+            side_scores[side] = (2.0 * local_residual + shape_change) / 3.0
+            side_shapes.append(shape_change)
+            side_raw[side][index] = side_scores[side]
+        if side_shapes:
+            shape_component[index] = float(np.mean(side_shapes))
+        if not bilateral[index]:
+            continue
         assert item.dot_left is not None and item.dot_right is not None
-        left_frame = jaw_frame(item.yellow_left, "left")
-        right_frame = jaw_frame(item.yellow_right, "right")
-        predicted_left = local_to_point(left_local_median, left_frame)
-        predicted_right = local_to_point(right_local_median, right_frame)
+        left_frame = side_frames["left"]
+        right_frame = side_frames["right"]
+        predicted_left = local_to_point(local_median["left"], left_frame)
+        predicted_right = local_to_point(local_median["right"], right_frame)
         predicted_gap = predicted_right - predicted_left
         gap_direction = predicted_gap / np.linalg.norm(predicted_gap)
         actual_gap = item.dot_right.point - item.dot_left.point
         gap_excess = max(0.0, float((actual_gap - predicted_gap) @ gap_direction))
         marker_scale = (left_frame.scale_px + right_frame.scale_px) / 2.0
         gap_strain = gap_excess / marker_scale
-        local_residual = (
-            np.linalg.norm(point_to_local(item.dot_left.point, left_frame) - left_local_median)
-            + np.linalg.norm(point_to_local(item.dot_right.point, right_frame) - right_local_median)
-        ) / 2.0
-        shape_change = (
-            abs(np.log(item.dot_left.area_px2 / left_shape_median[0]))
-            + abs(np.log(item.dot_right.area_px2 / right_shape_median[0]))
-            + abs(np.log(item.dot_left.minor_major_ratio / left_shape_median[1]))
-            + abs(np.log(item.dot_right.minor_major_ratio / right_shape_median[1]))
-        ) / 4.0
         gap_component[index] = gap_strain
-        shape_component[index] = shape_change
-        raw[index] = 0.70 * gap_strain + 0.20 * local_residual + 0.10 * shape_change
+        raw[index] = 0.70 * gap_strain + 0.30 * float(
+            np.mean(list(side_scores.values()))
+        )
 
     baseline = float(np.nanmedian(raw[unloaded]))
     noise_mad = float(np.nanmedian(np.abs(raw[unloaded] - baseline)))
     force, noise_floor, full_scale = normalize_contact_intensity(
         raw, opening, valid_indices
     )
+    side_force = {}
+    for side in ("left", "right"):
+        side_indices = np.flatnonzero(np.isfinite(side_raw[side]))
+        if len(side_indices) < 30:
+            side_force[side] = np.full(len(observations), np.nan)
+            continue
+        side_force[side], _, _ = normalize_contact_intensity(
+            side_raw[side], opening, side_indices
+        )
+    for index in np.flatnonzero(~np.isfinite(force)):
+        left = side_force["left"][index]
+        right = side_force["right"][index]
+        if np.isfinite(left) and np.isfinite(right):
+            force[index] = float((left + right) / 2.0)
+        elif np.isfinite(left):
+            force[index] = float(left)
+        elif np.isfinite(right):
+            force[index] = float(right)
+
     model = ForceModel(
-        left_local_median,
-        right_local_median,
-        left_shape_median,
-        right_shape_median,
+        local_median["left"],
+        local_median["right"],
+        shape_median["left"],
+        shape_median["right"],
         baseline,
         noise_mad,
         noise_floor,
@@ -1675,6 +1738,22 @@ def main() -> int:
         )
     else:
         raw_force = legacy_raw_force
+    force_measurement_sources = np.full(
+        len(observations), "UNAVAILABLE", dtype=object
+    )
+    for index in np.flatnonzero(np.isfinite(raw_force)):
+        angle_source = str(angle_sources[index])
+        force_measurement_sources[index] = (
+            angle_source
+            if "ONE_SIDED" in angle_source
+            else "MEASURED_FIXED_SCALE_BILATERAL"
+            if force_revision is not None
+            else "MEASURED_BILATERAL_HIGH_CONFIDENCE"
+        )
+    force_source_counts = {
+        str(state): int(np.count_nonzero(force_measurement_sources == state))
+        for state in np.unique(force_measurement_sources)
+    }
     maximum_gap = round(args.maximum_recovery_gap_s * fps)
     opening, opening_recovered = bounded_interpolate(raw_opening, maximum_gap)
     angle_sources[opening_recovered] = "RECOVERED <= 0.25 s"
@@ -1851,7 +1930,7 @@ def main() -> int:
             "method": (
                 "fixed opening-conditioned absolute black-dot gap residual"
                 if force_revision is not None
-                else "black-dot gap residual versus rigid yellow-marker prediction plus dot centroid and ellipse-shape change"
+                else "bilateral black-dot gap with per-jaw local marker fallback when one jaw is occluded"
             ),
             "revision": (
                 {
@@ -1889,8 +1968,9 @@ def main() -> int:
             "measured_frame_ratio": (
                 fixed_force_audit["measured_frame_ratio"]
                 if fixed_force_audit is not None
-                else float((yellow_measured & black_measured).mean())
+                else float(np.isfinite(raw_force).mean())
             ),
+            "measurement_source_counts": force_source_counts,
             "fixed_scale_audit": fixed_force_audit,
             "relative_force_range_percent": [
                 float(np.nanmin(force)),
