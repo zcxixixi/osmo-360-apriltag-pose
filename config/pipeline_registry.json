@@ -18,6 +18,10 @@
       "purpose": "publish the immutable bundle to the review platform"
     },
     {
+      "command": "umi verify",
+      "purpose": "run every accepted successor baseline"
+    },
+    {
       "command": "umi devices ui",
       "purpose": "open the local visual fleet manager with scan, register, and assignment buttons"
     },

@@ -13,6 +13,13 @@ REVISION = REPO / "config/rig_revisions/dual_gripper_v52_dev_20260826_r1.json"
 NEW_GRIPPER_REVISION = (
     REPO / "config/rig_revisions/dual_gripper_v52_new_gripper_20260826_r2.json"
 )
+EXTERNAL_WORLD_MAP = Path(
+    json.loads(REVISION.read_text(encoding="utf-8"))["world_tag_map"]["path"]
+)
+requires_external_world_map = pytest.mark.skipif(
+    not EXTERNAL_WORLD_MAP.is_file(),
+    reason="accepted real-data world map is not present on this host",
+)
 
 
 def pose_row(ids: str, rmse: float = 0.5) -> dict[str, str]:
@@ -30,6 +37,7 @@ def pose_row(ids: str, rmse: float = 0.5) -> dict[str, str]:
     }
 
 
+@requires_external_world_map
 def test_checked_revision_loads_without_legacy_fallback():
     bundle = load_rig_revision(REVISION)
     assert bundle["revision"]["revision_id"] == "dual-gripper-v52-dev-20260826-r1"
@@ -37,6 +45,7 @@ def test_checked_revision_loads_without_legacy_fallback():
     assert bundle["policy"]["allow_metric_smoothing"] is False
 
 
+@requires_external_world_map
 def test_new_gripper_revision_pins_cad_and_preserves_tag_transform():
     bundle = load_rig_revision(NEW_GRIPPER_REVISION)
     assert bundle["cad_revision"]["revision_id"] == "gripper-cad-v52-new-r1"
@@ -56,6 +65,7 @@ def test_revision_hash_mismatch_fails_closed(tmp_path):
         load_rig_revision(path)
 
 
+@requires_external_world_map
 def test_diagnostic_world_requires_explicit_opt_in(tmp_path):
     revision = json.loads(REVISION.read_text(encoding="utf-8"))
     source_map = Path(revision["world_tag_map"]["path"])

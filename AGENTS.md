@@ -4,6 +4,9 @@ Keep this file short and repository-specific. General coding discipline is
 provided by the harness and must not be repeated here. Do not create additional
 or case-variant agent instruction files.
 
+Use short-lived branches and one-purpose PRs under `docs/DEVELOPMENT.md`; never
+develop directly on `main`.
+
 ## Guarded v50 baseline
 
 Before changing localization, calibration, fusion, role mapping, world frames,

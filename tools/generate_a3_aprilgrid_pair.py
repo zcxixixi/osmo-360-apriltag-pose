@@ -14,7 +14,17 @@ from PIL import Image, ImageDraw, ImageFont
 
 A3_LANDSCAPE_MM = (420.0, 297.0)
 GRID_SHAPE = (3, 2)
-FONT = Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")
+FONT_CANDIDATES = (
+    Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+    Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+)
+
+
+def load_font(size: int):
+    for path in FONT_CANDIDATES:
+        if path.is_file():
+            return ImageFont.truetype(str(path), size)
+    return ImageFont.load_default()
 
 
 def parse_args() -> argparse.Namespace:
@@ -83,7 +93,7 @@ def render_sheet(output_dir: Path, name: str, ids: tuple[int, ...], dpi: int,
     page_px = tuple(mm_to_px(value, dpi) for value in A3_LANDSCAPE_MM)
     page = Image.new("L", page_px, 255)
     draw = ImageDraw.Draw(page)
-    title_font = ImageFont.truetype(str(FONT), max(28, round(dpi * 0.16)))
+    title_font = load_font(max(28, round(dpi * 0.16)))
     marker_px = mm_to_px(tag_size_mm, dpi)
     layout = layout_for(ids, tag_size_mm, gap_mm)
 
