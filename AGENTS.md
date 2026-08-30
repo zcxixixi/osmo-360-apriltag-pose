@@ -103,7 +103,7 @@ Do not invoke internal processing scripts or assemble timelines manually for a
 registered capture. `umi inspect` verifies all hashes, `umi process` runs or
 reuses the locked outputs, and `umi review` creates an immutable bundle with a
 project-versioned renderer. The current X5 manifest is
-`manifests/captures/x5-20260829-114845-iahea2606kmurq-sdk-r3.json`.
+`manifests/captures/x5-20260829-114845-fixed-relative-force-r4.json`.
 
 Fleet identity is stored in `config/devices/x5_inventory.json`. Prefer the
 visual manager (`umi devices ui`, desktop launcher `X5设备管理`) or use
@@ -120,13 +120,11 @@ unavailable observations separately. Keep per-pad deformation before combining.
 Use the opening-conditioned lower envelope in `force-angle-v3`; do not restore
 the rejected global MAD deadband.
 
-The rigid-object fixed-scale experiment
-`force-angle-v16-fixed-relative-scale/` is rejected as force: USB-drive and tape
-roll residuals (0.57 px / 1.99 px) are below the free-motion P99 noise floor
-(10.53 px). Do not lower the threshold or publish that result as force. The
-replacement is the printable TPU displacement-amplifier prototype
-`config/rig_revisions/gripper_force_flexure_tpu_20260830_r1.json`; it remains
-non-training until printed, installed, cycled, and calibrated from 0–100%.
+The user accepted `force-angle-v16-fixed-relative-scale/` as the current
+relative-force visualization. It uses the existing black-dot gap, the frozen
+opening-conditioned baseline, and one immutable 0–100% scale for this hardware
+revision. It is a visual relative-force proxy, not Newtons, and remains
+non-training. Do not require the discarded TPU flexure prototype.
 
 For a training field, define one immutable scale per hardware revision. Never
 normalize each episode independently.

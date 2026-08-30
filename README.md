@@ -140,22 +140,20 @@ serial、固件、物理角色、BaseTag 和设备标签。服务器库存接口
 连接，同一个 `register` 命令会增量合并并保留既有角色分配。设备登记只查询
 serial、型号和固件，通常数秒完成，不运行角度、力或视频处理。
 
-### TPU 相对力柔性标记原型
+### 固定比例相对力
 
-现有刚性黑点在 U 盘和胶带卷夹持时只有 0.57 px / 1.99 px 残差，低于
-10.53 px 的自由运动 P99 噪声，因此不能作为相对力。新的 TPU 原型把接触压缩
-放大到 3–5 mm，并在移动接触鞋面向相机、避开物体接触面的 6 mm 圆台上粘贴
-哑光黑点；已有三黄点继续提供每侧刚性坐标。
+当前方案不改夹爪硬件，继续使用原有三黄点和黑点。黑点间距先减去开口角对应的
+固定基线，再减去固定噪声门限，最后映射到该硬件版本统一的 0–100% 相对力。
+它不是牛顿值，也不会对每段视频单独归一化。
 
-```bash
-./.venv/bin/python generate_tpu_force_flexure.py
+当前清单：
+
+```text
+manifests/captures/x5-20260829-114845-fixed-relative-force-r4.json
 ```
 
-打印文件位于
-`assets/gripper_v52_new_r1/force_flexure_tpu_r1/`，桌面打印包位于
-`~/Desktop/new/X5_TPU_相对力柔性标记_r1/`。推荐 TPU 85A–95A、0.2 mm
-层高、3 圈墙、100% 填充、面向相机的一侧朝向打印平台。该结构是待打印和
-物理验收的原型，不是已经标定的力传感器。
+当前可视化输出为 `force-angle-v16-fixed-relative-scale/` 和
+`webgl-v13-fixed-relative-scale/`。该方案只需要现有标记，不要求 TPU 打印件。
 
 未来 Insta360 采集型号为 X5。开始大规模采集前，必须使用实际 X5
 序列号完成 CameraSDK 设备发现/录制测试，以及 MediaSDK 原始 INSV/LRV

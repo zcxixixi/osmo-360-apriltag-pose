@@ -1,0 +1,44 @@
+{
+  "schema_version": "x5-relative-force-revision/1.0",
+  "revision_id": "x5-relative-fingertip-force-gap-20260830-r1",
+  "status": "USER_ACCEPTED_FIXED_SCALE_RELATIVE_FORCE_NOT_NEWTONS",
+  "quantity": "hardware_revision_relative_fingertip_force",
+  "unit": "relative_percent",
+  "hardware_scope": "unchanged UMI-III right gripper marker geometry",
+  "model": {
+    "method": "fixed opening-conditioned absolute black-dot gap residual",
+    "expected_gap_polynomial_high_to_low": [
+      0.02225484427593231,
+      -0.5318263637533708,
+      12.293191538259931,
+      86.13276846784407
+    ],
+    "opening_support_deg": [
+      0.0,
+      14.421655601055924
+    ],
+    "noise_floor_px": 10.533986842131963,
+    "full_scale_signal_px": 8.577344731349346,
+    "mapping": "clip(100 * max(abs(measured_gap - expected_gap) - noise_floor, 0) / full_scale_signal, 0, 100)"
+  },
+  "calibration": {
+    "source_video": "/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/raw/VID_20260829_114845_00_002.insv",
+    "source_sha256": "6182831beaae69c99c9943d3c5ea1771cd76385a8463448cd3995d6bc81bfa6f",
+    "unloaded_intervals_s": [
+      [0.0, 4.0],
+      [14.0, 16.0],
+      [27.0, 28.395033333333334]
+    ],
+    "contact_events_s": [7.0, 10.0, 18.0, 24.0],
+    "noise_statistic": "free-motion absolute-residual P99",
+    "full_scale_statistic": "contact signal P99 above the fixed noise floor"
+  },
+  "policy": {
+    "fixed_scale_across_captures": true,
+    "capture_local_normalization": false,
+    "newtons_calibrated": false,
+    "display_as_relative_percent": true,
+    "training_ready": false,
+    "interpretation": "relative fingertip-force proxy accepted for visualization; values below the fixed visual noise floor are zero"
+  }
+}
