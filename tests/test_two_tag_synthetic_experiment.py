@@ -8,8 +8,10 @@ from tools.run_two_tag_synthetic_experiment import (
     tag_corners,
     verify_freeze,
 )
-
-
+@pytest.mark.skipif(
+    not (PANO_ROOT / "app/core/maps.py").is_file(),
+    reason="external PanoForge checkout is not present on this host",
+)
 def test_frozen_two_tag_locator_files_still_match():
     freeze = verify_freeze()
 
