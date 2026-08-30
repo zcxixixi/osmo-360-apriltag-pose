@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from rig_revision import load_rig_revision
+from osmo360.rig_revision import load_rig_revision
 
 
 def main() -> int:

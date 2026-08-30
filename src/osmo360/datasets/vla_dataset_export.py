@@ -25,7 +25,7 @@ import py360convert
 from scipy.ndimage import median_filter
 from scipy.spatial.transform import Rotation, Slerp
 
-from world_frames import RigidTransform, compile_world_tag_map
+from osmo360.localization.world_frames import RigidTransform, compile_world_tag_map
 
 
 SCHEMA_VERSION = "vla-episode/1.1"

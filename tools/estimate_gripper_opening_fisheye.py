@@ -20,8 +20,8 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from estimate_gripper_extrinsic import BODY_TO_PANORAMA_OPENCV
-from raw_fisheye_world_pose import make_ray_converter
+from osmo360.calibration.estimate_gripper_extrinsic import BODY_TO_PANORAMA_OPENCV
+from osmo360.localization.raw_fisheye_world_pose import make_ray_converter
 
 
 SIDES = ("left", "right")

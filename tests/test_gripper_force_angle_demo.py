@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import pytest
 
-from render_gripper_force_angle_demo import (
+from osmo360.visualization.render_gripper_force_angle_demo import (
     JawFrame,
     DotObservation,
     ForceModel,

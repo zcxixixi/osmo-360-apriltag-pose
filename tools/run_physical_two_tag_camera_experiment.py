@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
-from raw_fisheye_world_pose import (
+from osmo360.localization.raw_fisheye_world_pose import (
     detect_rectified_tags,
     make_ray_converter,
     solve_pose,
@@ -483,7 +483,8 @@ def main() -> int:
     else:
         command = [
             str(ROOT / ".venv/bin/python"),
-            str(ROOT / "raw_fisheye_world_pose.py"),
+            "-m",
+            "osmo360.localization.raw_fisheye_world_pose",
             str(args.video.resolve()),
             "--calibration", str(args.calibration.resolve()),
             "--tag-map", str(tag_map_path),

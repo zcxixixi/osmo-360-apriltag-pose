@@ -129,7 +129,7 @@ def evaluation_command(args: argparse.Namespace, motive: Path, paths: PipelinePa
 
 def render_command(args: argparse.Namespace, video: Path, paths: PipelinePaths) -> list[str]:
     command = [
-        sys.executable, str(ROOT / "render_mocap_comparison.py"),
+        sys.executable, "-m", "osmo360.visualization.render_mocap_comparison",
         str(video), str(paths.pose_csv), str(paths.evaluation_dir),
         "--output-fps", str(args.output_fps), "--output", str(paths.comparison_video),
     ]

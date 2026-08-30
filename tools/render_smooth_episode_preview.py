@@ -12,10 +12,10 @@ import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
 from tools.render_zarr_audit_video import FFMPEG, MESH_DIR, RENDERER, encode_rgb_video
-from vla_dataset_export import (
+from osmo360.datasets.vla_dataset_export import (
     apply_camera_to_tcp, load_pose_csv, resample_pose, smooth_positions, smooth_rotations,
 )
-from world_frames import compile_world_tag_map
+from osmo360.localization.world_frames import compile_world_tag_map
 
 
 def run(command: list[str]) -> None:

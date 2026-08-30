@@ -15,11 +15,11 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
-from render_mocap_comparison import (
+from osmo360.visualization.render_mocap_comparison import (
     AMBER, BG, CYAN, GREEN, MUTED, RED, WHITE,
     draw_gripper, load_gripper_edges, project, text,
 )
-from render_trajectory_overlay_video import kalman_rts_filter
+from osmo360.visualization.render_trajectory_overlay_video import kalman_rts_filter
 
 
 def parse_args() -> argparse.Namespace:

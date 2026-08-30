@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from render_trajectory_overlay_video import kalman_rts_filter, load_and_filter, sample_pose
+from osmo360.visualization.render_trajectory_overlay_video import kalman_rts_filter, load_and_filter, sample_pose
 
 
 FORMAT_VERSION = "camera-trajectory-dataset/1.0"

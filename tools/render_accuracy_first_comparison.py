@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from rig_revision import load_rig_revision
+from osmo360.rig_revision import load_rig_revision
 
 
 LEFT = "#27b7e7"

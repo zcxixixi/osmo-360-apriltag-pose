@@ -2,9 +2,11 @@
 
 > Status: **accepted visual diagnostic baseline, not external ground truth**.
 >
-> Machine lock: `config/baselines/dual_gripper_v50_accepted_baseline.json`
+> Machine lock: `config/baselines/dual_gripper_v50_src_accepted_baseline.json`
 >
-> Verifier: `./.venv/bin/python verify_dual_gripper_v50_baseline.py`
+> Historical predecessor: `config/baselines/dual_gripper_v50_accepted_baseline.json`
+>
+> Verifier: `./umi verify`
 
 ## Why this baseline exists
 
@@ -87,7 +89,7 @@ visually compared at approach, contact, and departure.
 Run:
 
 ```bash
-./.venv/bin/python verify_dual_gripper_v50_baseline.py
+./umi verify
 ./.venv/bin/pytest -q
 ```
 
@@ -110,7 +112,7 @@ degrees. Orientation regression and role-binding checks are mandatory.
 ```bash
 P=/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new
 
-./.venv/bin/python fuse_asymmetric_gripper_world_pose.py \
+./.venv/bin/python -m osmo360.localization.fuse_asymmetric_gripper_world_pose \
   --strong-camera-csv "$P/world-pose-v45-multicapture-map/right_camera_pose.csv" \
   --weak-cross-base-csv "$P/world-pose-v45-multicapture-map/left_base_pose.csv" \
   --weak-instance-cache "$P/right/action_apriltag_factory_instance_id2_v1.npz" \
@@ -121,7 +123,7 @@ P=/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new
   --maximum-interpolation-gap-s 0.25 \
   --output-dir "$P/fused-world-v50-v15-regression-fixed"
 
-./.venv/bin/python render_fused_world_audit.py \
+./.venv/bin/python -m osmo360.visualization.render_fused_world_audit \
   --fusion-dir "$P/fused-world-v50-v15-regression-fixed" \
   --template-timeline "$P/dual_gripper_training_ready_v49_timeline.json" \
   --left-video "$P/left/action_stream1.mp4" \

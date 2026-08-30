@@ -35,10 +35,10 @@ import matplotlib.pyplot as plt
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
-from coordinate_frames import DJI_BODY_TO_PANORAMA_OPENCV
+from osmo360.localization.coordinate_frames import DJI_BODY_TO_PANORAMA_OPENCV
 from tools.osmo_apriltag_demo import Grid, rotation_to_rpy
 from tools.projection_backends import ProjectionRequest, make_projection_backend
-from world_frames import RigidTransform, canonical_sha256, compile_world_tag_map
+from osmo360.localization.world_frames import RigidTransform, canonical_sha256, compile_world_tag_map
 
 LOG = logging.getLogger("osmo360.offline")
 STOP = False

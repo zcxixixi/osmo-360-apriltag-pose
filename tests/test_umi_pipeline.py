@@ -3,17 +3,17 @@ from pathlib import Path
 
 import pytest
 
-from umi_pipeline.cli import list_commands
-from umi_pipeline.devices import (
+from osmo360.pipeline.cli import list_commands
+from osmo360.pipeline.devices import (
     assign_device,
     load_inventory,
     parse_camera_sdk_output,
     register_devices,
 )
-from umi_pipeline.device_ui import PAGE
-from umi_pipeline.manifest import ManifestError, load_manifest, sha256
-from umi_pipeline.process import process_capture
-from umi_pipeline.review import build_review_bundle
+from osmo360.pipeline.device_ui import PAGE
+from osmo360.pipeline.manifest import ManifestError, load_manifest, sha256
+from osmo360.pipeline.process import process_capture
+from osmo360.pipeline.review import build_review_bundle
 
 
 def _identity(path: Path) -> dict:

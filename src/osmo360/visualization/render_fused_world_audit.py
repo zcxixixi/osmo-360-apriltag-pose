@@ -18,7 +18,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
 
-ROOT = Path(__file__).resolve().parent
+from osmo360.paths import ROOT
 FFMPEG = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg"
 RENDERER = ROOT / "dual_gripper_3d/render_frames.mjs"
 MESH_DIR = ROOT / "assets/osmo_rig/osmo定位.SLDASM/meshes"

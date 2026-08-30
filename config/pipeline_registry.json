@@ -47,8 +47,8 @@
       "group": "direct-processing-scripts",
       "status": "internal implementation; do not choose manually for registered captures",
       "files": [
-        "render_gripper_force_angle_demo.py",
-        "render_single_gripper_webgl_demo.py",
+        "src/osmo360/visualization/render_gripper_force_angle_demo.py",
+        "src/osmo360/visualization/render_single_gripper_webgl_demo.py",
         "tools/osmo_360_offline.py",
         "tools/insta360_media_stitch.py"
       ]
@@ -67,9 +67,9 @@
       "group": "frozen-baseline-tools",
       "status": "active verification only; never edit to make a failure pass",
       "files": [
-        "verify_dual_gripper_v50_baseline.py",
-        "render_fused_world_audit.py",
-        "fuse_asymmetric_gripper_world_pose.py"
+        "src/osmo360/verification/verify_dual_gripper_v50_baseline.py",
+        "src/osmo360/visualization/render_fused_world_audit.py",
+        "src/osmo360/localization/fuse_asymmetric_gripper_world_pose.py"
       ]
     }
   ]

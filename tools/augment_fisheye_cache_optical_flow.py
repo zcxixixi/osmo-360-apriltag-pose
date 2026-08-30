@@ -19,7 +19,7 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 
-from raw_fisheye_world_pose import make_ray_converter
+from osmo360.localization.raw_fisheye_world_pose import make_ray_converter
 
 
 def parse_args() -> argparse.Namespace:

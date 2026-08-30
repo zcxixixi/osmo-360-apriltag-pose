@@ -25,9 +25,9 @@ import numpy as np
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation, Slerp
 
-from calibrate_basetag_reciprocal import Transform, interpolate_pose, load_pose, rotation_distance_deg
+from osmo360.calibration.calibrate_basetag_reciprocal import Transform, interpolate_pose, load_pose, rotation_distance_deg
 from tools.direct_reciprocal_world_pose_cached import stats
-from estimate_gripper_extrinsic import solve_bearing_ippe
+from osmo360.calibration.estimate_gripper_extrinsic import solve_bearing_ippe
 from tools.osmo_360_offline import ImuPanoramaBridgeCalibrator, load_imu_quaternions
 from tools.joint_dual_camera_pose_graph_cached import (
     FrameData,

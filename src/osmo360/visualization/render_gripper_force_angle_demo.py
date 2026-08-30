@@ -16,8 +16,9 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from render_dual_camera_alignment_demo import UrdfWireframe, load_urdf_wireframe
-from rig_revision import load_rig_revision, sha256
+from osmo360.visualization.render_dual_camera_alignment_demo import UrdfWireframe, load_urdf_wireframe
+from osmo360.paths import ROOT
+from osmo360.rig_revision import load_rig_revision, sha256
 
 
 YELLOW_LOW = np.array([18, 75, 65], dtype=np.uint8)
@@ -1606,7 +1607,7 @@ def main() -> int:
     cad = rig["cad_revision"]
     if cad is None:
         raise ValueError("rig revision does not reference a current CAD revision")
-    urdf_path = (Path(__file__).resolve().parent / cad["urdf"]["path"]).resolve()
+    urdf_path = (ROOT / cad["urdf"]["path"]).resolve()
     urdf_model = load_urdf_wireframe(urdf_path, max_triangles_per_mesh=180)
     angle_revision = None
     angle_revision_path = None

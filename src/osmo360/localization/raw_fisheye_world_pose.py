@@ -21,8 +21,8 @@ import numpy as np
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation, Slerp
 
-from estimate_gripper_extrinsic import BODY_TO_PANORAMA_OPENCV
-from world_frames import compile_world_tag_map
+from osmo360.calibration.estimate_gripper_extrinsic import BODY_TO_PANORAMA_OPENCV
+from osmo360.localization.world_frames import compile_world_tag_map
 
 
 def parse_args() -> argparse.Namespace:

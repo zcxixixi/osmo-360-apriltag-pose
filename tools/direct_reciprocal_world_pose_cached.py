@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from calibrate_basetag_reciprocal import Transform, rotation_distance_deg
+from osmo360.calibration.calibrate_basetag_reciprocal import Transform, rotation_distance_deg
 from tools.joint_dual_camera_pose_graph_cached import (build_frames, direct_map,
     load_initial_wall_transform, raw_fisheye_cache_audit,
     solve_camera_wall_only, wall_support_score)

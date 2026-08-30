@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,29 @@ def list_commands(include_legacy: bool) -> dict[str, Any]:
     if include_legacy:
         result["legacy"] = registry["legacy"]
     return result
+
+
+def verify_baselines() -> dict[str, Any]:
+    modules = (
+        "osmo360.verification.verify_dual_gripper_v50_baseline",
+        "osmo360.verification.verify_x5_one_sided_force_baseline",
+    )
+    python = (
+        ROOT / ".venv/bin/python"
+        if (ROOT / ".venv/bin/python").is_file()
+        else Path(sys.executable)
+    )
+    results = []
+    for module in modules:
+        process = subprocess.run(
+            [str(python), "-m", module],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        results.append(json.loads(process.stdout))
+    return {"status": "PASS", "baselines": results}
 
 
 def parse_args() -> argparse.Namespace:
@@ -105,6 +129,7 @@ def parse_args() -> argparse.Namespace:
     review_parser.add_argument("--dry-run", action="store_true")
     command_parser = subparsers.add_parser("commands", help="list supported command paths")
     command_parser.add_argument("--legacy", action="store_true")
+    subparsers.add_parser("verify", help="run every accepted successor baseline")
     return parser.parse_args()
 
 
@@ -123,6 +148,8 @@ def main() -> int:
                 publish=args.publish,
                 dry_run=args.dry_run,
             )
+        elif args.command == "verify":
+            result = verify_baselines()
         elif args.command == "devices":
             if args.device_command == "scan":
                 result = {"devices": scan_devices()}

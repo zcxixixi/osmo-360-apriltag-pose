@@ -2,7 +2,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 from types import SimpleNamespace
 
-from calibrate_basetag_reciprocal import Transform
+from osmo360.calibration.calibrate_basetag_reciprocal import Transform
 from tools.direct_reciprocal_world_pose_cached import choose_episode_anchor, direct_camera_pair
 
 

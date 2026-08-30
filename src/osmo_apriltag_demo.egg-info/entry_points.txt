@@ -1,0 +1,2 @@
+[console_scripts]
+umi = osmo360.pipeline.cli:main

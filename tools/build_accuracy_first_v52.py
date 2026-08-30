@@ -13,9 +13,9 @@ from typing import Any
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from calibrate_basetag_reciprocal import Transform
-from fuse_asymmetric_gripper_world_pose import camera_to_base
-from rig_revision import load_rig_revision, sha256
+from osmo360.calibration.calibrate_basetag_reciprocal import Transform
+from osmo360.localization.fuse_asymmetric_gripper_world_pose import camera_to_base
+from osmo360.rig_revision import load_rig_revision, sha256
 
 
 QUATERNION_KEYS = ("qx", "qy", "qz", "qw")

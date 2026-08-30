@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from estimate_gripper_extrinsic import (
+from osmo360.calibration.estimate_gripper_extrinsic import (
     BODY_TO_PANORAMA_OPENCV,
     compose_camera_base_tcp,
     compose_camera_tag_to_base,

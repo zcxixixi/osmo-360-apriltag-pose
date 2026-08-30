@@ -19,9 +19,9 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
-from calibrate_basetag_reciprocal import Transform
-from vla_dataset_export import smooth_positions, smooth_rotations
-from world_frames import compile_world_tag_map
+from osmo360.calibration.calibrate_basetag_reciprocal import Transform
+from osmo360.datasets.vla_dataset_export import smooth_positions, smooth_rotations
+from osmo360.localization.world_frames import compile_world_tag_map
 
 
 def parse_args() -> argparse.Namespace:

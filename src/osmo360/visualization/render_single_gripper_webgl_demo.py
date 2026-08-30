@@ -13,8 +13,8 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from fuse_asymmetric_gripper_world_pose import camera_to_base
-from render_single_gripper_motion_demo import (
+from osmo360.localization.fuse_asymmetric_gripper_world_pose import camera_to_base
+from osmo360.visualization.render_single_gripper_motion_demo import (
     compose_base_track,
     fill_for_display,
     load_camera_track,
@@ -24,12 +24,12 @@ from render_single_gripper_motion_demo import (
     sample_pose,
     stats,
 )
-from rig_revision import load_rig_revision, sha256
-from vla_dataset_export import smooth_positions, smooth_rotations
-from world_frames import compile_world_tag_map
+from osmo360.rig_revision import load_rig_revision, sha256
+from osmo360.datasets.vla_dataset_export import smooth_positions, smooth_rotations
+from osmo360.localization.world_frames import compile_world_tag_map
 
 
-ROOT = Path(__file__).resolve().parent
+from osmo360.paths import ROOT
 RENDERER = ROOT / "dual_gripper_3d/render_frames.mjs"
 SINGLE_SCENE = ROOT / "dual_gripper_3d/single_gripper_scene.html"
 FFMPEG = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg"

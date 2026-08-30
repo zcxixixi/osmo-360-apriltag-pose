@@ -13,7 +13,7 @@ from tools.osmo_360_offline import (
     solve_view,
     view_to_panorama_rotation,
 )
-from world_frames import RigidTransform, compile_world_tag_map
+from osmo360.localization.world_frames import RigidTransform, compile_world_tag_map
 
 
 ROOT = Path(__file__).resolve().parents[1]

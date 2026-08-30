@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from world_frames import compile_world_tag_map
+from osmo360.localization.world_frames import compile_world_tag_map
 
 CAMERA_VISUAL_MODELS = {
     "dji-osmo-360": {

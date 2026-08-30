@@ -12,12 +12,12 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from raw_fisheye_world_pose import (
+from osmo360.localization.raw_fisheye_world_pose import (
     interpolate_initial,
     load_initial,
     solve_pose,
 )
-from world_frames import compile_world_tag_map
+from osmo360.localization.world_frames import compile_world_tag_map
 
 
 def parse_args() -> argparse.Namespace:
