@@ -1,7 +1,9 @@
 import numpy as np
+import pytest
 
 from tools.generate_a3_apriltags import mm_to_px
 from tools.run_two_tag_synthetic_experiment import (
+    PANO_ROOT,
     load_projection,
     tag_corners,
     verify_freeze,
@@ -14,6 +16,10 @@ def test_frozen_two_tag_locator_files_still_match():
     assert freeze["freeze_id"] == "two-tag-locator-20260828-v1"
 
 
+@pytest.mark.skipif(
+    not (PANO_ROOT / "app/core/maps.py").is_file(),
+    reason="external PanoForge checkout is not present on this host",
+)
 def test_factory_fisheye_projection_round_trip():
     project, pixels_to_rays = load_projection()
     rays = np.asarray([
