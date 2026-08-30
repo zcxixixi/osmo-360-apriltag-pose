@@ -1,5 +1,7 @@
 import numpy as np
-import torch
+import pytest
+
+torch = pytest.importorskip("torch", reason="optional CUDA training dependency")
 
 from tools.train_small_vla_demo import (
     SmallVlaPolicy,

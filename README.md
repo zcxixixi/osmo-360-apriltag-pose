@@ -43,6 +43,8 @@
 `src/osmo360/`，离线实验工具放在 `tools/`，兼容命令放在 `bin/`，专项说明
 放在 `docs/`。新流程优先使用 `./umi`；只有历史复现或专项诊断才运行
 `python -m tools.<module>`。
+分支、PR、Squash、版本和发布规则见
+[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。
 
 光流、插值和预测只用于连续轨迹与可视化。正式精度统计只接受满足要求的直接多 Tag 视觉测量。
 
