@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import urllib.error
+import urllib.request
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -15,6 +17,7 @@ CAMERA_SDK_BINARY = CAMERA_SDK_ROOT / "bin/CameraSDKTest"
 CAMERA_SDK_LIBRARY = CAMERA_SDK_ROOT / "lib"
 DEFAULT_INVENTORY = ROOT / "config/devices/x5_inventory.json"
 SDK_REVISION_ID = "insta360-linux-camera-2.1.1-media-3.1.1"
+DEFAULT_SERVER = os.environ.get("OSMO_VISUALIZATION_URL", "http://192.168.111.62:7865")
 DEVICE_PATTERN = re.compile(
     r"serial:(?P<serial>[A-Z0-9]+)\s*;camera type:(?P<model>[^;]+?)\s*;fw version:(?P<firmware>[^;\r\n]+)"
 )
@@ -127,3 +130,28 @@ def assign_device(
     inventory["devices"][serial]["assignment"] = assignment
     write_inventory(inventory, path)
     return inventory
+
+
+def sync_inventory(
+    path: Path = DEFAULT_INVENTORY,
+    server: str = DEFAULT_SERVER,
+) -> dict[str, Any]:
+    inventory = load_inventory(path)
+    body = json.dumps(inventory, ensure_ascii=False).encode()
+    request = urllib.request.Request(
+        server.rstrip("/") + "/api/devices",
+        data=body,
+        method="PUT",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as error:
+        try:
+            message = json.load(error).get("error", error.reason)
+        except json.JSONDecodeError:
+            message = error.reason
+        raise ManifestError(f"device inventory upload failed: {message}") from error
+    except urllib.error.URLError as error:
+        raise ManifestError(f"device inventory upload failed: {error.reason}") from error

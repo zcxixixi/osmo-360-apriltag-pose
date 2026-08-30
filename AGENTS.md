@@ -111,6 +111,9 @@ visual manager (`umi devices ui`, desktop launcher `X5设备管理`) or use
 scripts or rerun video processing merely to register another X5. The udev rule
 `config/udev/99-insta360-camera-sdk.rules` applies to every X5 on the host.
 
+After fleet changes, use `umi devices sync` or the UI sync button to publish the
+same inventory to the LAN server `/api/devices`; local JSON remains authoritative.
+
 `contact_intensity` is capture-local pad deformation, not force in Newtons and
 not cross-episode comparable. Preserve direct, recovered (maximum 0.25 s), and
 unavailable observations separately. Keep per-pad deformation before combining.

@@ -34,6 +34,10 @@
       "purpose": "bind a registered camera to a physical gripper role once"
     },
     {
+      "command": "umi devices sync",
+      "purpose": "upload the persistent fleet inventory to the LAN server"
+    },
+    {
       "command": "umi devices list",
       "purpose": "show the persistent fleet inventory without reconnecting devices"
     }

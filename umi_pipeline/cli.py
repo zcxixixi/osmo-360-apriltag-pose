@@ -8,11 +8,13 @@ from typing import Any
 
 from .manifest import ManifestError, ROOT, load_manifest, sha256
 from .devices import (
+    DEFAULT_SERVER,
     DEFAULT_INVENTORY,
     assign_device,
     load_inventory,
     register_devices,
     scan_devices,
+    sync_inventory,
 )
 from .device_ui import serve_device_ui
 from .process import process_capture
@@ -80,6 +82,11 @@ def parse_args() -> argparse.Namespace:
     )
     assign_parser.add_argument("--base-tag-id", required=True, type=int, choices=(2, 3))
     assign_parser.add_argument("--label")
+    sync_parser = device_subparsers.add_parser(
+        "sync", help="upload the persistent X5 inventory to the LAN server"
+    )
+    sync_parser.add_argument("--inventory", type=Path, default=DEFAULT_INVENTORY)
+    sync_parser.add_argument("--server", default=DEFAULT_SERVER)
     assign_parser.add_argument("--inventory", type=Path, default=DEFAULT_INVENTORY)
     ui_parser = device_subparsers.add_parser(
         "ui", help="open the local visual X5 fleet manager"
@@ -128,6 +135,11 @@ def main() -> int:
                     base_tag_id=args.base_tag_id,
                     label=args.label,
                     path=args.inventory.resolve(),
+                )
+            elif args.device_command == "sync":
+                result = sync_inventory(
+                    args.inventory.resolve(),
+                    args.server,
                 )
             elif args.device_command == "ui":
                 serve_device_ui(

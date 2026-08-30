@@ -21,6 +21,8 @@ const publicBaseUrl=argv['public-base-url']?.replace(/\/+$/,'')||null;
 const MAX_JSON_BYTES=64*1024*1024;
 const MAX_VIDEO_BYTES=8*1024*1024*1024;
 const MAX_SCENE_BYTES=2*1024*1024;
+const MAX_DEVICE_INVENTORY_BYTES=4*1024*1024;
+const deviceInventoryPath=path.join(dataDir,'x5_device_inventory.json');
 const PROJECT_ID=/^[a-z0-9-]{1,64}$/;
 
 await fsp.mkdir(dataDir,{recursive:true});
@@ -104,6 +106,22 @@ function validateTimeline(timeline){
   return {schema_version:timeline.schema_version,render_mode:timeline.render_mode||'unknown',fps:timeline.fps,frames:timeline.frames.length,duration_s:Number(timeline.duration_s??timeline.frames.at(-1).t)};
 }
 
+function validateDeviceInventory(inventory){
+  if(!inventory||inventory.schema_version!=='x5-device-inventory/1.0'||typeof inventory.devices!=='object'||Array.isArray(inventory.devices))throw Object.assign(new Error('invalid X5 device inventory'),{status:400});
+  for(const [serial,device] of Object.entries(inventory.devices)){
+    if(!/^[A-Z0-9]{10,20}$/.test(serial)||!device||device.serial!==serial||typeof device.model!=='string'||typeof device.firmware!=='string')throw Object.assign(new Error(`invalid X5 device entry: ${serial}`),{status:400});
+    if(device.assignment!==null&&device.assignment!==undefined){
+      if(!['physical_left','physical_right'].includes(device.assignment.role)||![2,3].includes(device.assignment.base_tag_id))throw Object.assign(new Error(`invalid X5 assignment: ${serial}`),{status:400})
+    }
+  }
+  return Object.keys(inventory.devices).length
+}
+
+async function readDeviceInventory(){
+  try{return JSON.parse(await fsp.readFile(deviceInventoryPath,'utf8'))}
+  catch(error){if(error.code==='ENOENT')return {schema_version:'x5-device-inventory/1.0',sdk_revision_id:null,devices:{}};throw error}
+}
+
 function serveFile(request,response,file,cache='no-store'){
   if(!fs.existsSync(file)){sendError(response,404,'not found');return}
   const stat=fs.statSync(file),range=request.headers.range;
@@ -126,6 +144,11 @@ async function handle(request,response){
   if(request.method==='GET'&&pathname==='/'){serveFile(request,response,platform);return}
   if(request.method==='GET'&&pathname==='/healthz'){sendJson(response,200,{status:'ok',service:'osmo-motion-studio',api_version:'v1'});return}
   if(request.method==='GET'&&pathname==='/api/capabilities'){sendJson(response,200,{api_version:'v1',input_mode:'processed_bundle',required_files:{timeline:{name:'timeline.json',content_type:'application/json',max_bytes:MAX_JSON_BYTES},video:{name:'front-video.mp4',content_type:'video/mp4',max_bytes:MAX_VIDEO_BYTES},scene:{name:'scene.html',content_type:'text/html',max_bytes:MAX_SCENE_BYTES}},upload_sequence:['POST /api/projects','PUT {links.timeline_upload}','PUT {links.video_upload}','PUT {links.scene_upload}','POST {links.publish}'],renderer:{scene:'project-versioned',legacy_fallback:'single_gripper_scene',fixed_mesh_revision:'gripper_v52_new_r1'}});return}
+  if(pathname==='/api/devices'&&request.method==='GET'){const inventory=await readDeviceInventory();validateDeviceInventory(inventory);sendJson(response,200,inventory);return}
+  if(pathname==='/api/devices'&&request.method==='PUT'){
+    const inventory=await readJsonBody(request,MAX_DEVICE_INVENTORY_BYTES),count=validateDeviceInventory(inventory),temporary=deviceInventoryPath+'.part';
+    await fsp.writeFile(temporary,JSON.stringify(inventory,null,2)+'\n');await fsp.rename(temporary,deviceInventoryPath);sendJson(response,200,{status:'saved',count,inventory});return
+  }
   if(request.method==='GET'&&pathname==='/api/projects'){sendJson(response,200,{projects:(await listProjects()).map(project=>projectResponse(request,project))});return}
   if(request.method==='POST'&&pathname==='/api/projects'){
     const input=await readJsonBody(request);

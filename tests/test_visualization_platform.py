@@ -66,6 +66,33 @@ def test_processed_bundle_becomes_viewable_animation(tmp_path):
         capability_data = json.loads(capabilities)
         assert capability_data["required_files"]["scene"]["name"] == "scene.html"
         assert capability_data["renderer"]["scene"] == "project-versioned"
+        _, empty_inventory, _ = _request(f"{base}/api/devices")
+        assert json.loads(empty_inventory)["devices"] == {}
+        inventory = {
+            "schema_version": "x5-device-inventory/1.0",
+            "sdk_revision_id": "sdk-test",
+            "devices": {
+                "IAHEA2606KMURQ": {
+                    "serial": "IAHEA2606KMURQ",
+                    "model": "Insta360 X5",
+                    "firmware": "v1.7.8",
+                    "assignment": {
+                        "role": "physical_right",
+                        "base_tag_id": 3,
+                    },
+                }
+            },
+        }
+        status, saved_inventory, _ = _request(
+            f"{base}/api/devices",
+            "PUT",
+            json.dumps(inventory).encode(),
+            "application/json",
+        )
+        assert status == 200
+        assert json.loads(saved_inventory)["count"] == 1
+        _, loaded_inventory, _ = _request(f"{base}/api/devices")
+        assert json.loads(loaded_inventory) == inventory
 
 
         status, body, _ = _request(

@@ -196,6 +196,9 @@ def test_visual_device_manager_exposes_required_buttons():
     assert "扫描已连接 X5" in PAGE
     assert "登记全部" in PAGE
     assert "保存分配" in PAGE
+    assert "同步到服务器" in PAGE
     assert "/api/scan" in PAGE
     assert "/api/register" in PAGE
     assert "/api/assign" in PAGE
+
+    assert "/api/sync" in PAGE
