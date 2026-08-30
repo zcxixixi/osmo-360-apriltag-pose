@@ -1,8 +1,8 @@
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from calibrate_basetag_reciprocal import Transform
-from render_single_gripper_motion_demo import (
+from osmo360.calibration.calibrate_basetag_reciprocal import Transform
+from osmo360.visualization.render_single_gripper_motion_demo import (
     CadOpeningModel,
     CameraTrack,
     compose_base_track,

@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 
 
-ROOT = Path(__file__).resolve().parent
+from osmo360.paths import ROOT
 DEFAULT_LOCK = ROOT / "config/baselines/dual_gripper_v50_accepted_baseline.json"
 
 

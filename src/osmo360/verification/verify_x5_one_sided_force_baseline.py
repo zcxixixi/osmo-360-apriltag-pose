@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parent
+from osmo360.paths import ROOT
 BASELINE = ROOT / "config/baselines/x5_left_one_sided_force_accepted_20260830.json"
 
 

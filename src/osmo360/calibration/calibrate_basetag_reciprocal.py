@@ -27,7 +27,7 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
-from estimate_gripper_extrinsic import BODY_TO_PANORAMA_OPENCV, solve_bearing_ippe
+from osmo360.calibration.estimate_gripper_extrinsic import BODY_TO_PANORAMA_OPENCV, solve_bearing_ippe
 
 
 @dataclass(frozen=True)
@@ -117,7 +117,7 @@ def make_ray_converter(calibration_path: Path, panoforge_root: Path,
     calibration = scale_calibration_to_source(calibration, source_width, source_height)
     lens = calibration["lenses"][stream]
     if radial_model_name == "factory-polynomial":
-        from raw_fisheye_world_pose import metric_radial_model
+        from osmo360.localization.raw_fisheye_world_pose import metric_radial_model
         radial_model = metric_radial_model(lens)
     else:
         radial_model = _radial_model(lens)
@@ -154,8 +154,8 @@ def detect_candidates(args: argparse.Namespace, observer_pose, target_pose) -> l
     rectified_maps = []
     if args.edge_rectification:
         from types import SimpleNamespace
-        from raw_fisheye_world_pose import make_ray_converter as raw_make_ray_converter
-        from raw_fisheye_world_pose import make_rectified_maps
+        from osmo360.localization.raw_fisheye_world_pose import make_ray_converter as raw_make_ray_converter
+        from osmo360.localization.raw_fisheye_world_pose import make_rectified_maps
         raw_args = SimpleNamespace(
             calibration=args.observer_calibration,
             panoforge_root=args.panoforge_root,
@@ -196,7 +196,7 @@ def detect_candidates(args: argparse.Namespace, observer_pose, target_pose) -> l
                 if int(tag_id) == args.tag_id
             ]
             if not detections and rectified_maps:
-                from raw_fisheye_world_pose import detect_rectified_tags
+                from osmo360.localization.raw_fisheye_world_pose import detect_rectified_tags
                 detections = [
                     (tag_id, quad) for tag_id, quad in
                     detect_rectified_tags(image, detector, rectified_maps)

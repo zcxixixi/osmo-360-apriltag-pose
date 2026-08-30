@@ -30,7 +30,7 @@ import numpy as np
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
-from coordinate_frames import DJI_BODY_TO_PANORAMA_OPENCV
+from osmo360.localization.coordinate_frames import DJI_BODY_TO_PANORAMA_OPENCV
 
 # Backwards-compatible public name. The value itself is defined once and is
 # shared with the visual/IMU solver so mount calibration cannot silently use a

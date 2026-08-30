@@ -16,12 +16,12 @@ import numpy as np
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
-from raw_fisheye_world_pose import make_ray_converter
+from osmo360.localization.raw_fisheye_world_pose import make_ray_converter
 from tools.run_physical_two_tag_camera_experiment import (
     compose, inverse, local_corners, pose_from_tag, stats,
 )
 from tools.run_two_tag_synthetic_experiment import verify_freeze
-from world_frames import compile_world_tag_map
+from osmo360.localization.world_frames import compile_world_tag_map
 
 
 from tools._root import ROOT

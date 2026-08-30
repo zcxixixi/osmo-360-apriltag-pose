@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from render_single_gripper_webgl_demo import (
+from osmo360.visualization.render_single_gripper_webgl_demo import (
     force_measurement_available,
     single_capture_id,
 )

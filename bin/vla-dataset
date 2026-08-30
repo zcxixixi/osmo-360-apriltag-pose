@@ -2,4 +2,4 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-exec uv run python vla_dataset_export.py "$@"
+exec uv run python -m osmo360.datasets.vla_dataset_export "$@"

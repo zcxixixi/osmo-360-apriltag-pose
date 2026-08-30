@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 
 from tools.build_accuracy_first_v52 import gate_reason, reject_adjacent_jumps
-from rig_revision import load_rig_revision, sha256
-from world_frames import compile_world_tag_map
+from osmo360.rig_revision import load_rig_revision, sha256
+from osmo360.localization.world_frames import compile_world_tag_map
 
 
 REPO = Path(__file__).resolve().parents[1]

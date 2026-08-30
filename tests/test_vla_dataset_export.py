@@ -8,12 +8,12 @@ import cv2
 from scipy.spatial.transform import Rotation
 import zarr
 
-from vla_dataset_export import (
+from osmo360.datasets.vla_dataset_export import (
     _compose_hardware_camera_to_tcp, _hardware_role, _rot6d, apply_camera_to_tcp,
     audit_multicamera_pair, build_episode, extract_rgb, load_gripper, load_pose_csv,
     resample_pose,
 )
-from world_frames import compile_world_tag_map
+from osmo360.localization.world_frames import compile_world_tag_map
 
 
 def write_pose(path: Path, duration: float = 4.0, fps: int = 20) -> None:
@@ -352,7 +352,7 @@ def test_ready_episode_writes_umi_zarr(tmp_path: Path, monkeypatch) -> None:
     }
     path = tmp_path / "episode.json"; path.write_text(json.dumps(spec), encoding="utf-8")
     monkeypatch.setattr(
-        "vla_dataset_export.extract_rgb",
+        "osmo360.datasets.vla_dataset_export.extract_rgb",
         lambda video, query_time, output_hw, view: np.zeros((len(query_time), *output_hw, 3), dtype=np.uint8),
     )
     output = tmp_path / "ready"

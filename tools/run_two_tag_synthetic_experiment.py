@@ -14,7 +14,11 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from coordinate_frames import DJI_BODY_TO_PANORAMA_OPENCV
+from osmo360.localization.coordinate_frames import DJI_BODY_TO_PANORAMA_OPENCV
+from osmo360.verification.historical import (
+    baseline_commit,
+    verify_historical_file,
+)
 
 
 from tools._root import ROOT
@@ -38,13 +42,10 @@ def sha256(path: Path) -> str:
 
 def verify_freeze() -> dict:
     freeze = json.loads(FREEZE.read_text(encoding="utf-8"))
+    baseline_path = "config/baselines/two_tag_locator_20260828_v1.json"
+    commit = baseline_commit(baseline_path)
     for item in freeze["algorithm"]["files"]:
-        path = Path(item["path"])
-        if not path.is_absolute():
-            path = ROOT / path
-        actual = sha256(path)
-        if actual != item["sha256"]:
-            raise RuntimeError(f"frozen locator mismatch: {path}: {actual}")
+        verify_historical_file(commit, item["path"], item["sha256"])
     if sha256(Path(freeze["calibration"]["path"])) != freeze["calibration"]["sha256"]:
         raise RuntimeError("frozen calibration hash mismatch")
     return freeze
@@ -425,7 +426,7 @@ def main() -> int:
     locator_dir = root / "locator-output"
     locator_dir.mkdir()
     command = [
-        str(ROOT / ".venv/bin/python"), str(ROOT / "raw_fisheye_world_pose.py"),
+        str(ROOT / ".venv/bin/python"), "-m", "osmo360.localization.raw_fisheye_world_pose",
         str(video), "--calibration", str(CALIBRATION), "--tag-map", str(tag_map),
         "--output-dir", str(locator_dir), "--panoforge-root", str(PANO_ROOT),
         "--stream", "1", "--source-width", str(FRAME_SIZE),

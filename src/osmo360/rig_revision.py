@@ -9,10 +9,10 @@ from typing import Any
 
 import numpy as np
 
-from world_frames import compile_world_tag_map
+from osmo360.localization.world_frames import compile_world_tag_map
 
 
-ROOT = Path(__file__).resolve().parent
+from osmo360.paths import ROOT
 SCHEMA = "dual-gripper-rig-revision/1.0"
 
 

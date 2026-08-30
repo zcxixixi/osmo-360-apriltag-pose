@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 
-from raw_fisheye_world_pose import (
+from osmo360.localization.raw_fisheye_world_pose import (
     detect_rectified_tags,
     make_ray_converter,
     make_rectified_maps,

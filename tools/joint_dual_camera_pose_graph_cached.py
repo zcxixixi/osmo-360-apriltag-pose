@@ -18,8 +18,8 @@ import numpy as np
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
-from calibrate_basetag_reciprocal import Transform, interpolate_pose, load_pose, rotation_distance_deg
-from estimate_gripper_extrinsic import solve_bearing_ippe
+from osmo360.calibration.calibrate_basetag_reciprocal import Transform, interpolate_pose, load_pose, rotation_distance_deg
+from osmo360.calibration.estimate_gripper_extrinsic import solve_bearing_ippe
 from tools.joint_camera_correction_cached import own_tag_transform
 
 

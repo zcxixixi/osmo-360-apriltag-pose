@@ -13,7 +13,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 import zarr
 
-from world_frames import compile_world_tag_map
+from osmo360.localization.world_frames import compile_world_tag_map
 
 
 from tools._root import ROOT

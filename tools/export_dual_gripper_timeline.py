@@ -13,7 +13,7 @@ from scipy.interpolate import PchipInterpolator
 from scipy.ndimage import median_filter
 from scipy.spatial.transform import Rotation, Slerp
 
-from render_trajectory_overlay_video import kalman_rts_filter
+from osmo360.visualization.render_trajectory_overlay_video import kalman_rts_filter
 
 
 def args_parser() -> argparse.Namespace:

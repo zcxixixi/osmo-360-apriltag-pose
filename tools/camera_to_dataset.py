@@ -13,7 +13,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from world_frames import compile_world_tag_map
+from osmo360.localization.world_frames import compile_world_tag_map
 from tools.insta360_sdk_revision import DEFAULT_REVISION as INSTA360_SDK_REVISION, load_insta360_sdk_revision
 
 

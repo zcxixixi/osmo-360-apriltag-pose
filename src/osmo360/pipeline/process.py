@@ -19,7 +19,8 @@ def _force_command(manifest: CaptureManifest) -> list[str]:
     pipeline = data["pipeline"]
     command = [
         str(PYTHON),
-        str(ROOT / "render_gripper_force_angle_demo.py"),
+        "-m",
+        "osmo360.visualization.render_gripper_force_angle_demo",
         str(manifest.identity_path("inputs", "raw_video")),
         "--source-osv",
         str(manifest.identity_path("inputs", "raw_video")),
@@ -55,7 +56,8 @@ def _timeline_command(manifest: CaptureManifest) -> list[str]:
     force_dir = manifest.output_path("force_angle_dir")
     return [
         str(PYTHON),
-        str(ROOT / "render_single_gripper_webgl_demo.py"),
+        "-m",
+        "osmo360.visualization.render_single_gripper_webgl_demo",
         str(manifest.identity_path("inputs", "raw_video")),
         "--source-osv",
         str(manifest.identity_path("inputs", "raw_video")),

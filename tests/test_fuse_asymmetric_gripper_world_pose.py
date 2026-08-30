@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from fuse_asymmetric_gripper_world_pose import resample_bounded_base
+from osmo360.localization.fuse_asymmetric_gripper_world_pose import resample_bounded_base
 
 
 def test_bounded_base_resampling_keeps_measured_rotation_and_rejects_long_gaps() -> None:

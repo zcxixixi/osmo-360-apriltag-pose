@@ -15,10 +15,10 @@ from scipy.optimize import brentq
 from scipy.spatial.transform import Rotation, Slerp
 import trimesh
 
-from calibrate_basetag_reciprocal import Transform
-from fuse_asymmetric_gripper_world_pose import camera_to_base
-from render_dual_camera_alignment_demo import UrdfWireframe, load_urdf_wireframe
-from render_gripper_force_angle_demo import (
+from osmo360.calibration.calibrate_basetag_reciprocal import Transform
+from osmo360.localization.fuse_asymmetric_gripper_world_pose import camera_to_base
+from osmo360.visualization.render_dual_camera_alignment_demo import UrdfWireframe, load_urdf_wireframe
+from osmo360.visualization.render_gripper_force_angle_demo import (
     AMBER,
     BG,
     CYAN,
@@ -31,7 +31,8 @@ from render_gripper_force_angle_demo import (
     observe_frame,
     transcode_h264,
 )
-from rig_revision import load_rig_revision, sha256
+from osmo360.paths import ROOT
+from osmo360.rig_revision import load_rig_revision, sha256
 
 
 @dataclass
@@ -532,7 +533,7 @@ def main() -> int:
     cad = rig["cad_revision"]
     if cad is None:
         raise ValueError("rig revision does not pin a renderable CAD revision")
-    root = Path(__file__).resolve().parent
+    root = ROOT
     mesh_dir = (root / cad["mesh_directory"]).resolve()
     urdf_path = (root / cad["urdf"]["path"]).resolve()
     cad_model = make_cad_opening_model(mesh_dir, rig["geometry"])

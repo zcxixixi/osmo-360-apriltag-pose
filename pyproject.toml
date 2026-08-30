@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-umi = "umi_pipeline.cli:main"
+umi = "osmo360.pipeline.cli:main"
 
 [project.optional-dependencies]
 test = ["pytest>=8.3,<10"]
@@ -25,4 +25,11 @@ gpu = ["cupy-cuda13x[ctk]>=14.2,<15"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = ["src", "."]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

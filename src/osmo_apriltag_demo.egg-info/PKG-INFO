@@ -1,0 +1,19 @@
+Metadata-Version: 2.4
+Name: osmo-apriltag-demo
+Version: 0.1.0
+Summary: Offline Osmo 360 panorama AprilGrid pose processor with legacy RTMP demo
+Requires-Python: <3.14,>=3.11
+Requires-Dist: flask>=3.1.3
+Requires-Dist: matplotlib>=3.11.1
+Requires-Dist: numpy<3,>=2.0
+Requires-Dist: opencv-contrib-python<5,>=4.10
+Requires-Dist: py360convert<2,>=1.0.4
+Requires-Dist: python-fcl<0.8,>=0.7
+Requires-Dist: rtree<2,>=1.4
+Requires-Dist: scipy<2,>=1.13
+Requires-Dist: trimesh<6,>=5
+Requires-Dist: zarr<3,>=2.18
+Provides-Extra: test
+Requires-Dist: pytest<10,>=8.3; extra == "test"
+Provides-Extra: gpu
+Requires-Dist: cupy-cuda13x[ctk]<15,>=14.2; extra == "gpu"

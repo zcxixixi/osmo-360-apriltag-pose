@@ -1,9 +1,9 @@
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from calibrate_basetag_reciprocal import Transform
+from osmo360.calibration.calibrate_basetag_reciprocal import Transform
 from tools.direct_cross_basetag_world_pose_cached import _continuous_ippe, base_from_observer
-from vla_dataset_export import load_pose_csv
+from osmo360.datasets.vla_dataset_export import load_pose_csv
 
 
 def test_direct_cross_chain_recovers_base_without_own_camera_extrinsic():
