@@ -1,0 +1,67 @@
+{
+  "schema_version": "x5-jaw-angle-revision/1.0",
+  "revision_id": "x5-jaw-angle-yellow-dots-adaptive-20260830-r3",
+  "status": "USER_DIRECTED_ADAPTIVE_PAD_DOTS_WITH_LOW_CONFIDENCE_FALLBACK",
+  "detector": {
+    "algorithm": "three_yellow_pad_dot_centroids",
+    "included_angle_range_deg": [
+      25.0,
+      80.0
+    ],
+    "opening_definition": "closed_reference_included_angle_deg - measured_included_angle_deg",
+    "maximum_recovery_gap_s": 0.25,
+    "marker_definition": "three highlighted yellow circular dots on each black jaw pad",
+    "dot_selection": "adaptive-black-pad",
+    "selection_policy": "black-annulus circular candidates; side-specific collinear triple; vertical-shift tolerant"
+  },
+  "hardware": {
+    "physical_right": {
+      "base_tag_id": 3,
+      "closed_reference_included_angle_deg": 46.74946170192486,
+      "zero_evidence": {
+        "source_video": "/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/raw/VID_20260829_114845_00_002.insv",
+        "source_sha256": "6182831beaae69c99c9943d3c5ea1771cd76385a8463448cd3995d6bc81bfa6f",
+        "frame_interval": [
+          30,
+          45
+        ],
+        "measured_frames": 7,
+        "statistic": "median included angle over user-confirmed near-closed interval"
+      },
+      "single_side_fallback": {
+        "preferred_measurement": "bilateral",
+        "available_side": "right",
+        "model": "quadratic_relative_axis_heading",
+        "heading_center_deg": -113.58364217286946,
+        "coefficients_high_to_low": [
+          0.09591776874304542,
+          0.9617756155467773,
+          1.3118882061862378
+        ],
+        "validated_output_range_deg": [
+          0.0,
+          11.5
+        ],
+        "maximum_step_deg": 3.0,
+        "continuity_max_age_frames": 7,
+        "measurement_state": "MEASURED_ONE_SIDED_RIGHT_LOW_CONFIDENCE",
+        "blocked_holdout": {
+          "split": "alternating 2-second blocks",
+          "train_frames": 286,
+          "test_frames": 324,
+          "mae_deg": 0.8171912924224143,
+          "p95_deg": 2.0348689582415216,
+          "max_deg": 2.51347064133543
+        }
+      }
+    }
+  },
+  "policy": {
+    "bilateral_measurement_preferred": true,
+    "one_sided_is_lower_confidence": true,
+    "per_capture_percentile_zero_forbidden": true,
+    "unavailable_longer_than_s": 0.25,
+    "unavailable_behavior": "preserve N/A; hide CAD jaw links",
+    "training_ready": false
+  }
+}

@@ -120,6 +120,14 @@ unavailable observations separately. Keep per-pad deformation before combining.
 Use the opening-conditioned lower envelope in `force-angle-v3`; do not restore
 the rejected global MAD deadband.
 
+The rigid-object fixed-scale experiment
+`force-angle-v16-fixed-relative-scale/` is rejected as force: USB-drive and tape
+roll residuals (0.57 px / 1.99 px) are below the free-motion P99 noise floor
+(10.53 px). Do not lower the threshold or publish that result as force. The
+replacement is the printable TPU displacement-amplifier prototype
+`config/rig_revisions/gripper_force_flexure_tpu_20260830_r1.json`; it remains
+non-training until printed, installed, cycled, and calibrated from 0–100%.
+
 For a training field, define one immutable scale per hardware revision. Never
 normalize each episode independently.
 

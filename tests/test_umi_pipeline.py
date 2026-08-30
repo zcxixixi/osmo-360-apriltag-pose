@@ -125,9 +125,26 @@ def test_manifest_rejects_hash_drift(tmp_path):
     data = json.loads(path.read_text())
     data["inputs"]["raw_video"]["sha256"] = "0" * 64
     path.write_text(json.dumps(data))
-
     with pytest.raises(ManifestError, match="hash mismatch"):
         load_manifest(path)
+
+
+def test_manifest_optional_relative_force_revision_reaches_processor(tmp_path):
+    path = _manifest(tmp_path)
+    force_revision = tmp_path / "relative-force.json"
+    force_revision.write_text('{"revision_id":"force-test"}\n')
+    data = json.loads(path.read_text())
+    data["revisions"]["relative_force"] = _identity(force_revision)
+    path.write_text(json.dumps(data))
+
+    result = process_capture(load_manifest(path), dry_run=True)
+    command = result["commands"][0]
+
+    assert "--relative-force-revision" in command
+    assert command[command.index("--relative-force-revision") + 1] == str(
+        force_revision
+    )
+
 
 
 def test_existing_outputs_become_immutable_review_bundle(tmp_path):

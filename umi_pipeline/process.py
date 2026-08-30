@@ -38,6 +38,13 @@ def _force_command(manifest: CaptureManifest) -> list[str]:
         str(pipeline["maximum_recovery_gap_s"]),
         "--display-relative-fingertip-force",
     ]
+    if "relative_force" in data["revisions"]:
+        command.extend(
+            (
+                "--relative-force-revision",
+                str(manifest.identity_path("revisions", "relative_force")),
+            )
+        )
     for event in pipeline.get("contact_events_s", []):
         command.extend(("--contact-event-s", str(float(event))))
     return command
@@ -91,6 +98,11 @@ def _verify_force_output(manifest: CaptureManifest) -> dict[str, Any]:
         raise ManifestError("force output rig revision mismatch")
     if audit.get("angle", {}).get("revision", {}).get("sha256") != expected["revisions"]["jaw_angle"]["sha256"]:
         raise ManifestError("force output jaw-angle revision mismatch")
+    expected_force = expected["revisions"].get("relative_force")
+    if expected_force is not None:
+        actual_force = audit.get("force", {}).get("revision", {})
+        if actual_force.get("sha256") != expected_force["sha256"]:
+            raise ManifestError("force output relative-force revision mismatch")
     return audit
 
 

@@ -8,6 +8,7 @@ from render_gripper_force_angle_demo import (
     ForceModel,
     FrameObservation,
     apply_one_sided_opening_fallback,
+    apply_fixed_relative_force,
     bounded_interpolate,
     local_to_point,
     draw_detection_overlay,
@@ -148,8 +149,42 @@ def test_one_sided_right_axis_is_explicit_low_confidence_measurement():
     ]
     assert audit["one_sided_right_frames"] == 1
 
+
+def test_fixed_relative_force_rejects_free_motion_noise():
+    left_dot = DotObservation(np.array([0.0, 0.0]), 50.0, 0.8)
+    observations = [
+        FrameObservation(
+            np.ones((3, 2)),
+            np.ones((3, 2)),
+            left_dot,
+            DotObservation(np.array([gap, 0.0]), 50.0, 0.8),
+            45.0,
+        )
+        for gap in (103.0, 110.0, 125.0)
+    ]
+    revision = {
+        "revision_id": "force-test",
+        "quantity": "hardware_revision_relative_fingertip_force",
+        "model": {
+            "expected_gap_polynomial_high_to_low": [100.0],
+            "opening_support_deg": [0.0, 10.0],
+            "noise_floor_px": 5.0,
+            "full_scale_signal_px": 10.0,
+        },
+    }
+
+    force, audit = apply_fixed_relative_force(
+        observations, np.array([1.0, 1.0, 1.0]), revision
+    )
+
+    assert force.tolist() == pytest.approx([0.0, 50.0, 100.0])
+    assert audit["fixed_scale_across_captures"] is True
+    assert audit["zero_force_frame_ratio"] == pytest.approx(1 / 3)
+
 def test_x5_profile_detects_jaw_axes_and_pad_dots():
     image = np.full((1920, 1920, 3), 255, dtype=np.uint8)
+    cv2.rectangle(image, (650, 1240), (870, 1680), (20, 20, 20), -1)
+    cv2.rectangle(image, (1050, 1240), (1270, 1680), (20, 20, 20), -1)
     yellow = (0, 255, 255)
     for point in [(800, 1360), (770, 1450), (720, 1560)]:
         cv2.circle(image, point, 12, yellow, -1)
@@ -204,6 +239,33 @@ def test_x5_profile_detects_jaw_axes_and_pad_dots():
     )
     assert np.count_nonzero(force_amber_like) > 20
     assert observation.dot_right is not None
+
+
+def test_x5_adaptive_dot_selection_handles_vertical_image_shift():
+    image = np.full((1920, 1920, 3), 255, dtype=np.uint8)
+    cv2.rectangle(image, (620, 940), (880, 1450), (20, 20, 20), -1)
+    cv2.rectangle(image, (1040, 940), (1300, 1450), (20, 20, 20), -1)
+    yellow = (0, 255, 255)
+    for point in [(800, 1050), (760, 1140), (700, 1280)]:
+        cv2.circle(image, point, 12, yellow, -1)
+    for point in [(1120, 1050), (1160, 1140), (1220, 1280)]:
+        cv2.circle(image, point, 12, yellow, -1)
+
+    fixed = observe_frame(
+        image, "insta360-x5-front", "physical-marker-triad"
+    )
+    adaptive = observe_frame(
+        image,
+        "insta360-x5-front",
+        "physical-marker-triad",
+        (25.0, 80.0),
+        "adaptive-black-pad",
+    )
+
+    assert not np.isfinite(fixed.included_angle_deg)
+    assert np.isfinite(adaptive.included_angle_deg)
+    assert adaptive.yellow_left is not None
+    assert adaptive.yellow_right is not None
 
 
 def test_x5_accepted_pca_mode_tracks_yellow_jaw_contours():

@@ -555,6 +555,9 @@ def main() -> int:
                     "application_point"
                 ),
                 "direction": left_force_audit.get("force", {}).get("direction"),
+                "fixed_scale_across_captures": left_force_audit.get(
+                    "force", {}
+                ).get("fixed_scale_across_captures", False),
                 "display_metric": (
                     "black_dot_gap_px"
                     if not left_force_valid and left_has_black_dot_gap

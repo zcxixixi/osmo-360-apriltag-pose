@@ -83,13 +83,17 @@ class CaptureManifest:
         required_revisions = {"rig", "jaw_angle", "marker_layout", "renderer"}
         if set(self.data.get("inputs", {})) != required_inputs:
             raise ManifestError(f"inputs must contain exactly {sorted(required_inputs)}")
-        if set(self.data.get("revisions", {})) != required_revisions:
+        revision_names = set(self.data.get("revisions", {}))
+        allowed_revisions = required_revisions | {"relative_force"}
+        if not required_revisions.issubset(revision_names) or not revision_names.issubset(
+            allowed_revisions
+        ):
             raise ManifestError(
-                f"revisions must contain exactly {sorted(required_revisions)}"
+                f"revisions must contain {sorted(required_revisions)} and may include relative_force"
             )
         for section, names in (
             ("inputs", required_inputs),
-            ("revisions", required_revisions),
+            ("revisions", revision_names),
         ):
             for name in names:
                 self.verify_identity(section, name)

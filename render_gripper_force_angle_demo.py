@@ -8,6 +8,7 @@ import csv
 import json
 import shutil
 import subprocess
+from itertools import combinations
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -118,6 +119,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--x5-angle-revision", type=Path)
     parser.add_argument("--base-tag-id", type=int, choices=(2, 3))
     parser.add_argument("--allow-diagnostic-rig", action="store_true")
+    parser.add_argument("--relative-force-revision", type=Path)
     return parser.parse_args()
 
 
@@ -180,7 +182,9 @@ def detect_x5_yellow_axis(hsv: np.ndarray, side: str) -> np.ndarray | None:
     return max(candidates, key=lambda item: item[0])[1]
 
 
-def detect_x5_yellow_triad(hsv: np.ndarray, side: str) -> np.ndarray | None:
+def detect_x5_yellow_triad_fixed(
+    hsv: np.ndarray, side: str
+) -> np.ndarray | None:
     height, width = hsv.shape[:2]
     scale = width / 1920.0
     mask = cv2.inRange(hsv, YELLOW_LOW, YELLOW_HIGH)
@@ -220,17 +224,93 @@ def detect_x5_yellow_triad(hsv: np.ndarray, side: str) -> np.ndarray | None:
     return result
 
 
+def detect_x5_yellow_triad_adaptive(
+    hsv: np.ndarray, side: str
+) -> np.ndarray | None:
+    height, width = hsv.shape[:2]
+    scale = width / 1920.0
+    mask = cv2.inRange(hsv, YELLOW_LOW, YELLOW_HIGH)
+    roi = np.zeros((height, width), dtype=np.uint8)
+    x0, x1 = ((450, 960) if side == "left" else (960, 1470))
+    roi[
+        round(950 * scale):round(1800 * scale),
+        round(x0 * scale):round(x1 * scale),
+    ] = 255
+    mask = cv2.bitwise_and(mask, roi)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    candidates: list[tuple[float, np.ndarray]] = []
+    for contour in contours:
+        area = float(cv2.contourArea(contour))
+        if not 50 * scale * scale <= area <= 1200 * scale * scale:
+            continue
+        x, y, box_width, box_height = cv2.boundingRect(contour)
+        if not 0.45 <= box_width / max(box_height, 1) <= 2.2:
+            continue
+        centre = contour_centroid(contour)
+        if centre is None:
+            continue
+        radius = max(box_width, box_height)
+        patch_y0 = max(0, y - radius)
+        patch_y1 = min(height, y + box_height + radius)
+        patch_x0 = max(0, x - radius)
+        patch_x1 = min(width, x + box_width + radius)
+        patch = hsv[patch_y0:patch_y1, patch_x0:patch_x1]
+        grid_y, grid_x = np.mgrid[patch_y0:patch_y1, patch_x0:patch_x1]
+        distance = np.hypot(grid_x - centre[0], grid_y - centre[1])
+        annulus = (distance >= 0.8 * radius) & (distance <= 1.8 * radius)
+        dark = (patch[..., 1] < 90) | (patch[..., 2] < 90)
+        dark_fraction = float(dark[annulus].mean()) if annulus.any() else 0.0
+        if dark_fraction < 0.35:
+            continue
+        candidates.append((area, centre))
+
+    best: tuple[float, np.ndarray] | None = None
+    for items in combinations(candidates, 3):
+        points = np.asarray(
+            sorted((item[1] for item in items), key=lambda point: point[1])
+        )
+        top, middle, bottom = points
+        span = float(np.linalg.norm(top - bottom))
+        if not 140 * scale <= span <= 450 * scale:
+            continue
+        first_gap = float(np.linalg.norm(top - middle))
+        second_gap = float(np.linalg.norm(middle - bottom))
+        if min(first_gap, second_gap) < 35 * scale:
+            continue
+        horizontal_delta = float(bottom[0] - top[0])
+        if (side == "left" and horizontal_delta > -15 * scale) or (
+            side == "right" and horizontal_delta < 15 * scale
+        ):
+            continue
+        centered = points - points.mean(axis=0)
+        _, _, axes = np.linalg.svd(centered, full_matrices=False)
+        normal = axes[1]
+        line_residual = float(np.max(np.abs(centered @ normal)))
+        if line_residual > 22 * scale:
+            continue
+        gap_ratio_penalty = abs(float(np.log(first_gap / second_gap)))
+        area_reward = sum(item[0] for item in items) / (3000 * scale * scale)
+        score = line_residual / scale + 6.0 * gap_ratio_penalty - area_reward
+        if best is None or score < best[0]:
+            best = (score, points)
+    return None if best is None else best[1]
+
+
 def detect_yellow_triad(
     hsv: np.ndarray,
     side: str,
     camera_profile: str = "osmo-front",
     x5_angle_mode: str = "pca-axis",
+    x5_dot_selection: str = "fixed-bands",
 ) -> np.ndarray | None:
     if camera_profile == "insta360-x5-front":
+        if x5_angle_mode == "pca-axis":
+            return detect_x5_yellow_axis(hsv, side)
         return (
-            detect_x5_yellow_axis(hsv, side)
-            if x5_angle_mode == "pca-axis"
-            else detect_x5_yellow_triad(hsv, side)
+            detect_x5_yellow_triad_adaptive(hsv, side)
+            if x5_dot_selection == "adaptive-black-pad"
+            else detect_x5_yellow_triad_fixed(hsv, side)
         )
     height, width = hsv.shape[:2]
     scale = width / 1920.0
@@ -371,17 +451,23 @@ def observe_frame(
     image: np.ndarray,
     camera_profile: str = "osmo-front",
     x5_angle_mode: str = "pca-axis",
+    x5_included_angle_range: tuple[float, float] = (35.0, 80.0),
+    x5_dot_selection: str = "fixed-bands",
 ) -> FrameObservation:
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    left = detect_yellow_triad(hsv, "left", camera_profile, x5_angle_mode)
-    right = detect_yellow_triad(hsv, "right", camera_profile, x5_angle_mode)
+    left = detect_yellow_triad(
+        hsv, "left", camera_profile, x5_angle_mode, x5_dot_selection
+    )
+    right = detect_yellow_triad(
+        hsv, "right", camera_profile, x5_angle_mode, x5_dot_selection
+    )
     angle = np.nan
     if left is not None and right is not None:
         candidate = included_jaw_angle(left, right)
         low, high = (
             (5.0, 50.0)
             if camera_profile == "insta360-x5-front" and x5_angle_mode == "pca-axis"
-            else (35.0, 80.0)
+            else x5_included_angle_range
             if camera_profile == "insta360-x5-front"
             else (40.0, 80.0)
         )
@@ -447,6 +533,8 @@ def analyze_video(
     path: Path,
     camera_profile: str = "osmo-front",
     x5_angle_mode: str = "pca-axis",
+    x5_included_angle_range: tuple[float, float] = (35.0, 80.0),
+    x5_dot_selection: str = "fixed-bands",
 ) -> tuple[list[FrameObservation], float, tuple[int, int]]:
     capture = cv2.VideoCapture(str(path))
     if not capture.isOpened():
@@ -461,7 +549,15 @@ def analyze_video(
         ok, image = capture.read()
         if not ok:
             break
-        observations.append(observe_frame(image, camera_profile, x5_angle_mode))
+        observations.append(
+            observe_frame(
+                image,
+                camera_profile,
+                x5_angle_mode,
+                x5_included_angle_range,
+                x5_dot_selection,
+            )
+        )
     capture.release()
     if not observations:
         raise ValueError("front-lens video has no decodable frames")
@@ -555,6 +651,63 @@ def apply_one_sided_opening_fallback(
     audit["holdout"] = fallback.get("blocked_holdout")
     audit["model"] = fallback.get("model")
     return result, states, audit
+
+
+def apply_fixed_relative_force(
+    observations: list[FrameObservation],
+    opening: np.ndarray,
+    revision: dict,
+) -> tuple[np.ndarray, dict]:
+    model = revision["model"]
+    coefficients = np.asarray(
+        model["expected_gap_polynomial_high_to_low"], dtype=float
+    )
+    opening_low, opening_high = map(float, model["opening_support_deg"])
+    noise_floor = float(model["noise_floor_px"])
+    full_scale = float(model["full_scale_signal_px"])
+    force = np.full(len(observations), np.nan)
+    residuals = np.full(len(observations), np.nan)
+    measured = 0
+    for index, observation in enumerate(observations):
+        if (
+            not np.isfinite(opening[index])
+            or not np.isfinite(observation.included_angle_deg)
+            or observation.dot_left is None
+            or observation.dot_right is None
+            or not opening_low <= opening[index] <= opening_high
+        ):
+            continue
+        gap = float(
+            np.linalg.norm(
+                observation.dot_right.point - observation.dot_left.point
+            )
+        )
+        expected_gap = float(np.polyval(coefficients, opening[index]))
+        residual = abs(gap - expected_gap)
+        signal = max(residual - noise_floor, 0.0)
+        force[index] = float(np.clip(100.0 * signal / full_scale, 0.0, 100.0))
+        residuals[index] = residual
+        measured += 1
+    finite = np.isfinite(force)
+    if not np.any(finite):
+        raise ValueError("relative-force revision produced no measurements")
+    audit = {
+        "revision_id": revision["revision_id"],
+        "quantity": revision["quantity"],
+        "fixed_scale_across_captures": True,
+        "measured_frames": measured,
+        "measured_frame_ratio": measured / len(observations),
+        "noise_floor_px": noise_floor,
+        "full_scale_signal_px": full_scale,
+        "opening_support_deg": [opening_low, opening_high],
+        "relative_force_range_percent": [
+            float(np.nanmin(force)),
+            float(np.nanmax(force)),
+        ],
+        "zero_force_frame_ratio": float(np.mean(force[finite] == 0.0)),
+        "residual_p95_px": float(np.nanpercentile(residuals, 95.0)),
+    }
+    return force, audit
 
 
 def labeled_contact_gap_audit(
@@ -1399,6 +1552,11 @@ def main() -> int:
     hardware_role = None
     camera_serial = None
     x5_angle_mode = "pca-axis"
+    x5_included_angle_range = (35.0, 80.0)
+    x5_dot_selection = "fixed-bands"
+    force_revision = None
+    force_revision_path = None
+    fixed_force_audit = None
     if args.camera_profile == "insta360-x5-front":
         if args.x5_angle_revision is None or args.base_tag_id is None:
             raise ValueError(
@@ -1415,6 +1573,10 @@ def main() -> int:
         if algorithm not in angle_modes:
             raise ValueError(f"unsupported X5 angle algorithm: {algorithm!r}")
         x5_angle_mode = angle_modes[algorithm]
+        x5_included_angle_range = tuple(
+            map(float, detector.get("included_angle_range_deg", [35.0, 80.0]))
+        )
+        x5_dot_selection = str(detector.get("dot_selection", "fixed-bands"))
         role = "physical_left" if args.base_tag_id == 2 else "physical_right"
         hardware_angle = angle_revision.get("hardware", {}).get(role, {})
         if hardware_angle.get("base_tag_id") != args.base_tag_id:
@@ -1445,12 +1607,38 @@ def main() -> int:
             raise ValueError("accepted X5 angle revision requires a 0.25 s recovery gap")
     elif args.x5_angle_revision is not None or args.base_tag_id is not None:
         raise ValueError("X5 angle revision arguments require insta360-x5-front")
-
+    if args.relative_force_revision is not None:
+        if args.camera_profile != "insta360-x5-front":
+            raise ValueError("relative force revisions currently require Insta360 X5")
+        force_revision_path = args.relative_force_revision.resolve(strict=True)
+        force_revision = json.loads(
+            force_revision_path.read_text(encoding="utf-8")
+        )
+        if force_revision.get("schema_version") != "x5-relative-force-revision/1.0":
+            raise ValueError("invalid X5 relative-force revision schema")
+        if force_revision.get("source", {}).get("video_sha256") != sha256(source_osv):
+            raise ValueError("relative-force revision source-video mismatch")
+        force_hardware = force_revision.get("hardware", {})
+        if (
+            force_hardware.get("camera_serial") != camera_serial
+            or force_hardware.get("base_tag_id") != args.base_tag_id
+        ):
+            raise ValueError("relative-force revision hardware binding mismatch")
+        if (
+            angle_revision_path is None
+            or force_hardware.get("angle_revision", {}).get("sha256")
+            != sha256(angle_revision_path)
+        ):
+            raise ValueError("relative-force revision angle binding mismatch")
 
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=False)
     observations, fps, size = analyze_video(
-        front_video, args.camera_profile, x5_angle_mode
+        front_video,
+        args.camera_profile,
+        x5_angle_mode,
+        x5_included_angle_range,
+        x5_dot_selection,
     )
     raw_opening, closed_reference = opening_angles(
         observations, closed_reference_override
@@ -1478,9 +1666,15 @@ def main() -> int:
                 f"BaseTag binding mismatch: ID{other_tag_id} is more visible than "
                 f"ID{args.base_tag_id}"
             )
-    force_model, raw_force, gap_component, shape_component = fit_force_model(
+    force_model, legacy_raw_force, gap_component, shape_component = fit_force_model(
         observations, raw_opening
     )
+    if force_revision is not None:
+        raw_force, fixed_force_audit = apply_fixed_relative_force(
+            observations, raw_opening, force_revision
+        )
+    else:
+        raw_force = legacy_raw_force
     maximum_gap = round(args.maximum_recovery_gap_s * fps)
     opening, opening_recovered = bounded_interpolate(raw_opening, maximum_gap)
     angle_sources[opening_recovered] = "RECOVERED <= 0.25 s"
@@ -1508,6 +1702,7 @@ def main() -> int:
     x5_force_rejected = (
         args.camera_profile == "insta360-x5-front"
         and not args.display_relative_fingertip_force
+        and force_revision is None
     )
 
     csv_path = output_dir / "force_angle_observations.csv"
@@ -1571,6 +1766,8 @@ def main() -> int:
         "status": (
             "REJECTED_X5_FORCE_MODEL_UNVALIDATED"
             if x5_force_rejected
+            else "DIAGNOSTIC_FIXED_SCALE_RELATIVE_FINGERTIP_FORCE"
+            if force_revision is not None
             else "DIAGNOSTIC_UNCALIBRATED_RELATIVE_FINGERTIP_FORCE"
             if args.camera_profile == "insta360-x5-front"
             else "DIAGNOSTIC_UNCALIBRATED_RELATIVE_FORCE"
@@ -1639,7 +1836,11 @@ def main() -> int:
             "unit": "relative_percent",
             "newtons_calibrated": False,
             "validated_for_display": not x5_force_rejected,
-            "quantity": "capture_local_relative_fingertip_force_proxy",
+            "quantity": (
+                force_revision["quantity"]
+                if force_revision is not None
+                else "capture_local_relative_fingertip_force_proxy"
+            ),
             "application_point": "two distal fingertip contact points",
             "direction": "equal and opposite inward vectors along the jaw-closing axis",
             "rejection_reason": (
@@ -1647,18 +1848,59 @@ def main() -> int:
                 "location; no load ground truth is available, so force remains unvalidated."
                 if x5_force_rejected else None
             ),
-            "method": "black-dot gap residual versus rigid yellow-marker prediction plus dot centroid and ellipse-shape change",
-            "weights": {"gap_strain": 0.70, "local_dot_residual": 0.20, "ellipse_shape": 0.10},
-            "unloaded_selection": "top 35 percent of measured opening angles in this capture",
-            "baseline": force_model.baseline,
-            "baseline_noise_mad": force_model.noise_mad,
-            "onset_noise_floor": force_model.noise_floor,
-            "onset_policy": "opening-conditioned 10th-percentile lower envelope; removes unloaded jaw-angle coupling before continuous normalization",
-            "full_scale_99th_percentile": force_model.full_scale,
-            "measured_frame_ratio": float((yellow_measured & black_measured).mean()),
-            "relative_force_range_percent": [float(np.nanmin(force)), float(np.nanmax(force))],
+            "method": (
+                "fixed opening-conditioned absolute black-dot gap residual"
+                if force_revision is not None
+                else "black-dot gap residual versus rigid yellow-marker prediction plus dot centroid and ellipse-shape change"
+            ),
+            "revision": (
+                {
+                    "path": str(force_revision_path),
+                    "id": force_revision["revision_id"],
+                    "sha256": sha256(force_revision_path),
+                }
+                if force_revision is not None and force_revision_path is not None
+                else None
+            ),
+            "fixed_scale_across_captures": force_revision is not None,
+            "capture_local_normalization": force_revision is None,
+            "unloaded_selection": (
+                force_revision["source"]["free_intervals_s"]
+                if force_revision is not None
+                else "top 35 percent of measured opening angles in this capture"
+            ),
+            "baseline": None if force_revision is not None else force_model.baseline,
+            "baseline_noise_mad": (
+                None if force_revision is not None else force_model.noise_mad
+            ),
+            "onset_noise_floor": (
+                fixed_force_audit["noise_floor_px"]
+                if fixed_force_audit is not None else force_model.noise_floor
+            ),
+            "onset_policy": (
+                "fixed free-motion P99 absolute residual"
+                if force_revision is not None
+                else "opening-conditioned 10th-percentile lower envelope"
+            ),
+            "full_scale_99th_percentile": (
+                fixed_force_audit["full_scale_signal_px"]
+                if fixed_force_audit is not None else force_model.full_scale
+            ),
+            "measured_frame_ratio": (
+                fixed_force_audit["measured_frame_ratio"]
+                if fixed_force_audit is not None
+                else float((yellow_measured & black_measured).mean())
+            ),
+            "fixed_scale_audit": fixed_force_audit,
+            "relative_force_range_percent": [
+                float(np.nanmin(force)),
+                float(np.nanmax(force)),
+            ],
             "warning": (
-                "Relative fingertip force is capture-local and must not be interpreted "
+                "Relative force uses a fixed hardware-revision scale; it is not Newtons "
+                "and is not valid across different gripper hardware revisions."
+                if force_revision is not None
+                else "Relative fingertip force is capture-local and must not be interpreted "
                 "as Newtons or compared across objects without load calibration."
             ),
         },
