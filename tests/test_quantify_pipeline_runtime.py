@@ -2,7 +2,7 @@ import sys
 
 import pytest
 
-from quantify_pipeline_runtime import measure, summarize_manifest
+from tools.quantify_pipeline_runtime import measure, summarize_manifest
 
 
 def test_measure_reports_throughput_and_realtime_factor(tmp_path):

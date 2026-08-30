@@ -3,7 +3,7 @@ import sys
 
 import cv2
 
-import generate_a3_aprilgrid_pair as generator
+from tools import generate_a3_aprilgrid_pair as generator
 
 
 def test_default_layout_nearly_fills_a3_with_140mm_pitch():

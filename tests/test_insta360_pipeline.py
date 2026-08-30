@@ -1,7 +1,7 @@
 from argparse import Namespace
 from pathlib import Path
 
-from insta360_mocap_pipeline import (
+from tools.insta360_mocap_pipeline import (
     DEFAULT_GRIPPER_MESHES,
     DEFAULT_TAG_MAP,
     evaluation_command,

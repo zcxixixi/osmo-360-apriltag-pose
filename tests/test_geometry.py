@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from osmo_360_offline import (
+from tools.osmo_360_offline import (
     _BODY_TO_PANORAMA,
     ImuPanoramaBridgeCalibrator,
     Pose,
@@ -25,7 +25,7 @@ from osmo_360_offline import (
     solve_view,
     view_to_panorama_rotation,
 )
-from osmo_apriltag_demo import Grid
+from tools.osmo_apriltag_demo import Grid
 
 
 def test_kalibr_grid_is_column_major():

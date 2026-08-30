@@ -1,7 +1,7 @@
 from argparse import Namespace
 from pathlib import Path
 
-from insta360_media_stitch import camera_model_hint, media_sdk_command
+from tools.insta360_media_stitch import camera_model_hint, media_sdk_command
 
 
 def test_media_sdk_command_keeps_stabilization_disabled(tmp_path: Path):

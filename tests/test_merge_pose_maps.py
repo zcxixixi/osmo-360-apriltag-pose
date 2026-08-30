@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from merge_pose_maps import merge
+from tools.merge_pose_maps import merge
 
 
 FIELDS = [

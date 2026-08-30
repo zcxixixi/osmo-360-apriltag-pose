@@ -76,7 +76,8 @@ def build_review_bundle(manifest: CaptureManifest) -> dict[str, Any]:
 def publish_review_bundle(manifest: CaptureManifest, directory: Path) -> dict[str, Any]:
     command = [
         sys.executable,
-        str(ROOT / "upload_visualization_bundle.py"),
+        "-m",
+        "tools.upload_visualization_bundle",
         "--timeline",
         str(directory / "timeline.json"),
         "--video",

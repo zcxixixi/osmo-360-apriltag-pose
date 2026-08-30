@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
-from osmo_360_offline import load_tag_map
+from tools.osmo_360_offline import load_tag_map
 
 
 ROOT = Path(__file__).resolve().parents[1]

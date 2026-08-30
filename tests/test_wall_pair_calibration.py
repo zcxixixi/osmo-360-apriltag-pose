@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from calibrate_wall_pair_transform import PoseSample, load_tag_map, robust_panel_transform
+from tools.calibrate_wall_pair_transform import PoseSample, load_tag_map, robust_panel_transform
 
 
 def _write_square_map(path: Path, *, size_m: float, edge_m: float | None = None) -> None:

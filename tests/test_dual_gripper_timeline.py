@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from export_dual_gripper_timeline import (
+from tools.export_dual_gripper_timeline import (
     continuous_quaternions, load_extrinsic, rebase, rebase_shared_world, resample_imu_attitude,
     smooth_quaternions,
 )

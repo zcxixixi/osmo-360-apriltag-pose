@@ -1,7 +1,7 @@
 import numpy as np
 
-from generate_a3_apriltags import mm_to_px
-from run_two_tag_synthetic_experiment import (
+from tools.generate_a3_apriltags import mm_to_px
+from tools.run_two_tag_synthetic_experiment import (
     load_projection,
     tag_corners,
     verify_freeze,
