@@ -10,7 +10,7 @@
   },
   "generator": {
     "path": "generate_tpu_force_flexure.py",
-    "sha256": "e930c5ce84e891c39ef4a64ff9fc1d07782656e5c0f31ae41273f0e9ad0b2444"
+    "sha256": "454471a1ed5a181f0200be119279ed56d42be372dd9c26cf789a5e92dbc2dfb0"
   },
   "outputs": {
     "single_stl": {
@@ -21,8 +21,8 @@
     },
     "pair_stl": {
       "path": "assets/gripper_v52_new_r1/force_flexure_tpu_r1/TPU_force_flexure_pair_r1.STL",
-      "sha256": "d6658f5febee824de339087e9b3b236b9848060176a574c99a235fb7d922cd99",
-      "extents_mm": [28.25, 30.25, 9.25],
+      "sha256": "535fbe396fbb5ca6b13f996bbdf740408bef7b09546764f711549efef02c77ed",
+      "extents_mm": [62.25, 12.25, 9.25],
       "watertight_components": 2
     },
     "preview": {
@@ -31,7 +31,7 @@
     },
     "build_report": {
       "path": "assets/gripper_v52_new_r1/force_flexure_tpu_r1/build_report.json",
-      "sha256": "a14c753bf5e877dae04c18df125488101c8e4411d4feb3b49b5aa3e624b99029"
+      "sha256": "3454dabaa8197827312cce8b30985c8093f3732f3dd55133687cd2875781be9c"
     }
   },
   "geometry": {

@@ -27,7 +27,7 @@
   },
   "pair": {
     "path": "/home/cenxi/Documents/ChatGPT/osomo 360/osmo-360-apriltag-pose/assets/gripper_v52_new_r1/force_flexure_tpu_r1/TPU_force_flexure_pair_r1.STL",
-    "sha256": "d6658f5febee824de339087e9b3b236b9848060176a574c99a235fb7d922cd99",
+    "sha256": "535fbe396fbb5ca6b13f996bbdf740408bef7b09546764f711549efef02c77ed",
     "bounds_mm": [
       [
         -0.125,
@@ -35,14 +35,14 @@
         -0.125
       ],
       [
-        28.125,
-        30.125,
+        62.125,
+        12.125,
         9.125
       ]
     ],
     "extents_mm": [
-      28.25,
-      30.25,
+      62.25,
+      12.25,
       9.25
     ],
     "watertight_components": true,

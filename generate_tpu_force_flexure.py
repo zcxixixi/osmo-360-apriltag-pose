@@ -178,7 +178,7 @@ def main() -> int:
     single = make_flexure()
     pair_left = single.copy()
     pair_right = single.copy()
-    pair_right.apply_translation((0.0, 18.0, 0.0))
+    pair_right.apply_translation((34.0, 0.0, 0.0))
     pair = trimesh.util.concatenate((pair_left, pair_right))
     single_path = output / "TPU_force_flexure_single_r1.STL"
     pair_path = output / "TPU_force_flexure_pair_r1.STL"

@@ -28,6 +28,9 @@ def test_generator_writes_single_pair_preview_and_report(tmp_path, monkeypatch):
     assert report["single"]["watertight_components"] is True
     assert report["single"]["component_count"] == 1
     assert report["pair"]["component_count"] == 2
+    np.testing.assert_allclose(report["pair"]["extents_mm"], [62.25, 12.25, 9.25])
+    assert report["pair"]["bounds_mm"][0][1] == report["single"]["bounds_mm"][0][1]
+    assert report["pair"]["bounds_mm"][1][1] == report["single"]["bounds_mm"][1][1]
     assert report["mechanical"]["target_visual_travel_mm"] == [3.0, 5.0]
     assert report["mechanical"]["marker_boss_face"].startswith("camera-facing")
 
