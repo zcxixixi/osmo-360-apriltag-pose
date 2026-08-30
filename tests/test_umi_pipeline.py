@@ -22,7 +22,7 @@ def _manifest(tmp_path: Path) -> Path:
     marker = tmp_path / "marker.json"
     scene = tmp_path / "scene.html"
     raw.write_bytes(b"raw")
-    identity.write_text('{"serial":"test"}\n')
+    identity.write_text('{"serial":"TESTSERIAL01"}\n')
     cad.write_bytes(b"cad")
     rig.write_text('{"revision_id":"rig-test"}\n')
     angle.write_text('{"revision_id":"angle-test"}\n')
@@ -36,6 +36,7 @@ def _manifest(tmp_path: Path) -> Path:
         "capture_id": "x5-test-capture",
         "status": "DIAGNOSTIC",
         "camera": {
+            "serial": "TESTSERIAL01",
             "model": "Insta360 X5",
             "role": "physical_right",
             "base_tag_id": 3,
@@ -79,6 +80,7 @@ def _write_outputs(manifest_path: Path) -> None:
         "source": {
             "osv_sha256": manifest.data["inputs"]["raw_video"]["sha256"],
             "base_tag_id": 3,
+            "camera_serial": manifest.data["camera"]["serial"],
         },
         "rig_revision": {"sha256": manifest.data["revisions"]["rig"]["sha256"]},
         "angle": {
@@ -91,6 +93,7 @@ def _write_outputs(manifest_path: Path) -> None:
         manifest.identity_path("revisions", "jaw_angle").read_text()
     )["revision_id"]
     timeline = {
+        "camera_serial": manifest.data["camera"]["serial"],
         "localization": {"base_tag_id": 3},
         "angle_models": {"left": {"revision": {"id": angle_id}}},
     }

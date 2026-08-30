@@ -82,12 +82,12 @@ rejected.
 
 Latest X5 diagnostic:
 `/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/`,
-physical right identified by directly detecting BaseTag ID3 in 828/852 frames
-(ID2 in 0/852). Use angle revision
+physical right serial `IAHEA2606KMURQ`, corroborated by BaseTag ID3 in 828/852
+frames (ID2 in 0/852). Use angle revision
 `config/rig_revisions/x5_jaw_angle_yellow_dots_20260829_r2.json`, rig
-`config/rig_revisions/x5_right_basetag3_gridAB_20260829_r2.json`, force output
-`force-angle-v12-one-sided-immutable-rig/`, and timeline
-`webgl-v8-one-sided-immutable-rig/`. The angle is defined by the three
+`config/rig_revisions/x5_right_basetag3_gridAB_20260829_r3.json`, force output
+`force-angle-v13-serial-bound/`, timeline `webgl-v10-serial-propagated/`, and
+review bundle `review-bundle-v3-serial-propagated/`. The angle is defined by the three
 highlighted yellow circular dots on each black jaw pad; do not substitute
 yellow-body PCA or capture-percentile zeroing. Bilateral measurement is
 preferred. A right-pad-only quadratic fallback is explicitly low-confidence
@@ -101,7 +101,7 @@ Do not invoke internal processing scripts or assemble timelines manually for a
 registered capture. `umi inspect` verifies all hashes, `umi process` runs or
 reuses the locked outputs, and `umi review` creates an immutable bundle with a
 project-versioned renderer. The current X5 manifest is
-`manifests/captures/x5-20260829-114845-basetag3-r1.json`.
+`manifests/captures/x5-20260829-114845-iahea2606kmurq-r2.json`.
 
 `contact_intensity` is capture-local pad deformation, not force in Newtons and
 not cross-episode comparable. Preserve direct, recovered (maximum 0.25 s), and

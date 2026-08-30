@@ -8,12 +8,17 @@ from typing import Any
 
 from .manifest import CaptureManifest, ManifestError, ROOT, sha256
 
+PYTHON = (
+    ROOT / ".venv/bin/python"
+    if (ROOT / ".venv/bin/python").is_file()
+    else Path(sys.executable)
+)
 
 def _force_command(manifest: CaptureManifest) -> list[str]:
     data = manifest.data
     pipeline = data["pipeline"]
     command = [
-        sys.executable,
+        str(PYTHON),
         str(ROOT / "render_gripper_force_angle_demo.py"),
         str(manifest.identity_path("inputs", "raw_video")),
         "--source-osv",
@@ -42,7 +47,7 @@ def _timeline_command(manifest: CaptureManifest) -> list[str]:
     data = manifest.data
     force_dir = manifest.output_path("force_angle_dir")
     return [
-        sys.executable,
+        str(PYTHON),
         str(ROOT / "render_single_gripper_webgl_demo.py"),
         str(manifest.identity_path("inputs", "raw_video")),
         "--source-osv",
@@ -79,6 +84,9 @@ def _verify_force_output(manifest: CaptureManifest) -> dict[str, Any]:
         raise ManifestError("force output raw-video identity mismatch")
     if audit.get("source", {}).get("base_tag_id") != expected["camera"]["base_tag_id"]:
         raise ManifestError("force output BaseTag binding mismatch")
+    expected_serial = expected["camera"].get("serial")
+    if expected_serial is not None and audit.get("source", {}).get("camera_serial") != expected_serial:
+        raise ManifestError("force output camera serial mismatch")
     if audit.get("rig_revision", {}).get("sha256") != expected["revisions"]["rig"]["sha256"]:
         raise ManifestError("force output rig revision mismatch")
     if audit.get("angle", {}).get("revision", {}).get("sha256") != expected["revisions"]["jaw_angle"]["sha256"]:
@@ -93,6 +101,9 @@ def _verify_timeline_output(manifest: CaptureManifest) -> Path:
     timeline = json.loads(path.read_text(encoding="utf-8"))
     if timeline.get("localization", {}).get("base_tag_id") != manifest.data["camera"]["base_tag_id"]:
         raise ManifestError("timeline BaseTag binding mismatch")
+    expected_serial = manifest.data["camera"].get("serial")
+    if expected_serial is not None and timeline.get("camera_serial") != expected_serial:
+        raise ManifestError("timeline camera serial mismatch")
     expected_id = json.loads(
         manifest.identity_path("revisions", "jaw_angle").read_text(encoding="utf-8")
     )["revision_id"]

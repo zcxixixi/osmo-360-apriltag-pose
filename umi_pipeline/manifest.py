@@ -67,6 +67,9 @@ class CaptureManifest:
         camera = self.data.get("camera", {})
         if camera.get("model") != "Insta360 X5":
             raise ManifestError("the first manifest profile supports Insta360 X5 only")
+        serial = camera.get("serial")
+        if serial is not None and not re.fullmatch(r"[A-Z0-9]{10,20}", str(serial)):
+            raise ManifestError("camera.serial must be 10-20 uppercase alphanumeric characters")
         if camera.get("role") not in {"physical_left", "physical_right"}:
             raise ManifestError("camera.role must be physical_left or physical_right")
         if camera.get("base_tag_id") not in {2, 3}:
@@ -90,6 +93,11 @@ class CaptureManifest:
         ):
             for name in names:
                 self.verify_identity(section, name)
+        identity = json.loads(
+            self.identity_path("inputs", "camera_identity").read_text(encoding="utf-8")
+        )
+        if serial is not None and identity.get("serial") != serial:
+            raise ManifestError("camera serial does not match inputs.camera_identity")
         outputs = self.data.get("outputs", {})
         if set(outputs) != {"force_angle_dir", "timeline_dir", "review_bundle_dir"}:
             raise ManifestError("outputs must define force_angle_dir, timeline_dir, review_bundle_dir")

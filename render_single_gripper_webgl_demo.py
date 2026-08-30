@@ -463,11 +463,13 @@ def main() -> int:
         "default_view": "camera_mount" if args.camera_local_basetag else "human_corner",
         "view_roll_deg": 0.0,
         "operator_eye_elevation_factor": 0.10,
+        "camera_serial": serial,
         "operator_tag_look_fraction": 0.40,
         "capture_pair_id": single_capture_id(paths["source_osv"], fps),
         "camera_hardware_model": args.camera_hardware_model,
         "mounted_camera": {
             "model": args.camera_hardware_model,
+            "serial": serial,
             "body_size_m": (
                 [0.0382, 0.046, 0.1245]
                 if args.camera_hardware_model == "insta360-x5"

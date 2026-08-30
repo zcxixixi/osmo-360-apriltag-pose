@@ -1396,6 +1396,8 @@ def main() -> int:
     angle_revision_path = None
     closed_reference_override = None
     hardware_angle: dict = {}
+    hardware_role = None
+    camera_serial = None
     x5_angle_mode = "pca-axis"
     if args.camera_profile == "insta360-x5-front":
         if args.x5_angle_revision is None or args.base_tag_id is None:
@@ -1417,6 +1419,15 @@ def main() -> int:
         hardware_angle = angle_revision.get("hardware", {}).get(role, {})
         if hardware_angle.get("base_tag_id") != args.base_tag_id:
             raise ValueError("X5 angle revision BaseTag binding mismatch")
+        hardware_matches = [
+            (name, robot)
+            for name, robot in rig["hardware"]["robots"].items()
+            if robot.get("base_tag_id") == args.base_tag_id
+        ]
+        if len(hardware_matches) != 1:
+            raise ValueError("rig must bind the requested BaseTag to exactly one camera")
+        hardware_role, bound_robot = hardware_matches[0]
+        camera_serial = bound_robot["camera_serial"]
         if "evidence_audit" in hardware_angle:
             evidence_path = Path(hardware_angle["evidence_audit"])
             if sha256(evidence_path) != hardware_angle["evidence_audit_sha256"]:
@@ -1576,6 +1587,8 @@ def main() -> int:
             "frame_count": len(observations),
             "base_tag_id": args.base_tag_id,
             "base_tag_frame_counts": base_tag_counts,
+            "hardware_role": hardware_role,
+            "camera_serial": camera_serial,
         },
         "rig_revision": {
             "path": str(rig["revision_path"]),

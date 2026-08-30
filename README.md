@@ -28,10 +28,10 @@
 硬件、角度算法、渲染器和输出：
 
 ```bash
-./umi inspect manifests/captures/x5-20260829-114845-basetag3-r1.json
-./umi process manifests/captures/x5-20260829-114845-basetag3-r1.json
-./umi review manifests/captures/x5-20260829-114845-basetag3-r1.json
-./umi review manifests/captures/x5-20260829-114845-basetag3-r1.json --publish
+./umi inspect manifests/captures/x5-20260829-114845-iahea2606kmurq-r2.json
+./umi process manifests/captures/x5-20260829-114845-iahea2606kmurq-r2.json
+./umi review manifests/captures/x5-20260829-114845-iahea2606kmurq-r2.json
+./umi review manifests/captures/x5-20260829-114845-iahea2606kmurq-r2.json --publish
 ```
 
 `inspect` 校验全部哈希；`process` 只运行 manifest 指定的正式管线；`review`
