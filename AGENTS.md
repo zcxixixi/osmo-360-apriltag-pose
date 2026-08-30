@@ -96,6 +96,13 @@ preferred. A right-pad-only quadratic fallback is explicitly low-confidence
 yield a valid world pose, so this product is camera-local BaseTag3 diagnostic,
 not `tag_map`.
 
+Registered captures must use `./umi` with a file under `manifests/captures/`.
+Do not invoke internal processing scripts or assemble timelines manually for a
+registered capture. `umi inspect` verifies all hashes, `umi process` runs or
+reuses the locked outputs, and `umi review` creates an immutable bundle with a
+project-versioned renderer. The current X5 manifest is
+`manifests/captures/x5-20260829-114845-basetag3-r1.json`.
+
 `contact_intensity` is capture-local pad deformation, not force in Newtons and
 not cross-episode comparable. Preserve direct, recovered (maximum 0.25 s), and
 unavailable observations separately. Keep per-pad deformation before combining.

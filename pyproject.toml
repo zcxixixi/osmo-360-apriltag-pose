@@ -16,6 +16,9 @@ dependencies = [
   "zarr>=2.18,<3",
 ]
 
+[project.scripts]
+umi = "umi_pipeline.cli:main"
+
 [project.optional-dependencies]
 test = ["pytest>=8.3,<10"]
 gpu = ["cupy-cuda13x[ctk]>=14.2,<15"]

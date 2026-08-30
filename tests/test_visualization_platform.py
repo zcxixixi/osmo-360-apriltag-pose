@@ -63,6 +63,9 @@ def test_processed_bundle_becomes_viewable_animation(tmp_path):
         }
         _, capabilities, _ = _request(f"{base}/api/capabilities")
         assert json.loads(capabilities)["input_mode"] == "processed_bundle"
+        capability_data = json.loads(capabilities)
+        assert capability_data["required_files"]["scene"]["name"] == "scene.html"
+        assert capability_data["renderer"]["scene"] == "project-versioned"
 
 
         status, body, _ = _request(
@@ -99,6 +102,16 @@ def test_processed_bundle_becomes_viewable_animation(tmp_path):
             b"not-empty",
             "video/mp4",
         )
+        versioned_scene = (
+            b"<!doctype html><div id='force-panel'>VERSIONED-SCENE-TEST</div>"
+            b"<script>fetch('timeline.json');const video='front-video.mp4';</script>"
+        )
+        _request(
+            f"{base}/api/projects/{project_id}/scene",
+            "PUT",
+            versioned_scene,
+            "text/html",
+        )
         status, body, _ = _request(f"{base}/api/projects/{project_id}/publish", "POST", b"")
         published = json.loads(body)
         assert status == 200
@@ -112,8 +125,8 @@ def test_processed_bundle_becomes_viewable_animation(tmp_path):
 
         status, scene, _ = _request(f"{base}/view/{project_id}/")
         assert status == 200
-        assert b"single_gripper_scene" not in scene
-        assert b"force-panel" in scene
+        assert scene == versioned_scene
+        assert b"VERSIONED-SCENE-TEST" in scene
 
         _, listed, _ = _request(f"{base}/api/projects")
         assert json.loads(listed)["projects"][0]["id"] == project_id

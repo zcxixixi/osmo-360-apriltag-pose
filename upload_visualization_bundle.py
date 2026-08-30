@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 
 DEFAULT_SERVER = os.environ.get("OSMO_VISUALIZATION_URL", "http://192.168.111.62:7865")
+DEFAULT_SCENE = Path(__file__).resolve().parent / "dual_gripper_3d/single_gripper_scene.html"
 
 
 def request_json(url: str, method: str = "GET", payload: dict | None = None) -> dict:
@@ -63,10 +64,11 @@ def put_file(url: str, file: Path, content_type: str) -> dict:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Upload timeline.json and front-video.mp4 to OSMO Motion Studio."
+        description="Upload timeline.json, front-video.mp4, and a versioned scene to OSMO Motion Studio."
     )
     parser.add_argument("--timeline", required=True, type=Path, help="Processed WebGL timeline JSON")
     parser.add_argument("--video", required=True, type=Path, help="Synchronized front-lens MP4")
+    parser.add_argument("--scene", type=Path, default=DEFAULT_SCENE, help="Versioned single-gripper renderer")
     parser.add_argument("--name", help="Animation name; defaults to the timeline filename")
     parser.add_argument("--server", default=DEFAULT_SERVER, help=f"Platform base URL (default: {DEFAULT_SERVER})")
     return parser.parse_args()
@@ -76,7 +78,8 @@ def main() -> int:
     args = parse_args()
     timeline = args.timeline.resolve()
     video = args.video.resolve()
-    for file in (timeline, video):
+    scene = args.scene.resolve()
+    for file in (timeline, video, scene):
         if not file.is_file():
             raise RuntimeError(f"input file not found: {file}")
     server = args.server.rstrip("/")
@@ -90,6 +93,10 @@ def main() -> int:
     )["project"]
     put_file(created["links"]["timeline_upload"], timeline, "application/json")
     put_file(created["links"]["video_upload"], video, "video/mp4")
+    scene_upload = created["links"].get("scene_upload")
+    if not scene_upload:
+        raise RuntimeError("platform does not support versioned scene uploads")
+    put_file(scene_upload, scene, "text/html; charset=utf-8")
     published = request_json(created["links"]["publish"], "POST")["project"]
     output = {
         "api_version": "v1",

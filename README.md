@@ -22,6 +22,23 @@
 - 自动按机型和分辨率选择 CPU/CUDA 处理路径；
 - 可选导出夹爪 CAD 轨迹视频、逐帧图片和 OptiTrack 真值评估。
 
+## 统一入口
+
+已注册的采集不再手工选择根目录脚本，而是由一个不可变 manifest 锁定输入、
+硬件、角度算法、渲染器和输出：
+
+```bash
+./umi inspect manifests/captures/x5-20260829-114845-basetag3-r1.json
+./umi process manifests/captures/x5-20260829-114845-basetag3-r1.json
+./umi review manifests/captures/x5-20260829-114845-basetag3-r1.json
+./umi review manifests/captures/x5-20260829-114845-basetag3-r1.json --publish
+```
+
+`inspect` 校验全部哈希；`process` 只运行 manifest 指定的正式管线；`review`
+生成包含 timeline、视频、审计、manifest 和版本化 scene 的不可变发布包。
+底层 `render_*`、`calibrate_*`、`fuse_*` 脚本仍保留为内部实现或历史复现入口，
+其状态可用 `./umi commands --legacy` 查看。
+
 光流、插值和预测只用于连续轨迹与可视化。正式精度统计只接受满足要求的直接多 Tag 视觉测量。
 
 ## 部署

@@ -20,6 +20,7 @@ const port=Number(argv.port||7865);
 const publicBaseUrl=argv['public-base-url']?.replace(/\/+$/,'')||null;
 const MAX_JSON_BYTES=64*1024*1024;
 const MAX_VIDEO_BYTES=8*1024*1024*1024;
+const MAX_SCENE_BYTES=2*1024*1024;
 const PROJECT_ID=/^[a-z0-9-]{1,64}$/;
 
 await fsp.mkdir(dataDir,{recursive:true});
@@ -35,7 +36,7 @@ const sendError=(response,status,message)=>sendJson(response,status,{error:messa
 const requestOrigin=request=>publicBaseUrl||`${String(request.headers['x-forwarded-proto']||'http').split(',')[0]}://${request.headers.host}`;
 const projectResponse=(request,metadata)=>{
   const origin=requestOrigin(request),base=`${origin}/api/projects/${metadata.id}`;
-  return {...metadata,view_url:metadata.status==='ready'?`${origin}/view/${metadata.id}/?interactive=1`:null,links:{self:base,timeline_upload:`${base}/timeline`,video_upload:`${base}/video`,publish:`${base}/publish`}}
+  return {...metadata,view_url:metadata.status==='ready'?`${origin}/view/${metadata.id}/?interactive=1`:null,links:{self:base,timeline_upload:`${base}/timeline`,video_upload:`${base}/video`,scene_upload:`${base}/scene`,publish:`${base}/publish`}}
 };
 
 async function readJsonBody(request,maxBytes=65536){
@@ -124,7 +125,7 @@ async function handle(request,response){
 
   if(request.method==='GET'&&pathname==='/'){serveFile(request,response,platform);return}
   if(request.method==='GET'&&pathname==='/healthz'){sendJson(response,200,{status:'ok',service:'osmo-motion-studio',api_version:'v1'});return}
-  if(request.method==='GET'&&pathname==='/api/capabilities'){sendJson(response,200,{api_version:'v1',input_mode:'processed_bundle',required_files:{timeline:{name:'timeline.json',content_type:'application/json',max_bytes:MAX_JSON_BYTES},video:{name:'front-video.mp4',content_type:'video/mp4',max_bytes:MAX_VIDEO_BYTES}},upload_sequence:['POST /api/projects','PUT {links.timeline_upload}','PUT {links.video_upload}','POST {links.publish}'],renderer:{scene:'single_gripper_scene',fixed_mesh_revision:'gripper_v52_new_r1'}});return}
+  if(request.method==='GET'&&pathname==='/api/capabilities'){sendJson(response,200,{api_version:'v1',input_mode:'processed_bundle',required_files:{timeline:{name:'timeline.json',content_type:'application/json',max_bytes:MAX_JSON_BYTES},video:{name:'front-video.mp4',content_type:'video/mp4',max_bytes:MAX_VIDEO_BYTES},scene:{name:'scene.html',content_type:'text/html',max_bytes:MAX_SCENE_BYTES}},upload_sequence:['POST /api/projects','PUT {links.timeline_upload}','PUT {links.video_upload}','PUT {links.scene_upload}','POST {links.publish}'],renderer:{scene:'project-versioned',legacy_fallback:'single_gripper_scene',fixed_mesh_revision:'gripper_v52_new_r1'}});return}
   if(request.method==='GET'&&pathname==='/api/projects'){sendJson(response,200,{projects:(await listProjects()).map(project=>projectResponse(request,project))});return}
   if(request.method==='POST'&&pathname==='/api/projects'){
     const input=await readJsonBody(request);
@@ -138,7 +139,7 @@ async function handle(request,response){
   const projectMatch=/^\/api\/projects\/([^/]+)$/.exec(pathname);
   if(request.method==='GET'&&projectMatch){sendJson(response,200,{project:projectResponse(request,await readMetadata(projectMatch[1]))});return}
 
-  const apiMatch=/^\/api\/projects\/([^/]+)\/(timeline|video|publish)$/.exec(pathname);
+  const apiMatch=/^\/api\/projects\/([^/]+)\/(timeline|video|scene|publish)$/.exec(pathname);
   if(apiMatch){
     const [,id,action]=apiMatch,metadata=await readMetadata(id);
     if(action==='timeline'&&request.method==='PUT'){
@@ -149,16 +150,25 @@ async function handle(request,response){
       const bytes=await receiveFile(request,path.join(projectDir(id),'front-video.mp4'),MAX_VIDEO_BYTES);
       metadata.video_bytes=bytes;metadata.status='uploading';metadata.error=null;await writeMetadata(metadata);sendJson(response,200,{project:projectResponse(request,metadata),bytes});return
     }
+    if(action==='scene'&&request.method==='PUT'){
+      const destination=path.join(projectDir(id),'scene.html');
+      const bytes=await receiveFile(request,destination,MAX_SCENE_BYTES);
+      const source=await fsp.readFile(destination,'utf8');
+      if(!source.includes("fetch('timeline.json')")||!source.includes('front-video.mp4'))throw Object.assign(new Error('scene.html is not a processed-bundle renderer'),{status:400});
+      metadata.scene_bytes=bytes;metadata.status='uploading';metadata.error=null;await writeMetadata(metadata);sendJson(response,200,{project:projectResponse(request,metadata),bytes});return
+    }
     if(action==='publish'&&request.method==='POST'){
       try{
         const timeline=JSON.parse(await fsp.readFile(path.join(projectDir(id),'timeline.json'),'utf8'));
         const summary=validateTimeline(timeline);
         const video=await fsp.stat(path.join(projectDir(id),'front-video.mp4'));
+        const projectScene=await fsp.stat(path.join(projectDir(id),'scene.html'));
         if(video.size===0)throw Object.assign(new Error('front-video.mp4 is empty'),{status:400});
-        metadata.status='ready';metadata.error=null;metadata.summary=summary;metadata.video_bytes=video.size;await writeMetadata(metadata);
+        if(projectScene.size===0)throw Object.assign(new Error('scene.html is empty'),{status:400});
+        metadata.status='ready';metadata.error=null;metadata.summary=summary;metadata.video_bytes=video.size;metadata.scene_bytes=projectScene.size;await writeMetadata(metadata);
         sendJson(response,200,{project:projectResponse(request,metadata)});return
       }catch(error){
-        metadata.status='failed';metadata.error=error.code==='ENOENT'?'timeline.json and front-video.mp4 are required':error.message;await writeMetadata(metadata);
+        metadata.status='failed';metadata.error=error.code==='ENOENT'?'timeline.json, front-video.mp4, and scene.html are required':error.message;await writeMetadata(metadata);
         throw Object.assign(new Error(metadata.error),{status:error.status||400})
       }
     }
@@ -169,7 +179,8 @@ async function handle(request,response){
   if(request.method==='GET'&&viewMatch){
     const [,id,asset]=viewMatch,metadata=await readMetadata(id);
     if(metadata.status!=='ready'){sendError(response,409,'project is not ready');return}
-    const file=!asset?scene:path.join(projectDir(id),asset);
+    const projectScene=path.join(projectDir(id),'scene.html');
+    const file=!asset?(fs.existsSync(projectScene)?projectScene:scene):path.join(projectDir(id),asset);
     serveFile(request,response,file);return
   }
   if(request.method==='GET'&&pathname.startsWith('/mesh/')){serveFile(request,response,path.join(meshDir,path.basename(pathname)),'public, max-age=86400');return}

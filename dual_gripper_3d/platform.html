@@ -11,28 +11,29 @@
 <body>
   <main class="shell">
     <div class="eyebrow">OSMO · SINGLE GRIPPER VISUALIZATION</div>
-    <div class="hero"><h1>Motion Studio</h1><p>上传处理完成的时间线和前镜头视频。校验通过后立即生成可旋转、缩放、拖动时间轴的 3D 动画。</p></div>
+    <div class="hero"><h1>Motion Studio</h1><p>上传处理完成的时间线、前镜头视频和版本化渲染场景。校验通过后生成不会被后续代码修改的 3D 动画。</p></div>
     <section class="panel upload-panel">
       <div class="name-row"><input id="name" maxlength="80" placeholder="动画名称，例如：0064 单夹爪测试"><div class="badge">V52 GRIPPER · TAG_MAP</div></div>
       <div class="drops">
         <label class="drop" id="timeline-drop"><input id="timeline" type="file" accept="application/json,.json"><span class="index">1</span><h3>时间线数据</h3><p>选择 WebGL timeline JSON，平台会校验帧、位姿、时间和 FPS。</p><div class="file" id="timeline-name">选择 timeline.json</div></label>
         <label class="drop" id="video-drop"><input id="video" type="file" accept="video/mp4,.mp4"><span class="index">2</span><h3>前镜头视频</h3><p>选择与时间线同步的 MP4。浏览器播放时由视频时钟驱动 3D。</p><div class="file" id="video-name">选择 front-video.mp4</div></label>
+        <label class="drop" id="scene-drop"><input id="scene-file" type="file" accept="text/html,.html"><span class="index">3</span><h3>版本化场景</h3><p>选择与结果一起冻结的 scene.html，旧项目不再受服务器场景更新影响。</p><div class="file" id="scene-name">选择 scene.html</div></label>
       </div>
-      <div class="actions"><button class="primary" id="generate" disabled>生成交互动画</button><div class="status" id="status">等待选择两个文件</div></div>
+      <div class="actions"><button class="primary" id="generate" disabled>生成交互动画</button><div class="status" id="status">等待选择三个文件</div></div>
       <div class="progress"><div id="progress"></div></div><div class="error" id="error"></div>
     </section>
     <div class="section-head"><h2>已生成动画</h2><button class="ghost" id="refresh">刷新</button></div>
     <div class="projects" id="projects"><div class="panel empty">正在读取项目…</div></div>
-    <div class="foot">当前版本使用服务器固定的 v52 夹爪模型与单夹爪场景。相对力是垫片形变强度，不是牛顿标定值。</div>
+    <div class="foot">每个项目保存自己的渲染场景和 v52 夹爪模型引用。相对力是垫片形变强度，不是牛顿标定值。</div>
   </main>
   <script>
-    const timelineInput=document.getElementById('timeline'),videoInput=document.getElementById('video'),generate=document.getElementById('generate'),statusText=document.getElementById('status'),progress=document.getElementById('progress'),errorBox=document.getElementById('error');
+    const timelineInput=document.getElementById('timeline'),videoInput=document.getElementById('video'),sceneInput=document.getElementById('scene-file'),generate=document.getElementById('generate'),statusText=document.getElementById('status'),progress=document.getElementById('progress'),errorBox=document.getElementById('error');
     const formatBytes=value=>value<1024*1024?`${(value/1024).toFixed(0)} KB`:`${(value/1024/1024).toFixed(1)} MB`;
-    function updateSelection(input,drop,name){const file=input.files[0];drop.classList.toggle('ready',!!file);name.textContent=file?`${file.name} · ${formatBytes(file.size)}`:name.dataset.placeholder;generate.disabled=!(timelineInput.files[0]&&videoInput.files[0])}
-    const timelineDrop=document.getElementById('timeline-drop'),videoDrop=document.getElementById('video-drop'),timelineName=document.getElementById('timeline-name'),videoName=document.getElementById('video-name');
-    timelineName.dataset.placeholder=timelineName.textContent;videoName.dataset.placeholder=videoName.textContent;
-    timelineInput.onchange=()=>updateSelection(timelineInput,timelineDrop,timelineName);videoInput.onchange=()=>updateSelection(videoInput,videoDrop,videoName);
-    for(const drop of [timelineDrop,videoDrop]){drop.addEventListener('dragover',event=>{event.preventDefault();drop.classList.add('drag')});drop.addEventListener('dragleave',()=>drop.classList.remove('drag'));drop.addEventListener('drop',()=>drop.classList.remove('drag'))}
+    function updateSelection(input,drop,name){const file=input.files[0];drop.classList.toggle('ready',!!file);name.textContent=file?`${file.name} · ${formatBytes(file.size)}`:name.dataset.placeholder;generate.disabled=!(timelineInput.files[0]&&videoInput.files[0]&&sceneInput.files[0])}
+    const timelineDrop=document.getElementById('timeline-drop'),videoDrop=document.getElementById('video-drop'),sceneDrop=document.getElementById('scene-drop'),timelineName=document.getElementById('timeline-name'),videoName=document.getElementById('video-name'),sceneName=document.getElementById('scene-name');
+    timelineName.dataset.placeholder=timelineName.textContent;videoName.dataset.placeholder=videoName.textContent;sceneName.dataset.placeholder=sceneName.textContent;
+    timelineInput.onchange=()=>updateSelection(timelineInput,timelineDrop,timelineName);videoInput.onchange=()=>updateSelection(videoInput,videoDrop,videoName);sceneInput.onchange=()=>updateSelection(sceneInput,sceneDrop,sceneName);
+    for(const drop of [timelineDrop,videoDrop,sceneDrop]){drop.addEventListener('dragover',event=>{event.preventDefault();drop.classList.add('drag')});drop.addEventListener('dragleave',()=>drop.classList.remove('drag'));drop.addEventListener('drop',()=>drop.classList.remove('drag'))}
     const request=async(url,options={})=>{const response=await fetch(url,options),body=await response.json();if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);return body};
     function upload(url,file,onProgress){return new Promise((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('PUT',url);xhr.upload.onprogress=event=>{if(event.lengthComputable)onProgress(event.loaded/event.total)};xhr.onload=()=>{let body={};try{body=JSON.parse(xhr.responseText)}catch{}xhr.status>=200&&xhr.status<300?resolve(body):reject(new Error(body.error||`HTTP ${xhr.status}`))};xhr.onerror=()=>reject(new Error('上传连接中断'));xhr.send(file)})}
     async function loadProjects(){
@@ -41,10 +42,11 @@
     generate.onclick=async()=>{
       generate.disabled=true;errorBox.style.display='none';progress.style.width='0%';
       try{
-        const timeline=timelineInput.files[0],video=videoInput.files[0],name=document.getElementById('name').value.trim()||timeline.name.replace(/\.json$/i,'');
+        const timeline=timelineInput.files[0],video=videoInput.files[0],scene=sceneInput.files[0],name=document.getElementById('name').value.trim()||timeline.name.replace(/\.json$/i,'');
         statusText.textContent='创建动画项目…';const created=await request('/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});const id=created.project.id;
-        statusText.textContent='上传时间线…';await upload(`/api/projects/${id}/timeline`,timeline,value=>progress.style.width=`${value*15}%`);
-        statusText.textContent='上传前镜头视频…';await upload(`/api/projects/${id}/video`,video,value=>progress.style.width=`${15+value*80}%`);
+        statusText.textContent='上传时间线…';await upload(`/api/projects/${id}/timeline`,timeline,value=>progress.style.width=`${value*10}%`);
+        statusText.textContent='上传前镜头视频…';await upload(`/api/projects/${id}/video`,video,value=>progress.style.width=`${10+value*80}%`);
+        statusText.textContent='上传版本化场景…';await upload(`/api/projects/${id}/scene`,scene,value=>progress.style.width=`${90+value*10}%`);
         statusText.textContent='校验并生成动画…';const result=await request(`/api/projects/${id}/publish`,{method:'POST'});progress.style.width='100%';statusText.textContent='生成完成，正在打开动画…';location.href=result.project.view_url
       }catch(error){errorBox.textContent=error.message;errorBox.style.display='block';statusText.textContent='生成失败';generate.disabled=false}
     };
