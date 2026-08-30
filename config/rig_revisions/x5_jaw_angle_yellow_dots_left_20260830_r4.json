@@ -1,0 +1,42 @@
+{
+  "schema_version": "x5-jaw-angle-revision/1.0",
+  "revision_id": "x5-jaw-angle-yellow-dots-left-20260830-r4",
+  "status": "SD_CAPTURE_FITTED_ADAPTIVE_PAD_DOTS_NO_ONE_SIDE_FALLBACK",
+  "detector": {
+    "algorithm": "three_yellow_pad_dot_centroids",
+    "included_angle_range_deg": [25.0, 80.0],
+    "opening_definition": "closed_reference_included_angle_deg - measured_included_angle_deg",
+    "maximum_recovery_gap_s": 0.25,
+    "marker_definition": "three highlighted yellow circular dots on each black jaw pad",
+    "dot_selection": "adaptive-black-pad",
+    "selection_policy": "black-annulus circular candidates; side-specific collinear triple; vertical-shift tolerant"
+  },
+  "hardware": {
+    "physical_left": {
+      "base_tag_id": 2,
+      "closed_reference_included_angle_deg": 49.64376721854826,
+      "zero_evidence": {
+        "source_video": "/home/cenxi/Videos/umi-captures/20260830/insta360-x5-162856-v1/raw/VID_20260830_162856_00_004.insv",
+        "source_sha256": "68c3bfaa4da762c6f3da2f1a2973cf731d999884ff0efa743a8a19f2191e132a",
+        "frame_interval": [0, 637],
+        "measured_frames": 571,
+        "statistic": "97th percentile included angle over the complete SD capture"
+      }
+    }
+  },
+  "coverage": {
+    "frames": 638,
+    "bilateral_yellow_ratio": 0.8949843260188087,
+    "black_pair_ratio": 0.7695924764890282,
+    "complete_ratio": 0.6724137931034483,
+    "opening_range_deg": [0.0, 17.33820965305425]
+  },
+  "policy": {
+    "bilateral_measurement_required": true,
+    "one_sided_fallback_enabled": false,
+    "per_capture_percentile_zero_forbidden_after_this_revision": true,
+    "unavailable_longer_than_s": 0.25,
+    "unavailable_behavior": "preserve N/A; hide CAD jaw links",
+    "training_ready": false
+  }
+}

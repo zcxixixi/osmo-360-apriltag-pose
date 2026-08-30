@@ -1,0 +1,122 @@
+{
+  "schema_version": "gripper-hardware-reference/1.0",
+  "calibration_status": "X5_SDK_INVENTORY_SERIAL_AND_BASETAG2_BOUND_SD_IMPORT_DIAGNOSTIC",
+  "calibration_source": "/home/cenxi/Videos/umi-captures/20260828/dual-x5-173150-173152-v1/left/mount/camera_to_gripper.json",
+  "holdout_gate": {
+    "method": "early fixed-extrinsic estimate evaluated on late compact 6DoF mode",
+    "maximum_position_p95_mm": 10.0,
+    "maximum_rotation_p95_deg": 3.5,
+    "physical_left_SGG": {
+      "position_p95_mm": 9.1511,
+      "rotation_p95_deg": 1.1484
+    },
+    "physical_right_JCY": {
+      "position_p95_mm": 7.0512,
+      "rotation_p95_deg": 3.2764
+    }
+  },
+  "eef_reference": {
+    "type": "tcp",
+    "definition": "CAD gripper centre: base_link + [135.6, 0, 10.1] mm",
+    "base_to_tcp_translation_m": [
+      0.1356,
+      0.0,
+      0.0101
+    ]
+  },
+  "robots": {
+    "left": {
+      "camera_serial": "IAHEA2606KM43A",
+      "source_view": "physical-left / serial IAHEA2606KM43A / BaseTag2 / VID_20260830_162856_00_004.insv / direct SD import",
+      "mount_revision": "X5-ID2-20260830-r1",
+      "camera_to_eef_reference": {
+        "parent_frame": "panorama_camera",
+        "child_frame": "left_tcp",
+        "translation_m": [
+          -0.0006047550672603078,
+          0.06566666837727905,
+          0.12719545542273608
+        ],
+        "quaternion_xyzw": [
+          -0.412167309706176,
+          -0.5026761627258243,
+          -0.5082189713351718,
+          0.5649320856632536
+        ],
+        "source": "rigid self-observed BaseTag ID2 in X5 stitched panorama"
+      },
+      "eef_reference_verified": true,
+      "camera_to_tcp_verified": true,
+      "base_tag_id": 2,
+      "gripper_width_calibration": {
+        "type": "piecewise_linear",
+        "angle_deg": [
+          3.2526,
+          10.0,
+          20.0,
+          30.0,
+          40.0,
+          48.8115
+        ],
+        "width_m": [
+          0.0,
+          0.01429,
+          0.03535,
+          0.05622,
+          0.0769,
+          0.09482
+        ]
+      },
+      "gripper_width_verified": true,
+      "camera_model": "Insta360 X5",
+      "identity_source": "config/rig_revisions/x5_left_camera_identity_20260830_r4.json"
+    },
+    "right": {
+      "camera_serial": "IAHEA2606KMURQ",
+      "source_view": "physical-right / serial IAHEA2606KMURQ / BaseTag3 / VID_20260829_114845_00_002.insv",
+      "mount_revision": "X5-ID3-20260828-r1",
+      "camera_to_eef_reference": {
+        "parent_frame": "panorama_camera",
+        "child_frame": "right_tcp",
+        "translation_m": [
+          -0.003061950422255218,
+          0.06626997897918811,
+          0.12842456824913545
+        ],
+        "quaternion_xyzw": [
+          0.5098929797783595,
+          0.35108830209756836,
+          0.611776535954735,
+          -0.4924181387380209
+        ],
+        "source": "existing rigid BaseTag3 capture-fit calibration"
+      },
+      "eef_reference_verified": true,
+      "camera_to_tcp_verified": true,
+      "base_tag_id": 3,
+      "gripper_width_calibration": {
+        "type": "piecewise_linear",
+        "angle_deg": [
+          3.2526,
+          10.0,
+          20.0,
+          30.0,
+          40.0,
+          48.8115
+        ],
+        "width_m": [
+          0.0,
+          0.01429,
+          0.03535,
+          0.05622,
+          0.0769,
+          0.09482
+        ]
+      },
+      "gripper_width_verified": true,
+      "camera_model": "Insta360 X5",
+      "identity_source": "config/rig_revisions/x5_right_camera_identity_20260829_r3.json"
+    }
+  },
+  "revision_id": "x5-left-basetag2-hardware-20260830-r4-sd-bound"
+}
