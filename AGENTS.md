@@ -114,6 +114,11 @@ SD card.
 This revision prefers bilateral force measurement, falls back to the one
 complete jaw as `MEASURED_ONE_SIDED_{LEFT,RIGHT}_LOW_CONFIDENCE`, and preserves
 `N/A` when neither jaw is complete; it never fabricates the hidden marker.
+The accepted result is frozen by
+`config/baselines/x5_left_one_sided_force_accepted_20260830.json`. Run
+`./verify_x5_one_sided_force_baseline.py` after relevant changes. Never
+overwrite its force, timeline, or review-bundle directories; replacements need
+new revisions and a new user acceptance.
 
 Fleet identity is stored in `config/devices/x5_inventory.json`. Prefer the
 visual manager (`umi devices ui`, desktop launcher `X5设备管理`) or use

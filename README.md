@@ -160,6 +160,10 @@ manifests/captures/x5-20260829-114845-fixed-relative-force-r4.json
 `IAHEA2606KM43A`、物理左夹爪、BaseTag2、2880×2880、29.97 FPS。双侧完整时
 使用双侧结果；遮挡一侧时使用可见侧并标低置信度；两侧都不完整时保留 `N/A`。
 该演示使用本次视频的局部 0–100% 形变尺度，不与其他硬件版本直接比较。
+冻结基线为
+`config/baselines/x5_left_one_sided_force_accepted_20260830.json`，使用
+`./verify_x5_one_sided_force_baseline.py` 校验。后续算法修改必须新建 revision
+和输出目录，不能覆盖当前接受版。
 
 未来 Insta360 采集型号为 X5。开始大规模采集前，必须使用实际 X5
 序列号完成 CameraSDK 设备发现/录制测试，以及 MediaSDK 原始 INSV/LRV
