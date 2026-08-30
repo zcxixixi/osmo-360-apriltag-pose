@@ -1,13 +1,13 @@
 {
   "schema_version": "capture-manifest/1.0",
   "capture_id": "x5-20260829-114845-iahea2606kmurq-sdk-r3",
-  "status": "ACTIVE_DIAGNOSTIC_SDK_SERIAL_VERIFIED_CAMERA_LOCAL_NOT_TRAINING",
+  "status": "ACTIVE_DIAGNOSTIC_SDK_SERIAL_AND_SOURCE_FILE_VERIFIED_CAMERA_LOCAL_NOT_TRAINING",
   "camera": {
     "model": "Insta360 X5",
     "serial": "IAHEA2606KMURQ",
     "role": "physical_right",
     "base_tag_id": 3,
-    "serial_status": "CameraSDK 2.1.1 DeviceDiscovery verified"
+    "serial_status": "CameraSDK DeviceDiscovery and GetFileList verified"
   },
   "inputs": {
     "raw_video": {
@@ -16,7 +16,7 @@
     },
     "camera_identity": {
       "path": "config/rig_revisions/x5_right_camera_identity_20260829_r3.json",
-      "sha256": "bc99788de49901a8a08b92ef770ec853a5e1e497cd05bf600647700c553815c3"
+      "sha256": "168caae9c66977fa6cd37ae66f4bd38bd89c38e6e43102c63bdcd2e8181659ad"
     },
     "new_cad_source": {
       "path": "/home/cenxi/Downloads/UMI-III.zip",
@@ -55,7 +55,7 @@
   "outputs": {
     "force_angle_dir": "/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/force-angle-v15-sdk-identity-r4",
     "timeline_dir": "/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/webgl-v12-sdk-identity-r4",
-    "review_bundle_dir": "/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/review-bundle-v5-sdk-identity-r4"
+    "review_bundle_dir": "/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/review-bundle-v6-sdk-file-provenance"
   },
   "review": {
     "name": "X5 IAHEA2606KMURQ BaseTag3 immutable bundle",

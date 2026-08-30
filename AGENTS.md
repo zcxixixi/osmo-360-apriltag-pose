@@ -83,13 +83,13 @@ rejected.
 Latest X5 diagnostic:
 `/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/`,
 physical right serial `IAHEA2606KMURQ`, verified by CameraSDK 2.1.1
-DeviceDiscovery (`Insta360 X5`, firmware `v1.7.8`) and corroborated by BaseTag
-ID3 in 828/852 frames (ID2 in 0/852). Use angle revision
-`config/rig_revisions/x5_jaw_angle_yellow_dots_20260829_r2.json`, rig
+DeviceDiscovery (`Insta360 X5`, firmware `v1.7.8`). CameraSDK GetFileList also
+binds `/DCIM/Camera01/VID_20260829_114845_00_002.insv` to that serial; BaseTag
+ID3 is independently visible in 828/852 frames (ID2 in 0/852). Use angle
+revision `config/rig_revisions/x5_jaw_angle_yellow_dots_20260829_r2.json`, rig
 `config/rig_revisions/x5_right_basetag3_gridAB_20260829_r4.json`, force output
-`force-angle-v15-sdk-identity-r4/`, timeline
-`webgl-v12-sdk-identity-r4/`, and review bundle
-`review-bundle-v5-sdk-identity-r4/`. The angle is defined by the three
+`force-angle-v15-sdk-identity-r4/`, timeline `webgl-v12-sdk-identity-r4/`, and
+review bundle `review-bundle-v6-sdk-file-provenance/`. The angle is defined by the three
 highlighted yellow circular dots on each black jaw pad; do not substitute
 yellow-body PCA or capture-percentile zeroing. Bilateral measurement is
 preferred. A right-pad-only quadratic fallback is explicitly low-confidence

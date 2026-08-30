@@ -110,8 +110,10 @@ sudo install -m 0644 config/udev/99-insta360-camera-sdk.rules \
 sudo udevadm control --reload-rules
 ```
 
-当前物理右 X5 已由 CameraSDK 2.1.1 DeviceDiscovery 验证：
-serial `IAHEA2606KMURQ`，型号 `Insta360 X5`，固件 `v1.7.8`。
+当前物理右 X5 已由 CameraSDK 2.1.1 DeviceDiscovery 验证：serial
+`IAHEA2606KMURQ`，型号 `Insta360 X5`，固件 `v1.7.8`。CameraSDK GetFileList
+同时确认该设备持有 `/DCIM/Camera01/VID_20260829_114845_00_002.insv`，
+因此已有视频也完成了 serial 来源绑定。
 
 多设备不需要逐台重跑视频流水线。udev 规则每台工作站只安装一次，然后用
 CameraSDK 批量发现并增量登记序列号：
