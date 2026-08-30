@@ -28,10 +28,10 @@
 硬件、角度算法、渲染器和输出：
 
 ```bash
-./umi inspect manifests/captures/x5-20260829-114845-iahea2606kmurq-r2.json
-./umi process manifests/captures/x5-20260829-114845-iahea2606kmurq-r2.json
-./umi review manifests/captures/x5-20260829-114845-iahea2606kmurq-r2.json
-./umi review manifests/captures/x5-20260829-114845-iahea2606kmurq-r2.json --publish
+./umi inspect manifests/captures/x5-20260829-114845-iahea2606kmurq-sdk-r3.json
+./umi process manifests/captures/x5-20260829-114845-iahea2606kmurq-sdk-r3.json
+./umi review manifests/captures/x5-20260829-114845-iahea2606kmurq-sdk-r3.json
+./umi review manifests/captures/x5-20260829-114845-iahea2606kmurq-sdk-r3.json --publish
 ```
 
 `inspect` 校验全部哈希；`process` 只运行 manifest 指定的正式管线；`review`
@@ -100,6 +100,33 @@ MediaSDK 与 CameraSDK 分别本地部署到版本化的 gitignored `work/` 目�
 若官方硬件编解码与当前驱动不兼容，可追加
 `--insta-soft-decode --insta-soft-encode`；若 CUDA 路径不兼容，可追加
 `--insta-disable-cuda`。
+
+CameraSDK 通过 USB 控制 X5 时需要安装 udev 权限规则，并将机身 USB
+模式设为 Android/SDK（不是 U-Disk）：
+
+```bash
+sudo install -m 0644 config/udev/99-insta360-camera-sdk.rules \
+  /etc/udev/rules.d/99-insta360-camera-sdk.rules
+sudo udevadm control --reload-rules
+```
+
+当前物理右 X5 已由 CameraSDK 2.1.1 DeviceDiscovery 验证：
+serial `IAHEA2606KMURQ`，型号 `Insta360 X5`，固件 `v1.7.8`。
+
+多设备不需要逐台重跑视频流水线。udev 规则每台工作站只安装一次，然后用
+CameraSDK 批量发现并增量登记序列号：
+
+```bash
+./umi devices scan
+./umi devices register
+./umi devices assign IAHEA2606KMURQ \
+  --role physical_right --base-tag-id 3 --label right-gripper-basetag3
+./umi devices list
+```
+
+若 20 台同时接在有供电的 USB Hub 上，`scan/register` 一次登记全部设备；若逐台
+连接，同一个 `register` 命令会增量合并并保留既有角色分配。设备登记只查询
+serial、型号和固件，通常数秒完成，不运行角度、力或视频处理。
 
 未来 Insta360 采集型号为 X5。开始大规模采集前，必须使用实际 X5
 序列号完成 CameraSDK 设备发现/录制测试，以及 MediaSDK 原始 INSV/LRV

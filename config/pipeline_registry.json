@@ -16,6 +16,22 @@
     {
       "command": "umi review <manifest> --publish",
       "purpose": "publish the immutable bundle to the review platform"
+    },
+    {
+      "command": "umi devices scan",
+      "purpose": "discover every connected X5 serial and firmware through CameraSDK"
+    },
+    {
+      "command": "umi devices register",
+      "purpose": "merge discovered X5 devices into the persistent fleet inventory"
+    },
+    {
+      "command": "umi devices assign <serial> --role <role> --base-tag-id <id>",
+      "purpose": "bind a registered camera to a physical gripper role once"
+    },
+    {
+      "command": "umi devices list",
+      "purpose": "show the persistent fleet inventory without reconnecting devices"
     }
   ],
   "legacy": [

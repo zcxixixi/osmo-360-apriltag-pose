@@ -1,0 +1,23 @@
+{
+  "schema_version": "x5-camera-identity/1.0",
+  "status": "SDK_VERIFIED_SERIAL_BOUND",
+  "serial": "IAHEA2606KMURQ",
+  "camera_model": "Insta360 X5",
+  "hardware_role": "physical_right",
+  "base_tag_id": 3,
+  "source_capture": "/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/raw/VID_20260829_114845_00_002.insv",
+  "source_sha256": "6182831beaae69c99c9943d3c5ea1771cd76385a8463448cd3995d6bc81bfa6f",
+  "serial_evidence": "CameraSDK DeviceDiscovery::DeviceDescriptor.serial_number",
+  "observed_basetag_frames": 828,
+  "total_frames": 852,
+  "sdk_verification": {
+    "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+    "sdk_revision_sha256": "7a28540f6a2228c58c03bba4c7e22c4ca355bf7ab4c464a842c314a0911ae35b",
+    "camera_sdk_version": "2.1.1.1-20251104_115504",
+    "camera_name": "Insta360 X5",
+    "firmware_version": "v1.7.8",
+    "usb_id": "2e1a:0002",
+    "camera_sdk_open_succeeded": true
+  },
+  "revision_id": "x5-right-camera-identity-20260829-r3-sdk-verified"
+}

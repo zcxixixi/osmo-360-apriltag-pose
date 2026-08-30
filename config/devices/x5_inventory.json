@@ -1,0 +1,18 @@
+{
+  "schema_version": "x5-device-inventory/1.0",
+  "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+  "devices": {
+    "IAHEA2606KMURQ": {
+      "serial": "IAHEA2606KMURQ",
+      "model": "Insta360 X5",
+      "firmware": "v1.7.8",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": {
+        "role": "physical_right",
+        "base_tag_id": 3,
+        "label": "right-gripper-basetag3"
+      }
+    }
+  }
+}

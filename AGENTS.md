@@ -82,12 +82,14 @@ rejected.
 
 Latest X5 diagnostic:
 `/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/`,
-physical right serial `IAHEA2606KMURQ`, corroborated by BaseTag ID3 in 828/852
-frames (ID2 in 0/852). Use angle revision
+physical right serial `IAHEA2606KMURQ`, verified by CameraSDK 2.1.1
+DeviceDiscovery (`Insta360 X5`, firmware `v1.7.8`) and corroborated by BaseTag
+ID3 in 828/852 frames (ID2 in 0/852). Use angle revision
 `config/rig_revisions/x5_jaw_angle_yellow_dots_20260829_r2.json`, rig
-`config/rig_revisions/x5_right_basetag3_gridAB_20260829_r3.json`, force output
-`force-angle-v13-serial-bound/`, timeline `webgl-v10-serial-propagated/`, and
-review bundle `review-bundle-v3-serial-propagated/`. The angle is defined by the three
+`config/rig_revisions/x5_right_basetag3_gridAB_20260829_r4.json`, force output
+`force-angle-v15-sdk-identity-r4/`, timeline
+`webgl-v12-sdk-identity-r4/`, and review bundle
+`review-bundle-v5-sdk-identity-r4/`. The angle is defined by the three
 highlighted yellow circular dots on each black jaw pad; do not substitute
 yellow-body PCA or capture-percentile zeroing. Bilateral measurement is
 preferred. A right-pad-only quadratic fallback is explicitly low-confidence
@@ -101,7 +103,12 @@ Do not invoke internal processing scripts or assemble timelines manually for a
 registered capture. `umi inspect` verifies all hashes, `umi process` runs or
 reuses the locked outputs, and `umi review` creates an immutable bundle with a
 project-versioned renderer. The current X5 manifest is
-`manifests/captures/x5-20260829-114845-iahea2606kmurq-r2.json`.
+`manifests/captures/x5-20260829-114845-iahea2606kmurq-sdk-r3.json`.
+
+Fleet identity is stored in `config/devices/x5_inventory.json`. Use
+`umi devices scan/register/assign/list`; never create one-off serial discovery
+scripts or rerun video processing merely to register another X5. The udev rule
+`config/udev/99-insta360-camera-sdk.rules` applies to every X5 on the host.
 
 `contact_intensity` is capture-local pad deformation, not force in Newtons and
 not cross-episode comparable. Preserve direct, recovered (maximum 0.25 s), and

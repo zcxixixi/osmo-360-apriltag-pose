@@ -4,6 +4,12 @@ from pathlib import Path
 import pytest
 
 from umi_pipeline.cli import list_commands
+from umi_pipeline.devices import (
+    assign_device,
+    load_inventory,
+    parse_camera_sdk_output,
+    register_devices,
+)
 from umi_pipeline.manifest import ManifestError, load_manifest, sha256
 from umi_pipeline.process import process_capture
 from umi_pipeline.review import build_review_bundle
@@ -146,3 +152,40 @@ def test_existing_outputs_become_immutable_review_bundle(tmp_path):
 def test_command_registry_hides_legacy_by_default():
     assert "legacy" not in list_commands(False)
     assert "legacy" in list_commands(True)
+
+
+def test_camera_sdk_fleet_registration_preserves_assignments(tmp_path):
+    output = "\n".join(
+        [
+            "serial:IAHEA2606KMURQ ;camera type:Insta360 X5 ;fw version:v1.7.8",
+            "serial:IAHEA2606KTEST ;camera type:Insta360 X5 ;fw version:v1.7.7",
+        ]
+    )
+    devices = parse_camera_sdk_output(output)
+    inventory_path = tmp_path / "inventory.json"
+
+    register_devices(devices, inventory_path)
+    assign_device(
+        "IAHEA2606KMURQ",
+        role="physical_right",
+        base_tag_id=3,
+        path=inventory_path,
+    )
+    updated = register_devices(
+        [
+            {
+                "serial": "IAHEA2606KMURQ",
+                "model": "Insta360 X5",
+                "firmware": "v1.7.9",
+            }
+        ],
+        inventory_path,
+    )
+
+    assert sorted(updated["devices"]) == ["IAHEA2606KMURQ", "IAHEA2606KTEST"]
+    assert updated["devices"]["IAHEA2606KMURQ"]["firmware"] == "v1.7.9"
+    assert updated["devices"]["IAHEA2606KMURQ"]["assignment"] == {
+        "role": "physical_right",
+        "base_tag_id": 3,
+    }
+    assert load_inventory(inventory_path) == updated
