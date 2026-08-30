@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from evaluate_mocap_ground_truth import Trajectory, rigid_alignment, _relative_errors
+from tools.evaluate_mocap_ground_truth import Trajectory, rigid_alignment, _relative_errors
 
 
 def test_rigid_alignment_recovers_known_transform():

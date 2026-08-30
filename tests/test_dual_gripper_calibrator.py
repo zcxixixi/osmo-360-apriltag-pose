@@ -1,8 +1,8 @@
-from dual_gripper_calibrator import app, validate_payload
+from tools.dual_gripper_calibrator import app, validate_payload
 
 
 def test_validate_and_save(tmp_path, monkeypatch):
-    import dual_gripper_calibrator as module
+    from tools import dual_gripper_calibrator as module
 
     monkeypatch.setattr(module, "OUTPUT_ROOT", tmp_path)
     client = app.test_client()

@@ -10,7 +10,7 @@
 ```
 
 问题根因、坐标变换链、质量门禁和双夹爪共同世界坐标的完整说明见
-[`LOCALIZATION_PIPELINE.md`](LOCALIZATION_PIPELINE.md)。
+[`docs/LOCALIZATION_PIPELINE.md`](docs/LOCALIZATION_PIPELINE.md)。
 
 ## 能力
 
@@ -38,6 +38,11 @@
 生成包含 timeline、视频、审计、manifest 和版本化 scene 的不可变发布包。
 底层 `render_*`、`calibrate_*`、`fuse_*` 脚本仍保留为内部实现或历史复现入口，
 其状态可用 `./umi commands --legacy` 查看。
+
+仓库根目录只保留 `umi` 主入口、冻结基线核心模块和验证器。其他离线标定、
+媒体处理、数据构建和历史实验脚本统一放在 `tools/`，兼容命令包装器放在
+`bin/`，专项说明放在 `docs/`。新流程优先使用 `./umi`；只有历史复现或专项
+诊断才直接运行 `python -m tools.<module>`。
 
 光流、插值和预测只用于连续轨迹与可视化。正式精度统计只接受满足要求的直接多 Tag 视觉测量。
 
@@ -78,7 +83,7 @@ cd ..
 DJI 原始 `.OSV` 拼接依赖本机 PanoForge，默认查找与本仓库同级的 `panoforge-test/`。也可以在运行时指定：
 
 ```bash
-./camera-to-dataset input.OSV \
+./bin/camera-to-dataset input.OSV \
   --panoforge-root /opt/PanoForge \
   --run-name production-001
 ```
@@ -91,7 +96,7 @@ MediaSDK 与 CameraSDK 分别本地部署到版本化的 gitignored `work/` 目�
 和方向锁定，以保留用于 6DoF 解算的原始相机运动：
 
 ```bash
-./camera-to-dataset /data/VID_xxx.insv \
+./bin/camera-to-dataset /data/VID_xxx.insv \
   --insta-sdk-revision config/sdk_revisions/insta360_linux_camera_2_1_1_media_3_1_1.json \
   --run-name insta-x5-001 \
   --max-processed-frames 60
@@ -185,7 +190,7 @@ NVDEC 目前保留为显式实验选项；由于帧仍需下载到 CPU 进行 Ap
 ### DJI Osmo 360
 
 ```bash
-./camera-to-dataset /data/CAM_xxx_D.OSV \
+./bin/camera-to-dataset /data/CAM_xxx_D.OSV \
   --output-root /data/processed \
   --run-name robot-motion-001
 ```
@@ -193,7 +198,7 @@ NVDEC 目前保留为显式实验选项；由于帧仍需下载到 CPU 进行 Ap
 默认 AprilGrid 参数为 6×6、黑色编码区 88 mm、间距比例 0.30。使用独立大 Tag 时必须传入实际地图。双夹爪采集必须使用包含两面墙全部唯一ID的共同世界地图：
 
 ```bash
-./camera-to-dataset /data/CAM_xxx_D.OSV \
+./bin/camera-to-dataset /data/CAM_xxx_D.OSV \
   --tag-map config/room_corner_10tag_world_provisional.json \
   --output-root /data/processed \
   --run-name four-tag-motion-001
@@ -202,7 +207,7 @@ NVDEC 目前保留为显式实验选项；由于帧仍需下载到 CPU 进行 Ap
 建议先做小规模验收：
 
 ```bash
-./camera-to-dataset /data/CAM_xxx_D.OSV \
+./bin/camera-to-dataset /data/CAM_xxx_D.OSV \
   --run-name smoke-test \
   --max-processed-frames 60
 ```
@@ -265,7 +270,7 @@ dataset/
 使用关闭 FlowState、方向锁定和地平线校正的官方 2:1 MP4：
 
 ```bash
-./x5-mocap-evaluate \
+./bin/x5-mocap-evaluate \
   /data/VID_NO_FLOWSTATE.mp4 \
   /data/motive.csv \
   --confirm-flowstate-off \
@@ -281,7 +286,7 @@ dataset/
 输入左右两台相机的视频及6DoF CSV，以左相机为参考坐标系，自动估计时间偏移和刚性安装外参 `T_left_right`：
 
 ```bash
-./dual-camera-align-audit \
+./bin/dual-camera-align-audit \
   left.mp4 left/annotations/trajectory_6dof.csv \
   right.mp4 right/annotations/trajectory_6dof.csv \
   --left-source left_original.OSV \
@@ -319,7 +324,7 @@ uv run pytest -q
 ### 双夹爪 v50 冻结基线
 
 修改双夹爪定位、姿态融合、左右角色、外参、平滑或三维渲染前，必须先读
-[`DUAL_GRIPPER_V50_BASELINE.md`](DUAL_GRIPPER_V50_BASELINE.md)，并执行：
+[`docs/DUAL_GRIPPER_V50_BASELINE.md`](docs/DUAL_GRIPPER_V50_BASELINE.md)，并执行：
 
 ```bash
 ./.venv/bin/python verify_dual_gripper_v50_baseline.py
@@ -337,7 +342,7 @@ uv run pytest -q
 ```bash
 cp config/episode.template.json episode.json
 cp config/hardware.template.json hardware.json
-./vla-dataset episode.json dataset-output
+./bin/vla-dataset episode.json dataset-output
 ```
 
 输出包含：
@@ -355,7 +360,7 @@ cp config/hardware.template.json hardware.json
 
 ```bash
 uv run --with-requirements requirements-train-cu130.txt \
-  python train_zarr_overfit_smoke.py dataset-output/dataset.zarr.zip \
+  python -m tools.train_zarr_overfit_smoke dataset-output/dataset.zarr.zip \
   --output-dir dataset-output/overfit-smoke
 ```
 
@@ -365,7 +370,7 @@ uv run --with-requirements requirements-train-cu130.txt \
 
 ```bash
 DUAL_GRIPPER_DATA_ROOT=/absolute/path/to/episode-review \
-  ./dual-gripper-calibrator
+  ./bin/dual-gripper-calibrator
 ```
 
 浏览器访问 `http://127.0.0.1:7861/umi` 可逐帧检查双目画面、原始/滤波轨迹、异常剔除点、夹宽和训练有效率。网页只读取本地产物，不上传原视频。

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from osmo_360_offline import (
+from tools.osmo_360_offline import (
     infer_camera_model,
     resolve_decoder,
     resolve_projection,

@@ -9,7 +9,7 @@ or case-variant agent instruction files.
 Before changing localization, calibration, fusion, role mapping, world frames,
 hardware extrinsics, smoothing, timeline export, 3-D rendering, or UMI export:
 
-1. Read `DUAL_GRIPPER_V50_BASELINE.md` and
+1. Read `docs/DUAL_GRIPPER_V50_BASELINE.md` and
    `config/baselines/dual_gripper_v50_accepted_baseline.json`.
 2. Run `./.venv/bin/python verify_dual_gripper_v50_baseline.py`.
 3. After the change, run the focused check, the real-data path, the verifier,
@@ -18,6 +18,11 @@ hardware extrinsics, smoothing, timeline export, 3-D rendering, or UMI export:
 The accepted v15/v50 artifacts and `assets/gripper/` meshes are immutable.
 Never overwrite them or change pinned hashes. New experiments use a new
 version/output directory. If the verifier fails, stop and report the mismatch.
+
+New offline utilities belong in `tools/`, compatibility launchers in `bin/`,
+and focused documentation in `docs/`. Do not add another one-off script or
+document to the repository root. The remaining root Python modules are frozen
+baseline dependencies or current pipeline entrypoints.
 
 Do not:
 
@@ -67,7 +72,7 @@ Active implementations:
 - diagnostics: `render_gripper_force_angle_demo.py`,
   `render_single_gripper_motion_demo.py`, `render_single_gripper_webgl_demo.py`;
 - review platform: `dual_gripper_3d/platform_server.mjs`,
-  `dual_gripper_3d/platform.html`, `upload_visualization_bundle.py`;
+  `dual_gripper_3d/platform.html`, `tools/upload_visualization_bundle.py`;
 - focused tests: `tests/test_gripper_force_angle_demo.py`,
   `tests/test_single_gripper_motion_demo.py`,
   `tests/test_single_gripper_webgl_demo.py`,
@@ -167,8 +172,8 @@ diagnostic camera view; never claim it is a world pose.
 The platform is a fast visual check of processed results, not a processing
 pipeline. It accepts `single_gripper_webgl_timeline.json` plus synchronized
 `front-video.mp4`; it must not recompute or alter poses, angles, or contact
-intensity. Agents upload with `upload_visualization_bundle.py` and consume its
-JSON `view_url`. Capabilities are at `http://192.168.111.62:7865/api/capabilities`.
+intensity. Agents upload with `python -m tools.upload_visualization_bundle` and
+consume its JSON `view_url`. Capabilities are at `http://192.168.111.62:7865/api/capabilities`.
 
 `render_single_gripper_webgl_demo.py` derives `capture_pair_id` from the source
 OSV stem and actual FPS. Never hardcode a capture filename or ID.

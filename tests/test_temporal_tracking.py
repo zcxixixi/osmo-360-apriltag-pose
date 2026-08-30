@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from osmo_360_offline import track_view_detections
+from tools.osmo_360_offline import track_view_detections
 from render_trajectory_overlay_video import rpy_to_rotation
 
 

@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from train_small_vla_demo import (
+from tools.train_small_vla_demo import (
     SmallVlaPolicy,
     action_matrix,
     apply_actions,

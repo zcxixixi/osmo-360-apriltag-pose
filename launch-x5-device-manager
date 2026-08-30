@@ -1,6 +1,0 @@
-#!/bin/sh
-set -eu
-SELF=$(readlink -f -- "$0")
-ROOT=$(dirname -- "$SELF")
-cd "$ROOT"
-exec ./.venv/bin/python -m umi_pipeline.cli devices ui

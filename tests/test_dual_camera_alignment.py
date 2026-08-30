@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dual_camera_alignment_audit import (
+from tools.dual_camera_alignment_audit import (
     CaptureInterval,
     Trajectory,
     at_most,

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from insta360_sdk_revision import load_insta360_sdk_revision, sha256
+from tools.insta360_sdk_revision import load_insta360_sdk_revision, sha256
 
 
 def make_revision(tmp_path: Path) -> Path:

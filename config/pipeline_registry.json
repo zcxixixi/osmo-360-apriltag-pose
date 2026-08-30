@@ -49,18 +49,18 @@
       "files": [
         "render_gripper_force_angle_demo.py",
         "render_single_gripper_webgl_demo.py",
-        "osmo_360_offline.py",
-        "insta360_media_stitch.py"
+        "tools/osmo_360_offline.py",
+        "tools/insta360_media_stitch.py"
       ]
     },
     {
       "group": "historical-experiments",
       "status": "diagnostic or superseded; require an explicit historical reproduction task",
       "patterns": [
-        "estimate_*",
-        "run_*experiment*",
-        "render_*comparison*",
-        "dual_gripper_calibrator*"
+        "tools/estimate_*",
+        "tools/run_*experiment*",
+        "tools/render_*comparison*",
+        "tools/dual_gripper_calibrator*"
       ]
     },
     {

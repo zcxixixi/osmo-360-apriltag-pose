@@ -3,7 +3,7 @@ from scipy.spatial.transform import Rotation
 from types import SimpleNamespace
 
 from calibrate_basetag_reciprocal import Transform
-from direct_reciprocal_world_pose_cached import choose_episode_anchor, direct_camera_pair
+from tools.direct_reciprocal_world_pose_cached import choose_episode_anchor, direct_camera_pair
 
 
 class Frame:
@@ -19,7 +19,7 @@ def test_right_anchor_chain_recovers_left_camera(monkeypatch):
     frame = Frame()
     frame.cross_rl_pose = world_right.inverse().compose(world_left.compose(own_left))
     frame.cross_lr_pose = None
-    monkeypatch.setattr("direct_reciprocal_world_pose_cached.solve_camera_wall_only",
+    monkeypatch.setattr("tools.direct_reciprocal_world_pose_cached.solve_camera_wall_only",
                         lambda *args: world_right)
     left, right = direct_camera_pair(frame, "right", Transform(np.zeros(3), Rotation.identity()),
                                      own_left, own_left)
@@ -36,7 +36,7 @@ def test_direct_chain_requires_same_frame_cross_measurement():
 
 def test_anchor_is_chosen_once_from_episode_support(monkeypatch):
     frames = [SimpleNamespace(cross_lr_pose=None, cross_rl_pose=object()) for _ in range(3)]
-    monkeypatch.setattr("direct_reciprocal_world_pose_cached.wall_support_score",
+    monkeypatch.setattr("tools.direct_reciprocal_world_pose_cached.wall_support_score",
                         lambda frame, side: (1, 4) if side else (0, 2))
     anchor, scores = choose_episode_anchor(frames)
     assert anchor == "right"

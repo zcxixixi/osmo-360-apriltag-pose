@@ -2,7 +2,7 @@ import csv
 import json
 import sys
 
-import build_camera_validation_timeline as builder
+from tools import build_camera_validation_timeline as builder
 
 
 def test_x5_camera_model_is_serialized_into_timeline(tmp_path, monkeypatch):

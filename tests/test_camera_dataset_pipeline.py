@@ -2,8 +2,8 @@ from pathlib import Path
 
 import numpy as np
 
-import camera_to_dataset
-from export_trajectory_dataset import relative_pose
+from tools import camera_to_dataset
+from tools.export_trajectory_dataset import relative_pose
 
 
 def video_probe(width=3000, height=3000, count=2, encoder=""):
@@ -54,10 +54,10 @@ def test_first_pose_coordinate_frame_is_identity():
 
 
 def test_packaged_dji_entrypoints_and_panoforge_exist():
-    assert (camera_to_dataset.ROOT / "camera-to-dataset").is_file()
-    assert (camera_to_dataset.ROOT / "dji_osv_stitch.py").is_file()
+    assert (camera_to_dataset.ROOT / "bin/camera-to-dataset").is_file()
+    assert (camera_to_dataset.ROOT / "tools/dji_osv_stitch.py").is_file()
     assert (camera_to_dataset.PANOFORGE_ROOT / "app/core/maps.py").is_file()
 
 
 def test_official_insta360_stitch_adapter_exists():
-    assert (camera_to_dataset.ROOT / "insta360_media_stitch.py").is_file()
+    assert (camera_to_dataset.ROOT / "tools/insta360_media_stitch.py").is_file()

@@ -5,7 +5,7 @@ import pytest
 
 import numpy as np
 
-from joint_dual_camera_pose_graph_cached import (
+from tools.joint_dual_camera_pose_graph_cached import (
     FrameData,
     anchored_cross_direction,
     basetag_pose_matches_expected,
@@ -18,8 +18,8 @@ from joint_dual_camera_pose_graph_cached import (
     solve_frames_temporally,
 )
 from scipy.spatial.transform import Rotation
-from joint_camera_correction_cached import nearest_detection_frame as nearest_correction_detection_frame
-from calibrate_basetag_reciprocal_cached import (
+from tools.joint_camera_correction_cached import nearest_detection_frame as nearest_correction_detection_frame
+from tools.calibrate_basetag_reciprocal_cached import (
     load_both_wall_support_times,
     timestamp_supported,
 )
@@ -218,7 +218,7 @@ def test_temporal_holdout_uses_previous_pose_but_not_heldout_cross(monkeypatch):
         return solved, solved
 
     monkeypatch.setattr(
-        "joint_dual_camera_pose_graph_cached.solve_frame", fake_solve)
+        "tools.joint_dual_camera_pose_graph_cached.solve_frame", fake_solve)
     solve_frames_temporally(
         frames,
         {0.0: (identity, identity), 0.05: (initial_second, initial_second)},

@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from evaluate_insta360_mocap import (
+from tools.evaluate_insta360_mocap import (
     MotiveData,
     PoseSeries,
     calibrate_extrinsics,
@@ -14,7 +14,7 @@ from evaluate_insta360_mocap import (
     pose_matrices,
     trajectory_errors,
 )
-from osmo_360_offline import View, load_tag_map, perspective_intrinsics, solve_view
+from tools.osmo_360_offline import View, load_tag_map, perspective_intrinsics, solve_view
 
 
 ROOT = Path(__file__).resolve().parents[1]
