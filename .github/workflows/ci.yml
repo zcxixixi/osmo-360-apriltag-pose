@@ -27,6 +27,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dual_gripper_3d/package-lock.json
+      - run: npm ci --prefix dual_gripper_3d
       - run: uv sync --extra test --frozen
       - run: uv run python -m compileall -q src tools tests
       - run: uv run pytest -q
