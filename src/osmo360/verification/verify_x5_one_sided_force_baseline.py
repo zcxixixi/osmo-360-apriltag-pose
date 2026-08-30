@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 from osmo360.paths import ROOT
-BASELINE = ROOT / "config/baselines/x5_left_one_sided_force_accepted_20260830.json"
+BASELINE = ROOT / "config/baselines/x5_left_one_sided_force_src_accepted_20260830.json"
 
 
 def sha256(path: Path) -> str:

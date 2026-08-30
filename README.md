@@ -39,10 +39,10 @@
 底层 `render_*`、`calibrate_*`、`fuse_*` 脚本仍保留为内部实现或历史复现入口，
 其状态可用 `./umi commands --legacy` 查看。
 
-仓库根目录只保留 `umi` 主入口、冻结基线核心模块和验证器。其他离线标定、
-媒体处理、数据构建和历史实验脚本统一放在 `tools/`，兼容命令包装器放在
-`bin/`，专项说明放在 `docs/`。新流程优先使用 `./umi`；只有历史复现或专项
-诊断才直接运行 `python -m tools.<module>`。
+仓库根目录只保留项目配置和 `umi` 主入口。正式产品代码统一放在
+`src/osmo360/`，离线实验工具放在 `tools/`，兼容命令放在 `bin/`，专项说明
+放在 `docs/`。新流程优先使用 `./umi`；只有历史复现或专项诊断才运行
+`python -m tools.<module>`。
 
 光流、插值和预测只用于连续轨迹与可视化。正式精度统计只接受满足要求的直接多 Tag 视觉测量。
 
@@ -166,9 +166,9 @@ manifests/captures/x5-20260829-114845-fixed-relative-force-r4.json
 使用双侧结果；遮挡一侧时使用可见侧并标低置信度；两侧都不完整时保留 `N/A`。
 该演示使用本次视频的局部 0–100% 形变尺度，不与其他硬件版本直接比较。
 冻结基线为
-`config/baselines/x5_left_one_sided_force_accepted_20260830.json`，使用
-`./verify_x5_one_sided_force_baseline.py` 校验。后续算法修改必须新建 revision
-和输出目录，不能覆盖当前接受版。
+`config/baselines/x5_left_one_sided_force_src_accepted_20260830.json`，使用
+`./umi verify` 校验全部当前基线。后续算法修改必须新建 revision 和输出目录，
+不能覆盖当前接受版。
 
 未来 Insta360 采集型号为 X5。开始大规模采集前，必须使用实际 X5
 序列号完成 CameraSDK 设备发现/录制测试，以及 MediaSDK 原始 INSV/LRV
@@ -221,12 +221,12 @@ NVDEC 目前保留为显式实验选项；由于帧仍需下载到 CPU 进行 Ap
 
 ```bash
 # 编译、校验10 Tag世界地图并查看稳定哈希
-uv run python world_frames.py \
+uv run python -m osmo360.localization.world_frames \
   config/room_corner_10tag_world_provisional.json \
   --output /data/calibration/room_world_tags.compiled.json
 
 # UMI诊断/导出；episode.json必须声明coordinate_frame与同一地图
-uv run python vla_dataset_export.py episode.json output/
+./bin/vla-dataset episode.json output/
 ```
 
 UMI中的 `robot*_eef_pos` 和姿态是共同世界坐标，`robot*_eef_delta_from_start_*` 是附加的单爪起点增量。地图哈希、父子坐标系、相机到TCP方向或标定状态不匹配时，管线会阻止Zarr训练文件输出。
@@ -327,13 +327,13 @@ uv run pytest -q
 [`docs/DUAL_GRIPPER_V50_BASELINE.md`](docs/DUAL_GRIPPER_V50_BASELINE.md)，并执行：
 
 ```bash
-./.venv/bin/python verify_dual_gripper_v50_baseline.py
+./umi verify
 ./.venv/bin/pytest -q
 ```
 
-机器可读的固定哈希、角色绑定、算法不变量和回归阈值保存在
-`config/baselines/dual_gripper_v50_accepted_baseline.json`。v15/v50 产物不可覆盖；
-实验必须写入新版本目录，经标定片段和完整爪对爪片段对比并由人工确认后才能成为新基线。
+机器可读的当前固定哈希、角色绑定、算法不变量和回归阈值保存在
+`config/baselines/dual_gripper_v50_src_accepted_baseline.json`。旧基线仍绑定历史
+commit，当前 v15/v50 产物不可覆盖；实验必须写入新目录并重新验收。
 
 ## UMI / VLA 数据集封装
 

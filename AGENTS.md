@@ -10,19 +10,19 @@ Before changing localization, calibration, fusion, role mapping, world frames,
 hardware extrinsics, smoothing, timeline export, 3-D rendering, or UMI export:
 
 1. Read `docs/DUAL_GRIPPER_V50_BASELINE.md` and
-   `config/baselines/dual_gripper_v50_accepted_baseline.json`.
-2. Run `./.venv/bin/python verify_dual_gripper_v50_baseline.py`.
-3. After the change, run the focused check, the real-data path, the verifier,
+   `config/baselines/dual_gripper_v50_src_accepted_baseline.json`.
+2. Run `./umi verify`.
+3. After the change, run the focused check, the real-data path, `./umi verify`,
    and `./.venv/bin/pytest -q`.
 
 The accepted v15/v50 artifacts and `assets/gripper/` meshes are immutable.
 Never overwrite them or change pinned hashes. New experiments use a new
 version/output directory. If the verifier fails, stop and report the mismatch.
 
-New offline utilities belong in `tools/`, compatibility launchers in `bin/`,
-and focused documentation in `docs/`. Do not add another one-off script or
-document to the repository root. The remaining root Python modules are frozen
-baseline dependencies or current pipeline entrypoints.
+New product code belongs in `src/osmo360/`, offline utilities in `tools/`,
+compatibility launchers in `bin/`, and focused documentation in `docs/`. Do not
+add another script or document to the repository root; `umi` is the sole root
+executable.
 
 Do not:
 
@@ -69,8 +69,9 @@ a separate revision. The pad STL uses millimetres; URDF meshes use metres.
 
 Active implementations:
 
-- diagnostics: `render_gripper_force_angle_demo.py`,
-  `render_single_gripper_motion_demo.py`, `render_single_gripper_webgl_demo.py`;
+- diagnostics: `src/osmo360/visualization/render_gripper_force_angle_demo.py`,
+  `src/osmo360/visualization/render_single_gripper_motion_demo.py`,
+  `src/osmo360/visualization/render_single_gripper_webgl_demo.py`;
 - review platform: `dual_gripper_3d/platform_server.mjs`,
   `dual_gripper_3d/platform.html`, `tools/upload_visualization_bundle.py`;
 - focused tests: `tests/test_gripper_force_angle_demo.py`,
@@ -120,10 +121,9 @@ This revision prefers bilateral force measurement, falls back to the one
 complete jaw as `MEASURED_ONE_SIDED_{LEFT,RIGHT}_LOW_CONFIDENCE`, and preserves
 `N/A` when neither jaw is complete; it never fabricates the hidden marker.
 The accepted result is frozen by
-`config/baselines/x5_left_one_sided_force_accepted_20260830.json`. Run
-`./verify_x5_one_sided_force_baseline.py` after relevant changes. Never
-overwrite its force, timeline, or review-bundle directories; replacements need
-new revisions and a new user acceptance.
+`config/baselines/x5_left_one_sided_force_src_accepted_20260830.json`. Run
+`./umi verify` after relevant changes. Never overwrite its force, timeline, or
+review-bundle directories; replacements need new revisions and user acceptance.
 
 Fleet identity is stored in `config/devices/x5_inventory.json`. Prefer the
 visual manager (`umi devices ui`, desktop launcher `X5设备管理`) or use
@@ -175,7 +175,7 @@ pipeline. It accepts `single_gripper_webgl_timeline.json` plus synchronized
 intensity. Agents upload with `python -m tools.upload_visualization_bundle` and
 consume its JSON `view_url`. Capabilities are at `http://192.168.111.62:7865/api/capabilities`.
 
-`render_single_gripper_webgl_demo.py` derives `capture_pair_id` from the source
+`src/osmo360/visualization/render_single_gripper_webgl_demo.py` derives `capture_pair_id` from the source
 OSV stem and actual FPS. Never hardcode a capture filename or ID.
 
 ## Pose, cache, and evidence invariants

@@ -14,7 +14,7 @@ import numpy as np
 
 
 from osmo360.paths import ROOT
-DEFAULT_LOCK = ROOT / "config/baselines/dual_gripper_v50_accepted_baseline.json"
+DEFAULT_LOCK = ROOT / "config/baselines/dual_gripper_v50_src_accepted_baseline.json"
 
 
 def sha256(path: Path) -> str:
