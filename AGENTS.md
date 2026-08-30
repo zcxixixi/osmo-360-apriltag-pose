@@ -105,7 +105,8 @@ reuses the locked outputs, and `umi review` creates an immutable bundle with a
 project-versioned renderer. The current X5 manifest is
 `manifests/captures/x5-20260829-114845-iahea2606kmurq-sdk-r3.json`.
 
-Fleet identity is stored in `config/devices/x5_inventory.json`. Use
+Fleet identity is stored in `config/devices/x5_inventory.json`. Prefer the
+visual manager (`umi devices ui`, desktop launcher `X5设备管理`) or use
 `umi devices scan/register/assign/list`; never create one-off serial discovery
 scripts or rerun video processing merely to register another X5. The udev rule
 `config/udev/99-insta360-camera-sdk.rules` applies to every X5 on the host.

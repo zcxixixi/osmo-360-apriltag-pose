@@ -116,7 +116,16 @@ sudo udevadm control --reload-rules
 因此已有视频也完成了 serial 来源绑定。
 
 多设备不需要逐台重跑视频流水线。udev 规则每台工作站只安装一次，然后用
-CameraSDK 批量发现并增量登记序列号：
+CameraSDK 批量发现并增量登记序列号。
+不想使用命令行时，双击桌面的 `X5设备管理`，或运行：
+
+```bash
+./umi devices ui
+```
+
+页面提供“扫描已连接 X5”“登记全部”和“保存分配”三个按钮，并显示 serial、
+固件、物理角色、BaseTag 和设备标签。
+
 
 ```bash
 ./umi devices scan

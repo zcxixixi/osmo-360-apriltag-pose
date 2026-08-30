@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=X5 设备管理
+Comment=扫描、登记并分配 Insta360 X5 设备
+Exec=/home/cenxi/.local/bin/x5-device-manager
+Icon=camera-web
+Terminal=false
+Categories=Utility;Settings;
+StartupNotify=true

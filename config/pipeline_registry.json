@@ -18,6 +18,10 @@
       "purpose": "publish the immutable bundle to the review platform"
     },
     {
+      "command": "umi devices ui",
+      "purpose": "open the local visual fleet manager with scan, register, and assignment buttons"
+    },
+    {
       "command": "umi devices scan",
       "purpose": "discover every connected X5 serial and firmware through CameraSDK"
     },

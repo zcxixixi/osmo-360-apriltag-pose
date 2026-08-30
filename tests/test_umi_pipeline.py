@@ -10,6 +10,7 @@ from umi_pipeline.devices import (
     parse_camera_sdk_output,
     register_devices,
 )
+from umi_pipeline.device_ui import PAGE
 from umi_pipeline.manifest import ManifestError, load_manifest, sha256
 from umi_pipeline.process import process_capture
 from umi_pipeline.review import build_review_bundle
@@ -189,3 +190,12 @@ def test_camera_sdk_fleet_registration_preserves_assignments(tmp_path):
         "base_tag_id": 3,
     }
     assert load_inventory(inventory_path) == updated
+
+
+def test_visual_device_manager_exposes_required_buttons():
+    assert "扫描已连接 X5" in PAGE
+    assert "登记全部" in PAGE
+    assert "保存分配" in PAGE
+    assert "/api/scan" in PAGE
+    assert "/api/register" in PAGE
+    assert "/api/assign" in PAGE

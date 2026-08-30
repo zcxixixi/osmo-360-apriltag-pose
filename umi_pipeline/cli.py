@@ -14,6 +14,7 @@ from .devices import (
     register_devices,
     scan_devices,
 )
+from .device_ui import serve_device_ui
 from .process import process_capture
 from .review import review_capture
 
@@ -80,6 +81,12 @@ def parse_args() -> argparse.Namespace:
     assign_parser.add_argument("--base-tag-id", required=True, type=int, choices=(2, 3))
     assign_parser.add_argument("--label")
     assign_parser.add_argument("--inventory", type=Path, default=DEFAULT_INVENTORY)
+    ui_parser = device_subparsers.add_parser(
+        "ui", help="open the local visual X5 fleet manager"
+    )
+    ui_parser.add_argument("--host", default="127.0.0.1")
+    ui_parser.add_argument("--port", type=int, default=7866)
+    ui_parser.add_argument("--no-browser", action="store_true")
     list_parser = device_subparsers.add_parser(
         "list", help="show the persistent X5 inventory"
     )
@@ -122,6 +129,13 @@ def main() -> int:
                     label=args.label,
                     path=args.inventory.resolve(),
                 )
+            elif args.device_command == "ui":
+                serve_device_ui(
+                    host=args.host,
+                    port=args.port,
+                    open_browser=not args.no_browser,
+                )
+                return 0
             else:
                 result = load_inventory(args.inventory.resolve())
         else:
