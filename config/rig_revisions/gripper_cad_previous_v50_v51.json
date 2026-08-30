@@ -1,0 +1,13 @@
+{
+  "schema_version": "gripper-cad-revision/1.0",
+  "revision_id": "gripper-cad-previous-v50-v51",
+  "status": "PREVIOUS_IMMUTABLE_REPRODUCTION_ASSET",
+  "mesh_directory": "assets/gripper",
+  "meshes": {
+    "base_link.STL": "8756a07d4e32fde41435e40b151912e888af1df71c78dbcd5b561a1c6e1ffeba",
+    "Link1.STL": "6cf1725d592d0710e05a64af7f1c24f6803dc9b7130d7b23b1dc00cd7d368753",
+    "Link2.STL": "ce94712610ad032e44cce8e5575893677c783d58e1a0d0d7496a83f1dc750344",
+    "Link3.STL": "26dc33bdb295ce41764f39a6921ed7ba0669fd29de7d0a38453c75db85967310"
+  },
+  "rule": "Do not overwrite; accepted v50 and v51 diagnostic videos depend on this mesh set."
+}

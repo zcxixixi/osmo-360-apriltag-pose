@@ -1,0 +1,65 @@
+{
+  "schema_version": "dual-gripper-rig-revision/1.0",
+  "revision_id": "x5-left-sd-basetag2-adaptive-angle-20260830-r6",
+  "status": "DIAGNOSTIC_SDK_INVENTORY_SERIAL_SD_SOURCE_BASETAG2_ADAPTIVE_ANGLE",
+  "training_ready": false,
+  "hardware": {
+    "path": "config/rig_revisions/x5_left_basetag2_hardware_20260830_r4.json",
+    "sha256": "a5f50df8fc7aa4752671d10fb10aa9f111087e27b4a7c50d588126c10c2338ec"
+  },
+  "gripper_geometry": {
+    "path": "config/rig_revisions/gripper_geometry_v52_new_r2.json",
+    "sha256": "3aa0bf9cb9744674d3e0f8d48d9af6a1db6b24632cb72b148adbc91e7ab7e497"
+  },
+  "world_tag_map": {
+    "path": "/home/cenxi/Videos/umi-captures/20260828/insta360-x5-173152-v1/visual-gridAB-v2/grid_AB_combined_world_map.json",
+    "sha256": "754e86f8d0ab77c1462a52e4c008ebe6269f6e6edc27fc1c84edc88214ad53a3",
+    "compiled_sha256": "b37b815b7dc9d681b9de1b8d9425b895cea527ddc3c2cc816324b6dfa45d01f9",
+    "map_id": "x5-grid-AB-12tag-capture-fitted-20260828-v2"
+  },
+  "role_binding_source": "hardware",
+  "role_binding_evidence": "INSV metadata serial IAHEA2606KM43A matched SDK inventory; direct SD import; BaseTag2 detected in 11/12 evenly sampled frames and BaseTag3 in 0/12",
+  "expected_frames": {
+    "world_frame": "grid_A_board",
+    "physical_up_vector": [
+      0.0,
+      -1.0,
+      0.0
+    ],
+    "pose_reference": "base_link",
+    "action_reference": "tcp",
+    "base_tag_id": 2
+  },
+  "accuracy_first_policy": {
+    "maximum_pose_angular_rmse_deg": 8.0,
+    "require_both_wall_panels": true,
+    "wall_panel_id_groups": [
+      [
+        200,
+        201,
+        202,
+        203,
+        204,
+        205
+      ],
+      [
+        210,
+        211,
+        212,
+        213,
+        214,
+        215
+      ]
+    ],
+    "maximum_cross_bearing_error_deg": 8.0,
+    "maximum_trusted_position_step_m": 0.08,
+    "maximum_interpolation_gap_s": 0.25,
+    "allow_metric_smoothing": false,
+    "allow_dual_fisheye_position_fill": false,
+    "allow_hidden_contact_constraint": false
+  },
+  "angle_revision": {
+    "path": "config/rig_revisions/x5_jaw_angle_yellow_dots_left_20260830_r4.json",
+    "sha256": "d04ca09a8d8ddb07e5dab3a3794b73e193584ef346e9f0121b72eb3ca6be6b3b"
+  }
+}

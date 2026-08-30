@@ -1,0 +1,64 @@
+{
+  "schema_version": "capture-manifest/1.0",
+  "capture_id": "x5-20260829-114845-iahea2606kmurq-sdk-r3",
+  "status": "ACTIVE_DIAGNOSTIC_SDK_SERIAL_AND_SOURCE_FILE_VERIFIED_CAMERA_LOCAL_NOT_TRAINING",
+  "camera": {
+    "model": "Insta360 X5",
+    "serial": "IAHEA2606KMURQ",
+    "role": "physical_right",
+    "base_tag_id": 3,
+    "serial_status": "CameraSDK DeviceDiscovery and GetFileList verified"
+  },
+  "inputs": {
+    "raw_video": {
+      "path": "/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/raw/VID_20260829_114845_00_002.insv",
+      "sha256": "6182831beaae69c99c9943d3c5ea1771cd76385a8463448cd3995d6bc81bfa6f"
+    },
+    "camera_identity": {
+      "path": "config/rig_revisions/x5_right_camera_identity_20260829_r3.json",
+      "sha256": "168caae9c66977fa6cd37ae66f4bd38bd89c38e6e43102c63bdcd2e8181659ad"
+    },
+    "new_cad_source": {
+      "path": "/home/cenxi/Downloads/UMI-III.zip",
+      "sha256": "d928aee7ea6694444c35291515719a5c54204a2375e3bec3c8ffe0e3ee1e8959"
+    }
+  },
+  "revisions": {
+    "rig": {
+      "path": "config/rig_revisions/x5_right_basetag3_gridAB_20260829_r4.json",
+      "sha256": "86e970032844cd38e64eda15065d2f4170104f98fe0cd5059b9801bbfa82f994"
+    },
+    "jaw_angle": {
+      "path": "config/rig_revisions/x5_jaw_angle_yellow_dots_20260829_r2.json",
+      "sha256": "e3853bea959a7b54139bbbe4564d369e9ee88ca6922443e085d411c3e4f9b3a1"
+    },
+    "marker_layout": {
+      "path": "config/rig_revisions/gripper_marker_layout_umi_iii_dxf_r2.json",
+      "sha256": "53d81ea9392de5b36f222a5c283130e01fced3f653d8fcd39217e1266b39850d"
+    },
+    "renderer": {
+      "path": "dual_gripper_3d/single_gripper_scene.html",
+      "sha256": "de8aaa69c6a32bebc454781c8ed9fa9c671a81a5de0f8933192ac9a6fbffce49"
+    }
+  },
+  "pipeline": {
+    "profile": "single_x5_camera_local",
+    "maximum_recovery_gap_s": 0.25,
+    "contact_events_s": [
+      7.0,
+      10.0,
+      18.0,
+      24.0
+    ],
+    "world_pose": "unavailable; never claim tag_map"
+  },
+  "outputs": {
+    "force_angle_dir": "/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/force-angle-v15-sdk-identity-r4",
+    "timeline_dir": "/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/webgl-v12-sdk-identity-r4",
+    "review_bundle_dir": "/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/review-bundle-v6-sdk-file-provenance"
+  },
+  "review": {
+    "name": "X5 IAHEA2606KMURQ BaseTag3 immutable bundle",
+    "server": "http://192.168.111.62:7865"
+  }
+}

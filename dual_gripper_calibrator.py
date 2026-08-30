@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import io
 import math
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,9 +23,10 @@ OLD_MESH_ROOT = ROOT.parent / "claw-urdf/extracted/claw-urdf/osmo定位.SLDASM/m
 PAD_COMPARE_ROOT = ROOT / "assets/hardware_compare"
 OUTPUT_ROOT = ROOT / "sessions/dual-gripper-calibrations"
 TEMPLATE_ROOT = ROOT / "dual_gripper_calibrator_web"
-TIMELINE_PATH = ROOT / "dual-camera-pairs/processed/bbaff9c1-7a0e-4bfb-8292-b6d57abb3e5e/dual_gripper_timeline.json"
+LOCAL_DATA_ROOT = Path(os.environ.get("DUAL_GRIPPER_DATA_ROOT", ROOT / ".local-data"))
+TIMELINE_PATH = LOCAL_DATA_ROOT / "dual_gripper_timeline.json"
 HARDWARE_MODEL_PATH = ROOT / "config/hardware_model.json"
-UMI_OUTPUT_ROOT = ROOT / "dual-camera-pairs/processed/bbaff9c1-7a0e-4bfb-8292-b6d57abb3e5e/vla-episode-v2-clean"
+UMI_OUTPUT_ROOT = LOCAL_DATA_ROOT / "vla-episode"
 _UMI_ARRAYS = None
 
 app = Flask(__name__, template_folder=str(TEMPLATE_ROOT))
@@ -140,6 +142,14 @@ def umi_arrays():
     return _UMI_ARRAYS
 
 
+def umi_dataset_available() -> bool:
+    return all((UMI_OUTPUT_ROOT / name).is_file() for name in (
+        "episode_arrays.npz",
+        "episode_metadata.json",
+        "quality_report.json",
+    ))
+
+
 @app.get("/umi")
 def umi_explainer():
     return send_file(TEMPLATE_ROOT / "umi.html", mimetype="text/html", conditional=True)
@@ -147,6 +157,8 @@ def umi_explainer():
 
 @app.get("/api/umi-summary")
 def umi_summary():
+    if not umi_dataset_available():
+        return jsonify(error="UMI dataset not loaded; set DUAL_GRIPPER_DATA_ROOT"), 404
     arrays = umi_arrays()
     metadata = json.loads((UMI_OUTPUT_ROOT / "episode_metadata.json").read_text(encoding="utf-8"))
     report = json.loads((UMI_OUTPUT_ROOT / "quality_report.json").read_text(encoding="utf-8"))
@@ -176,6 +188,8 @@ def umi_summary():
 def umi_frame(camera_id: int, frame: int):
     if camera_id not in (0, 1):
         return jsonify(error="camera must be 0 or 1"), 404
+    if not umi_dataset_available():
+        return jsonify(error="UMI dataset not loaded; set DUAL_GRIPPER_DATA_ROOT"), 404
     images = umi_arrays()[f"camera{camera_id}_rgb"]
     index = int(np.clip(frame, 0, len(images) - 1))
     bgr = cv2.cvtColor(images[index], cv2.COLOR_RGB2BGR)

@@ -1,0 +1,32 @@
+{
+  "schema_version": "x5-jaw-angle-revision/1.0",
+  "revision_id": "x5-jaw-angle-pca-20260828-r1",
+  "status": "USER_ACCEPTED_VISUAL_DIAGNOSTIC",
+  "detector": {
+    "algorithm": "yellow_jaw_contour_pca_axis",
+    "source_commit": "829a994",
+    "included_angle_range_deg": [5.0, 50.0],
+    "opening_definition": "closed_reference_included_angle_deg - measured_included_angle_deg",
+    "maximum_recovery_gap_s": 0.25
+  },
+  "hardware": {
+    "physical_left": {
+      "base_tag_id": 2,
+      "closed_reference_included_angle_deg": 23.0809823072733,
+      "evidence_audit": "/home/cenxi/Videos/umi-captures/20260828/dual-x5-173150-173152-v1/left/force-angle/audit.json",
+      "evidence_audit_sha256": "b44d0fa3ed2d8fc560c89227cf7fd2857e88154a35a020034b4dd3cf48009a58"
+    },
+    "physical_right": {
+      "base_tag_id": 3,
+      "closed_reference_included_angle_deg": 27.1544368553884,
+      "evidence_audit": "/home/cenxi/Videos/umi-captures/20260828/dual-x5-173150-173152-v1/right/force-angle/audit.json",
+      "evidence_audit_sha256": "63a0facb9ba4be084f173accdd8ea356d82af6f99f3285da5955c99683f3af2f"
+    }
+  },
+  "policy": {
+    "per_capture_percentile_zero_forbidden": true,
+    "unavailable_longer_than_s": 0.25,
+    "unavailable_behavior": "preserve N/A; do not drive CAD joints",
+    "training_ready": false
+  }
+}

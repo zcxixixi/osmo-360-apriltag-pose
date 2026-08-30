@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Estimate the rigid panorama-camera -> gripper-base transform from Tag ID 2.
+"""Estimate the rigid panorama-camera -> gripper-base transform from its BaseTag.
 
 The four tag corners are measured in raw Osmo stream 1. Factory fisheye
 calibration converts those pixels to panorama-frame bearing rays; a bearing
-PnP fit then recovers the physical 24 mm tag pose. CAD's tag-to-base transform
-finishes the camera-to-gripper chain used by the trajectory renderer.
+PnP fit then recovers the metric tag pose. The authoritative hardware file's
+``base_to_tag`` transform finishes the camera-to-gripper chain. No tag offset,
+axis convention, or camera role is allowed to live as a second hard-coded copy
+inside this estimator.
 
 The tag is close to 90 degrees from the equirectangular forward direction.  It
 is therefore invalid to divide the panorama rays by their panorama ``z``
@@ -18,6 +20,7 @@ explicit instead of silently converging to whichever branch ITERATIVE finds.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -44,31 +47,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-height", type=int, default=3000)
     parser.add_argument("--corner-width", type=int, default=1500)
     parser.add_argument("--stream", type=int, default=1)
-    parser.add_argument("--tag-size-m", type=float, default=0.024)
-    parser.add_argument("--tag-center-base-x-m", type=float, default=-0.001)
-    parser.add_argument("--tag-plane-base-z-m", type=float, default=0.004)
+    parser.add_argument("--hardware-geometry", type=Path, required=True)
+    parser.add_argument("--side", choices=("left", "right"), required=True)
     parser.add_argument(
-        "--tcp-definition",
-        type=Path,
-        default=Path(__file__).resolve().parent / "config/gripper_tcp_cad.json",
-        help="explicit base_link->TCP CAD definition",
+        "--tag-size-m", type=float,
+        help="optional audit value; must equal hardware frames.basetag.tag_outer_size_m",
     )
     parser.add_argument(
         "--tag-corner-quarter-turns",
         type=int,
-        default=0,
         choices=range(4),
         help=(
-            "cyclic orientation of this physical mount's printed Tag relative "
-            "to the CAD tag frame; calibrated once per mount revision"
+            "optional audit value; must equal the selected hardware role"
         ),
     )
     parser.add_argument(
         "--ippe-branch",
-        type=int,
-        default=0,
-        choices=(0, 1),
-        help="explicit planar pose branch selected during mount calibration",
+        default="auto",
+        choices=("auto", "0", "1"),
+        help="auto applies hardware camera-in-tag half-space constraints",
     )
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
@@ -120,6 +117,14 @@ def solve_bearing_ippe(
         rotation_view_tag = cv2.Rodrigues(rvec)[0]
         rotation_panorama_tag = basis @ rotation_view_tag
         translation_panorama_tag = basis @ np.asarray(tvec).reshape(3)
+        raw_camera_origin_in_tag = (
+            -rotation_panorama_tag.T @ translation_panorama_tag
+        )
+        raw_predicted = tag_points @ rotation_panorama_tag.T + translation_panorama_tag
+        raw_predicted /= np.linalg.norm(raw_predicted, axis=1, keepdims=True)
+        raw_angular_errors = np.degrees(
+            np.arccos(np.clip(np.sum(raw_predicted * rays, axis=1), -1.0, 1.0))
+        )
 
         def residual(parameters: np.ndarray) -> np.ndarray:
             rotation = Rotation.from_rotvec(parameters[:3]).as_matrix()
@@ -153,6 +158,10 @@ def solve_bearing_ippe(
         results.append(
             {
                 "branch": float(branch),
+                "raw_camera_origin_in_tag_m": raw_camera_origin_in_tag,
+                "raw_angular_rmse_deg": float(
+                    np.sqrt(np.mean(raw_angular_errors**2))
+                ),
                 "rotation_tag_to_panorama": rotation,
                 "translation_tag_origin_in_panorama_m": fit.x[3:].copy(),
                 "bearing_rmse": float(np.sqrt(np.mean(residual(fit.x) ** 2))),
@@ -162,6 +171,93 @@ def solve_bearing_ippe(
             }
         )
     return results
+
+
+def rigid_matrix(payload: dict, *, parent: str, child: str) -> np.ndarray:
+    """Load one explicitly directed rigid transform and reject reflections."""
+    if payload.get("parent_frame") != parent or payload.get("child_frame") != child:
+        raise ValueError(
+            f"expected {parent}->{child}, got "
+            f"{payload.get('parent_frame')}->{payload.get('child_frame')}"
+        )
+    translation = np.asarray(payload["translation_m"], dtype=np.float64)
+    quaternion = np.asarray(payload["quaternion_xyzw"], dtype=np.float64)
+    if translation.shape != (3,) or quaternion.shape != (4,):
+        raise ValueError(f"invalid {parent}->{child} rigid transform dimensions")
+    rotation = Rotation.from_quat(quaternion).as_matrix()
+    if not np.isclose(np.linalg.det(rotation), 1.0, atol=1e-9):
+        raise ValueError(f"{parent}->{child} rotation is not a proper SO(3) matrix")
+    result = np.eye(4)
+    result[:3, :3] = rotation
+    result[:3, 3] = translation
+    return result
+
+
+def compose_camera_tag_to_base(
+    rotation_camera_tag: np.ndarray,
+    translation_camera_tag: np.ndarray,
+    base_to_tag: dict,
+) -> np.ndarray:
+    """Compose ``T_camera_base = T_camera_tag @ inverse(T_base_tag)``."""
+    transform_camera_tag = np.eye(4)
+    transform_camera_tag[:3, :3] = np.asarray(rotation_camera_tag, dtype=np.float64)
+    transform_camera_tag[:3, 3] = np.asarray(
+        translation_camera_tag, dtype=np.float64
+    )
+    transform_base_tag = rigid_matrix(
+        base_to_tag, parent="base_link", child="basetag"
+    )
+    return transform_camera_tag @ np.linalg.inv(transform_base_tag)
+
+
+def select_ippe_candidate(
+    candidates: list[dict[str, np.ndarray | float]],
+    constraints: dict,
+    requested_branch: str = "auto",
+) -> dict[str, np.ndarray | float]:
+    """Choose a planar branch using the physical camera location around the tag."""
+    if requested_branch != "auto":
+        branch = int(requested_branch)
+        selected = next(
+            (candidate for candidate in candidates if int(candidate["branch"]) == branch),
+            None,
+        )
+        if selected is None:
+            raise ValueError(f"IPPE branch {branch} is unavailable")
+        pool = [selected]
+    else:
+        pool = list(candidates)
+
+    bounds = constraints.get("camera_origin_in_tag_m", {})
+
+    def passes(candidate: dict[str, np.ndarray | float]) -> bool:
+        origin = np.asarray(candidate["raw_camera_origin_in_tag_m"], dtype=float)
+        for axis, index in (("x", 0), ("y", 1), ("z", 2)):
+            lower = bounds.get(f"{axis}_min")
+            upper = bounds.get(f"{axis}_max")
+            if lower is not None and origin[index] < float(lower):
+                return False
+            if upper is not None and origin[index] > float(upper):
+                return False
+        return True
+
+    physically_valid = [candidate for candidate in pool if passes(candidate)]
+    if not physically_valid:
+        origins = [
+            np.asarray(candidate["raw_camera_origin_in_tag_m"], dtype=float).tolist()
+            for candidate in pool
+        ]
+        raise ValueError(
+            "no IPPE branch satisfies hardware camera-in-tag constraints; "
+            f"candidate origins={origins}, constraints={bounds}"
+        )
+    return min(
+        physically_valid,
+        key=lambda candidate: (
+            float(candidate["raw_angular_rmse_deg"]),
+            float(candidate["angular_rmse_deg"]),
+        ),
+    )
 
 
 def compose_camera_base_tcp(
@@ -184,7 +280,47 @@ def main() -> int:
     sys.path.insert(0, str(args.panoforge_root))
     from app.core.maps import _quat_to_rot, _radial_model, scale_calibration_to_source
 
+    hardware_bytes = args.hardware_geometry.read_bytes()
+    hardware = json.loads(hardware_bytes)
+    if not str(hardware.get("status", "")).startswith("HARDWARE_CONFIRMED"):
+        raise ValueError("hardware geometry is not marked HARDWARE_CONFIRMED")
+    role = hardware.get("roles", {}).get(args.side)
+    if not isinstance(role, dict):
+        raise ValueError(f"hardware geometry has no {args.side} role")
     calibration = json.loads(args.calibration.read_text(encoding="utf-8"))
+    expected_serial = str(role.get("camera_serial", ""))
+    actual_serial = str(calibration.get("serial", ""))
+    if not expected_serial or actual_serial != expected_serial:
+        raise ValueError(
+            f"{args.side} camera serial mismatch: hardware={expected_serial!r}, "
+            f"calibration={actual_serial!r}"
+        )
+    tag_frame = hardware.get("frames", {}).get("basetag", {})
+    if not tag_frame.get("axes_aligned_with_base_link"):
+        raise ValueError("hardware must explicitly define BaseTag axes relative to base_link")
+    tag_size_m = float(tag_frame["tag_outer_size_m"])
+    if args.tag_size_m is not None and not np.isclose(
+        args.tag_size_m, tag_size_m, atol=1e-9
+    ):
+        raise ValueError(
+            f"tag size conflicts with hardware: cli={args.tag_size_m}, "
+            f"hardware={tag_size_m}"
+        )
+    quarter_turns = int(role["tag_corner_quarter_turns"])
+    if (
+        args.tag_corner_quarter_turns is not None
+        and args.tag_corner_quarter_turns != quarter_turns
+    ):
+        raise ValueError(
+            "tag corner orientation conflicts with the selected hardware role"
+        )
+    base_to_tag = hardware["base_to_tag"]
+    rigid_matrix(base_to_tag, parent="base_link", child="basetag")
+    base_to_tcp = hardware["base_to_tcp"]
+    transform_base_tcp = rigid_matrix(
+        base_to_tcp, parent="base_link", child="gripper_tcp"
+    )
+
     calibration = scale_calibration_to_source(
         calibration, args.source_width, args.source_height
     )
@@ -215,20 +351,19 @@ def main() -> int:
     direction_body = direction_lens @ _quat_to_rot(lens["extrinsic_quat"])
     rays = direction_body @ BODY_TO_PANORAMA_OPENCV.T
     rays /= np.linalg.norm(rays, axis=1, keepdims=True)
-    rays = np.roll(rays, -args.tag_corner_quarter_turns, axis=0)
+    rays = np.roll(rays, -quarter_turns, axis=0)
 
-    half = args.tag_size_m / 2.0
+    half = tag_size_m / 2.0
     tag_points = np.array(
         [[-half, -half, 0.0], [half, -half, 0.0],
          [half, half, 0.0], [-half, half, 0.0]],
         dtype=np.float64,
     )
     candidates = solve_bearing_ippe(tag_points, rays)
-    if args.ippe_branch >= len(candidates):
-        raise RuntimeError(
-            f"requested IPPE branch {args.ippe_branch}, only {len(candidates)} available"
-        )
-    selected = candidates[args.ippe_branch]
+    mount_constraints = role.get("mount_constraints", {})
+    selected = select_ippe_candidate(
+        candidates, mount_constraints, requested_branch=args.ippe_branch
+    )
     rotation_camera_tag = np.asarray(
         selected["rotation_tag_to_panorama"], dtype=np.float64
     )
@@ -236,29 +371,10 @@ def main() -> int:
         selected["translation_tag_origin_in_panorama_m"], dtype=np.float64
     )
 
-    # CAD convention supplied with the angle solver:
-    # base_x = -tag_y - 1 mm; base_y = -tag_x. Tag z is chosen so the 3-D
-    # mapping remains a proper rotation and the tag lies 4 mm above base zero.
-    rotation_gripper_tag = np.array(
-        [[0.0, -1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, -1.0]]
+    transform_camera_base = compose_camera_tag_to_base(
+        rotation_camera_tag, translation_camera_tag, base_to_tag
     )
-    translation_gripper_tag = np.array(
-        [args.tag_center_base_x_m, 0.0, args.tag_plane_base_z_m]
-    )
-    transform_camera_tag = np.eye(4)
-    transform_camera_tag[:3, :3] = rotation_camera_tag
-    transform_camera_tag[:3, 3] = translation_camera_tag
-    transform_gripper_tag = np.eye(4)
-    transform_gripper_tag[:3, :3] = rotation_gripper_tag
-    transform_gripper_tag[:3, 3] = translation_gripper_tag
-    transform_camera_base = transform_camera_tag @ np.linalg.inv(transform_gripper_tag)
-    tcp_definition = json.loads(args.tcp_definition.read_text(encoding="utf-8"))
-    tcp_in_base = tcp_definition["tcp_in_base"]
-    transform_camera_tcp = compose_camera_base_tcp(
-        transform_camera_base,
-        np.asarray(tcp_in_base["translation_m"], dtype=np.float64),
-        np.asarray(tcp_in_base["quaternion_xyzw"], dtype=np.float64),
-    )
+    transform_camera_tcp = transform_camera_base @ transform_base_tcp
 
     def rigid_payload(parent: str, child: str, transform: np.ndarray) -> dict:
         return {
@@ -276,8 +392,7 @@ def main() -> int:
             "panorama_camera", "base_link", transform_camera_base
         ),
         "base_to_tcp": rigid_payload(
-            "base_link", "gripper_tcp",
-            np.linalg.inv(transform_camera_base) @ transform_camera_tcp,
+            "base_link", "gripper_tcp", transform_base_tcp,
         ),
         "camera_to_tcp": rigid_payload(
             "panorama_camera", "gripper_tcp", transform_camera_tcp
@@ -303,19 +418,31 @@ def main() -> int:
         },
         "pose_branch": {
             "solver": "tangent-view IPPE + unit-bearing refinement",
-            "selected": args.ippe_branch,
-            "tag_corner_quarter_turns": args.tag_corner_quarter_turns,
+            "selected": int(selected["branch"]),
+            "selection_mode": args.ippe_branch,
+            "tag_corner_quarter_turns": quarter_turns,
+            "raw_camera_origin_in_tag_m": np.asarray(
+                selected["raw_camera_origin_in_tag_m"], dtype=float
+            ).tolist(),
+            "mount_constraints": mount_constraints,
             "candidate_angular_rmse_deg": [
                 candidate["angular_rmse_deg"] for candidate in candidates
+            ],
+            "candidate_raw_angular_rmse_deg": [
+                candidate["raw_angular_rmse_deg"] for candidate in candidates
             ],
         },
         "source": {
             "factory_calibration": str(args.calibration.resolve()),
             "fixed_tag_corners": str(args.fixed_tag_corners.resolve()),
-            "tcp_definition": str(args.tcp_definition.resolve()),
             "stream": args.stream,
-            "tag_size_m": args.tag_size_m,
+            "tag_size_m": tag_size_m,
+            "hardware_geometry": str(args.hardware_geometry.resolve()),
+            "hardware_geometry_sha256": hashlib.sha256(hardware_bytes).hexdigest(),
+            "side": args.side,
+            "camera_serial": actual_serial,
         },
+        "base_to_tag": base_to_tag,
         "accuracy_note": (
             "Rigid transform uses factory lens intrinsics/rotation and a manually fixed tag quad; "
             "lens-centre translation is unavailable, so this is a calibrated visualization transform, not metrology truth. "

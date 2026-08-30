@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-command Insta360 X6 AprilTag/OptiTrack evaluation pipeline."""
+"""One-command Insta360 X5 AprilTag/OptiTrack evaluation pipeline."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import cv2
 
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_TAG_MAP = ROOT / "mocap-evaluation/config/insta360_x6_tag_map.json"
+DEFAULT_TAG_MAP = ROOT / "mocap-evaluation/config/insta360_x5_tag_map.json"
 DEFAULT_GRIPPER_MESHES = ROOT / "assets/gripper"
 
 
@@ -107,7 +107,7 @@ def vision_command(args: argparse.Namespace, video: Path, paths: PipelinePaths, 
         "--global-refresh-interval", str(args.global_refresh_interval),
         "--global-search-size", str(args.global_search_size),
         "--recovery-scan-interval", str(args.recovery_scan_interval),
-        "--camera-model", "insta360-x6",
+        "--camera-model", "insta360-x5",
         "--decoder", args.decoder, "--scan-workers", str(args.scan_workers),
         "--horizontal-step-deg", "30", "--horizontal-fov-deg", "125",
         "--projection-backend", backend, "--max-speed", str(args.max_speed),
@@ -163,12 +163,12 @@ def run_command(stage: str, command: list[str], log_path: Path, dry_run: bool) -
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="One-command unstabilized Insta360 X6 visual 6DoF vs OptiTrack evaluation"
+        description="One-command unstabilized Insta360 X5 visual 6DoF vs OptiTrack evaluation"
     )
     parser.add_argument("video", type=Path, help="unstabilized 2:1 Insta360 Studio MP4")
     parser.add_argument("motive_csv", type=Path, help="Motive rigid-body CSV")
     parser.add_argument("--output-root", type=Path, default=Path("mocap-runs"))
-    parser.add_argument("--run-name", default="insta360-x6-optitrack")
+    parser.add_argument("--run-name", default="insta360-x5-optitrack")
     parser.add_argument("--tag-map", type=Path, default=DEFAULT_TAG_MAP)
     parser.add_argument("--gripper-mesh-dir", type=Path, default=DEFAULT_GRIPPER_MESHES)
     parser.add_argument("--confirm-flowstate-off", action="store_true",

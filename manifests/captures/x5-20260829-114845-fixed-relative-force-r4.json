@@ -1,0 +1,63 @@
+{
+  "schema_version": "capture-manifest/1.0",
+  "capture_id": "x5-20260829-114845-fixed-relative-force-r4",
+  "status": "USER_ACCEPTED_FIXED_SCALE_RELATIVE_FORCE_NOT_NEWTONS_NOT_TRAINING",
+  "camera": {
+    "model": "Insta360 X5",
+    "serial": "IAHEA2606KMURQ",
+    "role": "physical_right",
+    "base_tag_id": 3,
+    "serial_status": "CameraSDK DeviceDiscovery and GetFileList verified"
+  },
+  "inputs": {
+    "raw_video": {
+      "path": "/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/raw/VID_20260829_114845_00_002.insv",
+      "sha256": "6182831beaae69c99c9943d3c5ea1771cd76385a8463448cd3995d6bc81bfa6f"
+    },
+    "camera_identity": {
+      "path": "config/rig_revisions/x5_right_camera_identity_20260829_r3.json",
+      "sha256": "168caae9c66977fa6cd37ae66f4bd38bd89c38e6e43102c63bdcd2e8181659ad"
+    },
+    "new_cad_source": {
+      "path": "/home/cenxi/Downloads/UMI-III.zip",
+      "sha256": "d928aee7ea6694444c35291515719a5c54204a2375e3bec3c8ffe0e3ee1e8959"
+    }
+  },
+  "revisions": {
+    "rig": {
+      "path": "config/rig_revisions/x5_right_basetag3_adaptive_angle_20260830_r5.json",
+      "sha256": "3c5fe3947aa1ee3990db82926c0ada38e2520a0871b3f5e9734094fcf2fdfd34"
+    },
+    "jaw_angle": {
+      "path": "config/rig_revisions/x5_jaw_angle_yellow_dots_adaptive_20260830_r3.json",
+      "sha256": "a1bac21c36085ea9a4424140526280e81d92fef614d8b45b0ba5ee5d016bdbe7"
+    },
+    "relative_force": {
+      "path": "config/rig_revisions/x5_relative_fingertip_force_20260830_r1.json",
+      "sha256": "936bec4491719c745ed0b3d1bff4864480a889fda3f0fd34fa4d0c5057d8bfc7"
+    },
+    "marker_layout": {
+      "path": "config/rig_revisions/gripper_marker_layout_umi_iii_dxf_r2.json",
+      "sha256": "53d81ea9392de5b36f222a5c283130e01fced3f653d8fcd39217e1266b39850d"
+    },
+    "renderer": {
+      "path": "dual_gripper_3d/single_gripper_scene.html",
+      "sha256": "d35b07bf1ee23e0f9e330352d5404b870862e95d6caf5c562f7becd0c84121b0"
+    }
+  },
+  "pipeline": {
+    "profile": "single_x5_camera_local",
+    "maximum_recovery_gap_s": 0.25,
+    "contact_events_s": [7.0, 10.0, 18.0, 24.0],
+    "world_pose": "unavailable; never claim tag_map"
+  },
+  "outputs": {
+    "force_angle_dir": "/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/force-angle-v16-fixed-relative-scale",
+    "timeline_dir": "/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/webgl-v13-fixed-relative-scale",
+    "review_bundle_dir": "/home/cenxi/Videos/umi-captures/20260829/insta360-x5-114845-v1/review-bundle-v8-user-accepted-relative-scale"
+  },
+  "review": {
+    "name": "X5 user-accepted fixed-scale relative fingertip force demo",
+    "server": "http://192.168.111.62:7865"
+  }
+}

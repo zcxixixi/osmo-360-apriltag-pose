@@ -1,0 +1,61 @@
+{
+  "schema_version": "gripper-hardware-reference/1.0",
+  "calibration_status": "HOLDOUT_PASS_10MM_3P5DEG",
+  "calibration_source": "/home/cenxi/Videos/umi-captures/20260825/dual-0055-0028-tag3-calibration/direct-cross-basetag-world-v6-correct-panel-map/report.json",
+  "holdout_gate": {
+    "method": "early fixed-extrinsic estimate evaluated on late compact 6DoF mode",
+    "maximum_position_p95_mm": 10.0,
+    "maximum_rotation_p95_deg": 3.5,
+    "physical_left_SGG": {"position_p95_mm": 9.1511, "rotation_p95_deg": 1.1484},
+    "physical_right_JCY": {"position_p95_mm": 7.0512, "rotation_p95_deg": 3.2764}
+  },
+  "eef_reference": {
+    "type": "tcp",
+    "definition": "CAD gripper centre: base_link + [135.6, 0, 10.1] mm",
+    "base_to_tcp_translation_m": [0.1356, 0.0, 0.0101]
+  },
+  "robots": {
+    "left": {
+      "camera_serial": "95SXN9H0423SGG",
+      "source_view": "physical-left / CAM_20260825174915_0057_D / stream1",
+      "mount_revision": "SGG-ID2-20260825-v1",
+      "camera_to_eef_reference": {
+        "parent_frame": "panorama_camera",
+        "child_frame": "left_tcp",
+        "translation_m": [-0.1285042790171705, 0.01783439293842624, -0.011834112472225553],
+        "quaternion_xyzw": [-0.11907518089192759, 0.6749550081615896, 0.72361918421456, -0.08143779521695046],
+        "source": "correct 200 mm wall map + reciprocal 20 mm ID2 compact 6DoF cluster + CAD base_to_tcp"
+      },
+      "eef_reference_verified": true,
+      "camera_to_tcp_verified": true,
+      "base_tag_id": 2,
+      "gripper_width_calibration": {
+        "type": "piecewise_linear",
+        "angle_deg": [3.2526, 10.0, 20.0, 30.0, 40.0, 48.8115],
+        "width_m": [0.0, 0.01429, 0.03535, 0.05622, 0.0769, 0.09482]
+      },
+      "gripper_width_verified": true
+    },
+    "right": {
+      "camera_serial": "95SXNAD0425JCY",
+      "source_view": "physical-right / CAM_20260825175222_0030_D / stream1",
+      "mount_revision": "JCY-ID3-20260825-v1",
+      "camera_to_eef_reference": {
+        "parent_frame": "panorama_camera",
+        "child_frame": "right_tcp",
+        "translation_m": [-0.12393928621474454, 0.009307170595928609, 0.019738720649785192],
+        "quaternion_xyzw": [-0.04064249901500445, 0.6795101509310744, 0.7143903004970782, -0.16205135177201774],
+        "source": "correct 200 mm wall map + reciprocal 20 mm ID3 compact 6DoF cluster + CAD base_to_tcp"
+      },
+      "eef_reference_verified": true,
+      "camera_to_tcp_verified": true,
+      "base_tag_id": 3,
+      "gripper_width_calibration": {
+        "type": "piecewise_linear",
+        "angle_deg": [3.2526, 10.0, 20.0, 30.0, 40.0, 48.8115],
+        "width_m": [0.0, 0.01429, 0.03535, 0.05622, 0.0769, 0.09482]
+      },
+      "gripper_width_verified": true
+    }
+  }
+}

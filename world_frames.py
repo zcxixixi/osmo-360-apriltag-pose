@@ -104,8 +104,12 @@ def compile_world_tag_map(path: Path) -> dict[str, Any]:
     """Return one explicit per-ID map, expanding panel references if needed."""
     path = path.resolve()
     payload = json.loads(path.read_text(encoding="utf-8"))
+    excluded_ids = set(map(int, payload.get("excluded_tag_ids", [])))
     if isinstance(payload.get("tags"), list):
         compiled = dict(payload)
+        compiled["tags"] = [
+            tag for tag in payload["tags"] if int(tag["id"]) not in excluded_ids
+        ]
     else:
         panels = payload.get("panels")
         if not isinstance(panels, list) or not panels:
@@ -122,6 +126,8 @@ def compile_world_tag_map(path: Path) -> dict[str, Any]:
                 tag_id = int(tag["id"])
                 if allowed and tag_id not in allowed:
                     continue
+                if tag_id in excluded_ids:
+                    continue
                 if tag_id in seen:
                     raise ValueError(f"duplicate world tag id {tag_id}")
                 corners = transform.apply_points(np.asarray(tag["corners_m"], dtype=float))
@@ -131,7 +137,7 @@ def compile_world_tag_map(path: Path) -> dict[str, Any]:
                     "panel": str(panel["name"]),
                 })
                 seen.add(tag_id)
-        expected = set(map(int, payload.get("expected_ids", [])))
+        expected = set(map(int, payload.get("expected_ids", []))) - excluded_ids
         if expected and seen != expected:
             raise ValueError(f"world map IDs {sorted(seen)} do not match expected {sorted(expected)}")
         compiled = {

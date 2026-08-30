@@ -1,6 +1,6 @@
 # 360 Camera 6DoF Dataset Pipeline
 
-将 360 相机原始视频自动处理为带时间戳的 6DoF 轨迹数据集。当前生产入口优先支持 DJI Osmo 360，并为 Insta360 X6 官方 SDK 接入保留统一接口。
+将 360 相机原始视频自动处理为带时间戳的 6DoF 轨迹数据集。当前生产入口优先支持 DJI Osmo 360，并为 Insta360 X5 官方 SDK 接入保留统一接口。
 
 核心流程：
 
@@ -21,6 +21,23 @@
 - 使用双向光流降低重复解码开销，使用 Kalman + RTS 生成连续轨迹；
 - 自动按机型和分辨率选择 CPU/CUDA 处理路径；
 - 可选导出夹爪 CAD 轨迹视频、逐帧图片和 OptiTrack 真值评估。
+
+## 统一入口
+
+已注册的采集不再手工选择根目录脚本，而是由一个不可变 manifest 锁定输入、
+硬件、角度算法、渲染器和输出：
+
+```bash
+./umi inspect manifests/captures/x5-20260829-114845-iahea2606kmurq-sdk-r3.json
+./umi process manifests/captures/x5-20260829-114845-iahea2606kmurq-sdk-r3.json
+./umi review manifests/captures/x5-20260829-114845-iahea2606kmurq-sdk-r3.json
+./umi review manifests/captures/x5-20260829-114845-iahea2606kmurq-sdk-r3.json --publish
+```
+
+`inspect` 校验全部哈希；`process` 只运行 manifest 指定的正式管线；`review`
+生成包含 timeline、视频、审计、manifest 和版本化 scene 的不可变发布包。
+底层 `render_*`、`calibrate_*`、`fuse_*` 脚本仍保留为内部实现或历史复现入口，
+其状态可用 `./umi commands --legacy` 查看。
 
 光流、插值和预测只用于连续轨迹与可视化。正式精度统计只接受满足要求的直接多 Tag 视觉测量。
 
@@ -66,14 +83,17 @@ DJI 原始 `.OSV` 拼接依赖本机 PanoForge，默认查找与本仓库同级�
   --run-name production-001
 ```
 
-Insta360 `.insv/.lrv` 原片使用官方 Linux MediaSDK。默认从
-`work/insta360-sdk/media/` 查找免系统安装的 SDK，也可用 `--insta-sdk-root`
-指定解包目录。拼接阶段默认关闭 FlowState 和方向锁定，以保留用于 6DoF 解算的原始相机运动：
+Insta360 `.insv/.lrv` 原片使用官方 Linux MediaSDK。当前固定修订为
+CameraSDK 2.1.1 / MediaSDK 3.1.1，清单位于
+`config/sdk_revisions/insta360_linux_camera_2_1_1_media_3_1_1.json`。
+MediaSDK 与 CameraSDK 分别本地部署到版本化的 gitignored `work/` 目录；
+运行时会校验平台、二进制、动态库和模型哈希。拼接阶段默认关闭 FlowState
+和方向锁定，以保留用于 6DoF 解算的原始相机运动：
 
 ```bash
 ./camera-to-dataset /data/VID_xxx.insv \
-  --insta-sdk-root /opt/insta360-media-sdk \
-  --run-name insta-x6-001 \
+  --insta-sdk-revision config/sdk_revisions/insta360_linux_camera_2_1_1_media_3_1_1.json \
+  --run-name insta-x5-001 \
   --max-processed-frames 60
 ```
 
@@ -81,9 +101,73 @@ Insta360 `.insv/.lrv` 原片使用官方 Linux MediaSDK。默认从
 `--insta-soft-decode --insta-soft-encode`；若 CUDA 路径不兼容，可追加
 `--insta-disable-cuda`。
 
-截至 Linux MediaSDK 3.1.1，官方公开兼容列表到 X5，尚不包含 X6。X6
-原始 INSV 会被适配器明确阻止并报告相机型号；请使用 Insta360 Studio 导出的
-无 FlowState、无方向锁定 2:1 MP4，或由 Insta360 提供明确支持 X6 的 MediaSDK 构建。
+CameraSDK 通过 USB 控制 X5 时需要安装 udev 权限规则，并将机身 USB
+模式设为 Android/SDK（不是 U-Disk）：
+
+```bash
+sudo install -m 0644 config/udev/99-insta360-camera-sdk.rules \
+  /etc/udev/rules.d/99-insta360-camera-sdk.rules
+sudo udevadm control --reload-rules
+```
+
+当前物理右 X5 已由 CameraSDK 2.1.1 DeviceDiscovery 验证：serial
+`IAHEA2606KMURQ`，型号 `Insta360 X5`，固件 `v1.7.8`。CameraSDK GetFileList
+同时确认该设备持有 `/DCIM/Camera01/VID_20260829_114845_00_002.insv`，
+因此已有视频也完成了 serial 来源绑定。
+
+多设备不需要逐台重跑视频流水线。udev 规则每台工作站只安装一次，然后用
+CameraSDK 批量发现并增量登记序列号。
+不想使用命令行时，双击桌面的 `X5设备管理`，或运行：
+
+```bash
+./umi devices ui
+```
+
+页面提供“扫描已连接 X5”“登记全部”“同步到服务器”和“保存分配”按钮，并显示
+serial、固件、物理角色、BaseTag 和设备标签。服务器库存接口是
+`http://192.168.111.62:7865/api/devices`。
+
+
+```bash
+./umi devices scan
+./umi devices register
+./umi devices assign IAHEA2606KMURQ \
+  --role physical_right --base-tag-id 3 --label right-gripper-basetag3
+./umi devices list
+```
+
+若 20 台同时接在有供电的 USB Hub 上，`scan/register` 一次登记全部设备；若逐台
+连接，同一个 `register` 命令会增量合并并保留既有角色分配。设备登记只查询
+serial、型号和固件，通常数秒完成，不运行角度、力或视频处理。
+
+### 固定比例相对力
+
+当前方案不改夹爪硬件，继续使用原有三黄点和黑点。黑点间距先减去开口角对应的
+固定基线，再减去固定噪声门限，最后映射到该硬件版本统一的 0–100% 相对力。
+它不是牛顿值，也不会对每段视频单独归一化。
+
+当前清单：
+
+```text
+manifests/captures/x5-20260829-114845-fixed-relative-force-r4.json
+```
+
+当前可视化输出为 `force-angle-v16-fixed-relative-scale/` 和
+`webgl-v13-fixed-relative-scale/`。该方案只需要现有标记，不要求 TPU 打印件。
+
+最新直接从 SD 卡导入的高分辨率演示为
+`manifests/captures/x5-20260830-162856-iahea2606km43a-one-sided-r8.json`：
+`IAHEA2606KM43A`、物理左夹爪、BaseTag2、2880×2880、29.97 FPS。双侧完整时
+使用双侧结果；遮挡一侧时使用可见侧并标低置信度；两侧都不完整时保留 `N/A`。
+该演示使用本次视频的局部 0–100% 形变尺度，不与其他硬件版本直接比较。
+冻结基线为
+`config/baselines/x5_left_one_sided_force_accepted_20260830.json`，使用
+`./verify_x5_one_sided_force_baseline.py` 校验。后续算法修改必须新建 revision
+和输出目录，不能覆盖当前接受版。
+
+未来 Insta360 采集型号为 X5。开始大规模采集前，必须使用实际 X5
+序列号完成 CameraSDK 设备发现/录制测试，以及 MediaSDK 原始 INSV/LRV
+到官方 2:1 输出的端到端测试；二进制帮助和 dry-run 不能替代实机验证。
 
 ### 自动处理策略
 
@@ -91,7 +175,7 @@ Insta360 `.insv/.lrv` 原片使用官方 Linux MediaSDK。默认从
 | --- | --- |
 | DJI 3K 全景 | CPU 解码 + CPU 投影 + 4 路检测 |
 | DJI 高分辨率全景 | CPU 解码 + CUDA 投影（可用时） |
-| Insta360 X6 8K | CPU 解码 + CUDA 投影（可用时） |
+| Insta360 X5 8K | CPU 解码 + CUDA 投影（可用时） |
 | 未知 2:1 MP4 | 按文件名与分辨率选择保守配置 |
 
 NVDEC 目前保留为显式实验选项；由于帧仍需下载到 CPU 进行 AprilTag 检测，当前实测不一定比 CPU 解码快。部署时可使用 `--camera-model`、`--decoder` 和 `--projection-backend` 覆盖自动策略。
@@ -176,16 +260,16 @@ dataset/
 
 状态字段区分 `direct`、`optical_flow`、`recovered`、`predicted` 和 `lost`，下游训练或评估时不能把恢复帧当作直接真值。
 
-## Insta360 X6 与 OptiTrack 评估
+## Insta360 X5 与 OptiTrack 评估
 
 使用关闭 FlowState、方向锁定和地平线校正的官方 2:1 MP4：
 
 ```bash
-./x6-mocap-evaluate \
+./x5-mocap-evaluate \
   /data/VID_NO_FLOWSTATE.mp4 \
   /data/motive.csv \
   --confirm-flowstate-off \
-  --run-name x6-evaluation-001
+  --run-name x5-evaluation-001
 ```
 
 管线会完成 Motive 多行表头解析、异常刚体分支隔离、时间同步、前 30% 外参标定和后 70% 独立评估，并输出 ATE、姿态误差、RPE、漂移、失锁恢复和 Bootstrap 置信区间。
@@ -232,6 +316,20 @@ uv sync --extra test
 uv run pytest -q
 ```
 
+### 双夹爪 v50 冻结基线
+
+修改双夹爪定位、姿态融合、左右角色、外参、平滑或三维渲染前，必须先读
+[`DUAL_GRIPPER_V50_BASELINE.md`](DUAL_GRIPPER_V50_BASELINE.md)，并执行：
+
+```bash
+./.venv/bin/python verify_dual_gripper_v50_baseline.py
+./.venv/bin/pytest -q
+```
+
+机器可读的固定哈希、角色绑定、算法不变量和回归阈值保存在
+`config/baselines/dual_gripper_v50_accepted_baseline.json`。v15/v50 产物不可覆盖；
+实验必须写入新版本目录，经标定片段和完整爪对爪片段对比并由人工确认后才能成为新基线。
+
 ## UMI / VLA 数据集封装
 
 视觉解算完成后，用一个 Episode 清单把视频、6DoF、夹爪角度、双机时间偏移和任务文本统一封装：
@@ -266,10 +364,13 @@ uv run --with-requirements requirements-train-cu130.txt \
 ### 本地审核网页
 
 ```bash
-./dual-gripper-calibrator
+DUAL_GRIPPER_DATA_ROOT=/absolute/path/to/episode-review \
+  ./dual-gripper-calibrator
 ```
 
 浏览器访问 `http://127.0.0.1:7861/umi` 可逐帧检查双目画面、原始/滤波轨迹、异常剔除点、夹宽和训练有效率。网页只读取本地产物，不上传原视频。
+审核目录中放置 `dual_gripper_timeline.json`，并将 UMI 产物放在其
+`vla-episode/` 子目录；未配置本地数据时 API 会明确返回 404，而不会依赖仓库里的某个历史采集 UUID。
 
 ## 精度注意事项
 

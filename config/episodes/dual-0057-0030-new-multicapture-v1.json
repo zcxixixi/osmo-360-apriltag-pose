@@ -1,0 +1,85 @@
+{
+  "schema_version": "vla-episode-spec/1.1",
+  "episode_id": "dual-0057-0030-new-multicapture-v1",
+  "task": {
+    "name": "bimanual_usb_handover",
+    "instruction": "右夹爪将U盘放到桌面共同操作点，左夹爪从同一位置取走U盘。",
+    "success": true
+  },
+  "start_s": 0.0,
+  "end_s": 13.5,
+  "frequency_hz": 20,
+  "coordinate_frame": {
+    "mode": "world",
+    "frame_id": "tag_map",
+    "tag_map": "/home/cenxi/Videos/umi-captures/20260825/world-map-room-corner-10tag-200mm-multicapture-v1.json"
+  },
+  "workspace": {
+    "type": "room_corner",
+    "up_vector": [0.0, -1.0, 0.0],
+    "table_plane_status": "NOT_CALIBRATED"
+  },
+  "quality": {
+    "min_tracked_pose_ratio": 0.90,
+    "min_direct_refresh_success": 0.70,
+    "max_tracked_gap_frames": 10,
+    "max_filtered_speed_mps": 1.5,
+    "max_filtered_p99_acceleration_mps2": 6.0,
+    "max_outlier_rejected_ratio": 0.08,
+    "min_training_segment_frames": 20,
+    "min_training_frames": 200
+  },
+  "hardware_config": "/home/cenxi/Documents/ChatGPT/osomo 360/osmo-360-apriltag-pose/config/hardware_20260825_serial_bound_v1.json",
+  "metric_pose_audit": "/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new/fused-world-v49-verified-audit/report.json",
+  "capture_role_mapping": {
+    "physical_left": "CAM_20260825174915_0057_D / serial 95SXN9H0423SGG / BaseTag ID2",
+    "physical_right": "CAM_20260825175222_0030_D / serial 95SXNAD0425JCY / BaseTag ID3"
+  },
+  "sync": {
+    "method": "audio_cross_correlation",
+    "correlation": 0.95296,
+    "minimum_audio_correlation": 0.80,
+    "uncertainty_s": 0.0002,
+    "maximum_uncertainty_s": 0.020,
+    "audio_same_event_verified": true,
+    "creation_time_clock_aligned": false,
+    "mapping": "两路action片段均从同步后的第三次开头敲击之后开始"
+  },
+  "tag_visibility_policy": "physical_instance_locked; wall_ids_128_137; basetag_ids_2_3_excluded_from_world_map",
+  "robots": [
+    {
+      "name": "left",
+      "hardware_role": "left",
+      "camera_serial": "95SXN9H0423SGG",
+      "camera_calibration": "/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new/left/metadata/calibration.json",
+      "source_info": "/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new/left/source_info.json",
+      "source_time_offset_s": 0.0,
+      "trajectory_csv": "/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new/fused-world-v49-verified-audit/left_camera_pose.csv",
+      "gripper_csv": "/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new/left/action-gripper-angle-v1/gripper_opening.csv",
+      "video": "/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new/left/action_stream1.mp4",
+      "base_tag_id": 2,
+      "detector_redetect_interval_frames": 1,
+      "observation": {
+        "projection": "raw_resize",
+        "size": [224, 224]
+      }
+    },
+    {
+      "name": "right",
+      "hardware_role": "right",
+      "camera_serial": "95SXNAD0425JCY",
+      "camera_calibration": "/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new/right/metadata/calibration.json",
+      "source_info": "/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new/right/source_info.json",
+      "source_time_offset_s": 0.0,
+      "trajectory_csv": "/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new/fused-world-v49-verified-audit/right_camera_pose.csv",
+      "gripper_csv": "/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new/right/action-gripper-angle-v1/gripper_opening.csv",
+      "video": "/home/cenxi/Videos/umi-captures/20260825/dual-0057-0030-new/right/action_stream1.mp4",
+      "base_tag_id": 3,
+      "detector_redetect_interval_frames": 1,
+      "observation": {
+        "projection": "raw_resize",
+        "size": [224, 224]
+      }
+    }
+  ]
+}

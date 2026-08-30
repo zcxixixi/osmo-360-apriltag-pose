@@ -14,13 +14,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from world_frames import compile_world_tag_map
+from insta360_sdk_revision import DEFAULT_REVISION as INSTA360_SDK_REVISION, load_insta360_sdk_revision
 
 
 ROOT = Path(__file__).resolve().parent
 FFMPEG_BIN = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin"
 PANOFORGE_ROOT = ROOT.parent / "panoforge-test"
 GRIPPER_MESHES = ROOT / "assets/gripper"
-INSTA360_SDK_ROOT = ROOT / "work/insta360-sdk/media"
 
 
 def parse_args() -> argparse.Namespace:
@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-processed-frames", type=int)
     parser.add_argument("--stitch-width", type=int, choices=(3840, 6144, 7680), default=3840)
     parser.add_argument("--stitch-encoder", choices=("auto", "cpu", "nvenc"), default="auto")
-    parser.add_argument("--insta-sdk-root", type=Path, default=INSTA360_SDK_ROOT)
+    parser.add_argument("--insta-sdk-revision", type=Path, default=INSTA360_SDK_REVISION)
     parser.add_argument(
         "--insta-stitch-type", choices=("template", "optflow", "dynamicstitch", "aistitch"),
         default="optflow",
@@ -167,6 +167,16 @@ def main() -> int:
             calibration_status=compiled_map.get("calibration_status"),
             expected_ids=sorted(int(tag["id"]) for tag in compiled_map["tags"]),
         )
+    insta_sdk_identity = None
+    if camera == "insta360":
+        sdk = load_insta360_sdk_revision(args.insta_sdk_revision)
+        insta_sdk_identity = {
+            "path": str(sdk["revision_path"]),
+            "sha256": sdk["revision_sha256"],
+            "revision_id": sdk["revision"]["revision_id"],
+            "media_sdk_version": sdk["revision"]["media_sdk"]["version"],
+            "camera_sdk_version": sdk["revision"]["camera_sdk"]["version"],
+        }
     processing_parameters = {
         "camera_override": args.camera,
         "tag_map": tag_map_identity,
@@ -183,7 +193,7 @@ def main() -> int:
         "max_processed_frames": args.max_processed_frames,
         "stitch_width": args.stitch_width,
         "stitch_encoder": args.stitch_encoder,
-        "insta_sdk_root": str(args.insta_sdk_root.resolve()),
+        "insta_sdk_revision": insta_sdk_identity,
         "insta_stitch_type": args.insta_stitch_type,
         "insta_disable_cuda": args.insta_disable_cuda,
         "insta_soft_decode": args.insta_soft_decode,
@@ -226,7 +236,7 @@ def main() -> int:
     projection_backend = backend(args.projection_backend)
     camera_profile = {
         "dji": "dji-osmo-360",
-        "insta360": "insta360-x6",
+        "insta360": "insta360-x5",
         "panorama": "auto",
     }[camera]
 
@@ -255,7 +265,7 @@ def main() -> int:
     elif camera == "insta360" and source.suffix.lower() in {".insv", ".lrv"}:
         stitch = [
             sys.executable, str(ROOT / "insta360_media_stitch.py"), str(source), str(panorama),
-            "--sdk-root", str(args.insta_sdk_root.resolve()), "--width", str(args.stitch_width),
+            "--sdk-revision", str(args.insta_sdk_revision.resolve()), "--width", str(args.stitch_width),
             "--stitch-type", args.insta_stitch_type,
         ]
         if args.insta_disable_cuda:

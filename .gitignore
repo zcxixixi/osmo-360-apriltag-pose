@@ -30,11 +30,20 @@ episode_arrays.npz
 pose.csv
 relative_coordinates.png
 .pytest_cache/
+.ruff_cache/
 .DS_Store
 camera.yml
 camera.yaml
 .env
 .env.*
+
+# Regenerable local artifacts and one-off hardware comparison exports.
+output/
+assets/hardware_compare/
+mocap-evaluation/final/
+.local-data/
+config/room_corner_*_90mm_20260824_provisional.json
+config/room_corner_*_90mm_20260824_exclude_mobile_id128.json
 
 # Local measurement references and one-off legacy batch runner.
 config/gripper_tcp_cad.png

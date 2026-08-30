@@ -1,0 +1,33 @@
+{
+  "schema_version": "gripper-rigid-geometry/1.0",
+  "revision_id": "gripper-geometry-v52-new-r2",
+  "status": "ACTIVE_FOR_FUTURE_DATA_COLLECTION_TCP_PENDING",
+  "cad_revision": {
+    "path": "config/rig_revisions/gripper_cad_v52_new_r1.json",
+    "sha256": "430a7a28f878fc8bf8458029e648e5dca18e5145de0fbc31282c38e5a5b0f323"
+  },
+  "basetag": {
+    "dictionary": "APRILTAG_36h11",
+    "tag_outer_size_m": 0.02
+  },
+  "base_to_tag": {
+    "parent_frame": "base_link",
+    "child_frame": "basetag",
+    "translation_m": [0.02625, 0.0, 0.0196],
+    "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
+    "changed_from_previous": false
+  },
+  "base_to_tcp": {
+    "parent_frame": "base_link",
+    "child_frame": "gripper_tcp",
+    "translation_m": [0.1356, 0.0, 0.0101],
+    "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
+    "status": "LEGACY_FIXED_REFERENCE_PENDING_NEW_CONTACT_TCP_ACCEPTANCE"
+  },
+  "jaw_joint_origins_m": {
+    "joint1": [0.015, 0.025, 0.0151],
+    "joint2": [0.015, -0.020, 0.0157]
+  },
+  "localization_impact": "NONE_BASETAG_TRANSFORM_UNCHANGED",
+  "training_data_blocker": "NEW_CONTACT_TCP_NOT_YET_ACCEPTED"
+}

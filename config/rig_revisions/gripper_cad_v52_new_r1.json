@@ -1,0 +1,30 @@
+{
+  "schema_version": "gripper-cad-revision/1.0",
+  "revision_id": "gripper-cad-v52-new-r1",
+  "status": "ACTIVE_FOR_FUTURE_DATA_COLLECTION",
+  "mesh_directory": "assets/gripper_v52_new_r1/meshes",
+  "mesh_units": "m",
+  "meshes": {
+    "base_link.STL": "79064bd7b10170d4fe4db2df73dddcc13cdf792a905b8ba0cd750008451d3f79",
+    "Link1.STL": "a62f89f4defc0c38e8c09f7e39ae5ef7c7f16c1317eb01e94742e20e183c8838",
+    "Link2.STL": "c173c4ea7f8ab5d100649f77e1361897b6fcc482f84875d1ab25f6f258e3a2c0",
+    "Link3.STL": "054b697a74977c1cb7f561257d7c31fc39982d8160c3a51ac10a6ca92e1ed0ac"
+  },
+  "urdf": {
+    "path": "assets/gripper_v52_new_r1/urdf/gripper_v52_new_r1.urdf",
+    "sha256": "de6e0356c9aefdd3fb5c00aca383e1e77894acfa9f54a707bb8ec2dd8fa21b49"
+  },
+  "source_pad": {
+    "path": "assets/gripper_v52_new_r1/source/gripper_pad_vol3_mm.STL",
+    "sha256": "abb141726e46de3f7889b8c5a6d7f917c3125acfbe301511c889c40b86bcd398",
+    "source_units": "mm",
+    "scale_to_mesh_units": 0.001
+  },
+  "joint_origins_m": {
+    "joint1": [0.015, 0.025, 0.0151],
+    "joint2": [0.015, -0.020, 0.0157],
+    "joint3_basetag": [0.02625, 0.0, 0.0196]
+  },
+  "tag_transform_changed": false,
+  "tcp_status": "LEGACY_FIXED_REFERENCE_PENDING_NEW_CONTACT_TCP_ACCEPTANCE"
+}

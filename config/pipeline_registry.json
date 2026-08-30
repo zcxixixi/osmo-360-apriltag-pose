@@ -1,0 +1,76 @@
+{
+  "schema_version": "pipeline-registry/1.0",
+  "active": [
+    {
+      "command": "umi inspect <manifest>",
+      "purpose": "verify every input and revision hash"
+    },
+    {
+      "command": "umi process <manifest>",
+      "purpose": "run or reuse the manifest-locked processing outputs"
+    },
+    {
+      "command": "umi review <manifest>",
+      "purpose": "build an immutable timeline/video/renderer bundle"
+    },
+    {
+      "command": "umi review <manifest> --publish",
+      "purpose": "publish the immutable bundle to the review platform"
+    },
+    {
+      "command": "umi devices ui",
+      "purpose": "open the local visual fleet manager with scan, register, and assignment buttons"
+    },
+    {
+      "command": "umi devices scan",
+      "purpose": "discover every connected X5 serial and firmware through CameraSDK"
+    },
+    {
+      "command": "umi devices register",
+      "purpose": "merge discovered X5 devices into the persistent fleet inventory"
+    },
+    {
+      "command": "umi devices assign <serial> --role <role> --base-tag-id <id>",
+      "purpose": "bind a registered camera to a physical gripper role once"
+    },
+    {
+      "command": "umi devices sync",
+      "purpose": "upload the persistent fleet inventory to the LAN server"
+    },
+    {
+      "command": "umi devices list",
+      "purpose": "show the persistent fleet inventory without reconnecting devices"
+    }
+  ],
+  "legacy": [
+    {
+      "group": "direct-processing-scripts",
+      "status": "internal implementation; do not choose manually for registered captures",
+      "files": [
+        "render_gripper_force_angle_demo.py",
+        "render_single_gripper_webgl_demo.py",
+        "osmo_360_offline.py",
+        "insta360_media_stitch.py"
+      ]
+    },
+    {
+      "group": "historical-experiments",
+      "status": "diagnostic or superseded; require an explicit historical reproduction task",
+      "patterns": [
+        "estimate_*",
+        "run_*experiment*",
+        "render_*comparison*",
+        "dual_gripper_calibrator*"
+      ]
+    },
+    {
+      "group": "frozen-baseline-tools",
+      "status": "active verification only; never edit to make a failure pass",
+      "files": [
+        "verify_dual_gripper_v50_baseline.py",
+        "render_fused_world_audit.py",
+        "fuse_asymmetric_gripper_world_pose.py"
+      ]
+    }
+  ]
+}

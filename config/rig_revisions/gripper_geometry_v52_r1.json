@@ -1,0 +1,21 @@
+{
+  "schema_version": "gripper-rigid-geometry/1.0",
+  "revision_id": "gripper-geometry-v52-r1",
+  "status": "DIAGNOSTIC_DERIVED_FROM_HARDWARE_CONFIRMED_V3",
+  "basetag": {
+    "dictionary": "APRILTAG_36h11",
+    "tag_outer_size_m": 0.02
+  },
+  "base_to_tag": {
+    "parent_frame": "base_link",
+    "child_frame": "basetag",
+    "translation_m": [0.02625, 0.0, 0.0196],
+    "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0]
+  },
+  "base_to_tcp": {
+    "parent_frame": "base_link",
+    "child_frame": "gripper_tcp",
+    "translation_m": [0.1356, 0.0, 0.0101],
+    "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0]
+  }
+}

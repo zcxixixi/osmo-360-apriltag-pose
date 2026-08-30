@@ -12,6 +12,7 @@ import argparse
 import csv
 import json
 import math
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -28,6 +29,119 @@ from world_frames import RigidTransform, compile_world_tag_map
 
 
 SCHEMA_VERSION = "vla-episode/1.1"
+
+
+def _parse_utc(value: str) -> datetime:
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def audit_multicamera_pair(
+    spec_path: Path, spec: dict[str, Any], robots: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Audit whether robot videos are one simultaneous multi-camera capture.
+
+    Pose similarity is deliberately *not* synchronization evidence: two
+    sequential repetitions of the same task can have nearly identical world
+    trajectories.  A pair needs an overlapping trusted clock, a hardware
+    synchronization method, or a strong audio correlation with low timing
+    uncertainty.
+
+    Older single-camera specs and legacy specs without ``source_info`` remain
+    compatible.  New multi-camera capture specs should always provide it.
+    """
+    if len(robots) < 2:
+        return {"required": False, "valid": True, "status": "SINGLE_CAMERA"}
+
+    sync = spec.get("sync", {})
+    source_records: list[dict[str, Any]] = []
+    missing_sources: list[str] = []
+    for robot in robots:
+        source_path = _resolve(spec_path.parent, robot.get("source_info"))
+        if source_path is None:
+            missing_sources.append(str(robot.get("name", "unnamed")))
+            continue
+        if not source_path.exists():
+            missing_sources.append(str(robot.get("name", "unnamed")))
+            continue
+        payload = _load_json(source_path)
+        try:
+            start = _parse_utc(payload["creation_time_utc"])
+            duration = float(payload["duration_s"])
+        except (KeyError, TypeError, ValueError):
+            missing_sources.append(str(robot.get("name", "unnamed")))
+            continue
+        source_records.append({
+            "robot": str(robot.get("name", "unnamed")),
+            "path": str(source_path),
+            "creation_time_utc": start.isoformat(),
+            "duration_s": duration,
+            "end_time_utc": datetime.fromtimestamp(
+                start.timestamp() + duration, tz=timezone.utc
+            ).isoformat(),
+            "end_timestamp": start.timestamp() + duration,
+            "start_timestamp": start.timestamp(),
+        })
+
+    overlap_s: float | None = None
+    creation_clock_valid = False
+    if len(source_records) == len(robots):
+        latest_start = max(item["start_timestamp"] for item in source_records)
+        earliest_end = min(item["end_timestamp"] for item in source_records)
+        overlap_s = max(0.0, float(earliest_end - latest_start))
+        required_overlap = float(sync.get(
+            "minimum_creation_time_overlap_s",
+            max(1.0, float(spec.get("end_s", 0.0)) - float(spec.get("start_s", 0.0)) - 1.0),
+        ))
+        creation_clock_valid = bool(sync.get("creation_time_clock_aligned", False)) and overlap_s >= required_overlap
+
+    uncertainty = sync.get("uncertainty_s")
+    uncertainty_ok = uncertainty is not None and float(uncertainty) <= float(
+        sync.get("maximum_uncertainty_s", 0.020)
+    )
+    method = str(sync.get("method", "")).lower()
+    correlation = sync.get("correlation")
+    minimum_correlation = float(sync.get("minimum_audio_correlation", 0.80))
+    audio_valid = (
+        "audio" in method and correlation is not None
+        and float(correlation) >= minimum_correlation and uncertainty_ok
+    )
+    hardware_valid = (
+        any(token in method for token in ("hardware_trigger", "timecode", "genlock", "ptp"))
+        and uncertainty_ok
+    )
+    evidence_present = bool(source_records or method or sync.get("require_pair_integrity"))
+    valid = creation_clock_valid or audio_valid or hardware_valid
+    if not evidence_present:
+        return {
+            "required": False, "valid": True, "status": "LEGACY_UNAUDITED",
+            "warning": "multi-camera source_info is absent; add it for scale collection",
+        }
+    if valid:
+        status = "SIMULTANEOUS_PAIR_VERIFIED"
+    elif overlap_s == 0.0 and bool(sync.get("creation_time_clock_aligned", False)):
+        status = "INVALID_SEQUENTIAL_CAPTURE"
+    else:
+        status = "INVALID_UNVERIFIED_SYNCHRONIZATION"
+    return {
+        "required": True,
+        "valid": bool(valid),
+        "status": status,
+        "creation_time_clock_aligned": bool(sync.get("creation_time_clock_aligned", False)),
+        "creation_time_overlap_s": overlap_s,
+        "audio_correlation": float(correlation) if correlation is not None else None,
+        "minimum_audio_correlation": minimum_correlation,
+        "uncertainty_s": float(uncertainty) if uncertainty is not None else None,
+        "evidence": {
+            "creation_time_overlap": creation_clock_valid,
+            "audio": audio_valid,
+            "hardware": hardware_valid,
+        },
+        "sources": source_records,
+        "missing_source_info": missing_sources,
+    }
 
 
 def _number(row: dict[str, str], names: tuple[str, ...], default: float = math.nan) -> float:
@@ -126,14 +240,20 @@ def load_pose_csv(path: Path) -> PoseSeries:
         source = row.get("measurement_source", "").strip().lower()
         source_kind = source.rsplit(":", 1)[-1]
         source_is_trusted = not source.startswith("secondary_map:")
+        raw_fisheye_direct = (
+            source_kind.startswith("raw_fisheye_unit_bearing")
+            or source_kind == "direct_opposite_basetag_raw_fisheye"
+        )
         quality = row.get("quality_status", row.get("state", "valid")).strip().lower()
         explicit = row.get("direct_measurement", "").strip().lower()
-        is_direct = explicit in {"1", "true", "yes"} if explicit else source_kind in {"", "direct", "measured"}
+        is_direct = (explicit in {"1", "true", "yes"} if explicit else
+                     source_kind in {"", "direct", "measured"} or raw_fisheye_direct)
         is_direct = is_direct and source_is_trusted
         is_direct = is_direct and quality not in {"invalid", "lost", "searching", "predicted"}
         is_tracked = quality in {"valid", "tracked", "filtered"} and source_kind in {
-            "", "direct", "measured", "optical_flow", "flow"
-        } and source_is_trusted
+            "", "direct", "measured", "optical_flow", "flow", "short_gap_interpolation"
+        } or (quality == "valid" and raw_fisheye_direct)
+        is_tracked = is_tracked and source_is_trusted
         parent = row.get("parent_frame", "").strip()
         child = row.get("child_frame", "").strip()
         tag_hash = row.get("tag_map_sha256", "").strip()
@@ -316,10 +436,12 @@ def apply_camera_to_tcp(position: np.ndarray, rotation: Rotation,
     if not calibration:
         return position.copy(), rotation
     transform = RigidTransform.from_dict(calibration)
+    child = transform.child_frame
+    numbered_mount_tag = "_mount_tag" in child and child.rsplit("_mount_tag", 1)[-1].isdigit()
     if transform.parent_frame != "panorama_camera" or not (
-        transform.child_frame.endswith("tcp") or transform.child_frame.endswith("tag2")
+        child.endswith("tcp") or numbered_mount_tag
     ):
-        raise ValueError("expected panorama_camera→(*_tcp|*_tag2) transform")
+        raise ValueError("expected panorama_camera→(*_tcp|*_mount_tagN) transform")
     return (
         position + rotation.apply(np.broadcast_to(transform.translation_m, position.shape)),
         rotation * transform.rotation,
@@ -333,7 +455,10 @@ def load_gripper(path: Path | None, query_time: np.ndarray,
         return nan, nan.copy(), np.zeros(len(query_time), dtype=bool)
     with path.open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
-    times = np.asarray([_number(row, ("time_s", "timestamp_s", "timestamp")) for row in rows])
+    times = np.asarray([
+        _number(row, ("time_s", "common_time_s", "timestamp_s", "timestamp"))
+        for row in rows
+    ])
     angles = np.asarray([_number(row, ("opening_angle_deg", "angle_deg")) for row in rows])
     measured = np.asarray([
         (row.get("measured", "").strip().lower() in {"1", "true", "yes"})
@@ -390,18 +515,45 @@ def extract_rgb(video: Path, query_time: np.ndarray, output_hw: tuple[int, int],
             capture.release()
             raise RuntimeError(f"failed to decode frame {wanted} from {video}")
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        perspective = py360convert.e2p(
-            rgb, fov_deg=float(view.get("fov_deg", 110.0)),
-            u_deg=float(view.get("yaw_deg", 0.0)), v_deg=float(view.get("pitch_deg", 0.0)),
-            out_hw=output_hw, mode="bilinear",
-        )
-        frames.append(np.asarray(perspective, dtype=np.uint8))
+        projection = str(view.get("projection", "equirectangular_perspective")).strip().lower()
+        if projection == "raw_resize":
+            # Keep the source camera pixels as the observation.  This is the
+            # required path for DJI stream1 fisheye input: applying e2p to a
+            # square fisheye image silently introduces a second, invalid lens
+            # projection and makes the exported RGB disagree with the metric
+            # raw-fisheye pose solver.
+            resized = cv2.resize(
+                rgb, (int(output_hw[1]), int(output_hw[0])),
+                interpolation=cv2.INTER_AREA,
+            )
+            frames.append(np.asarray(resized, dtype=np.uint8))
+        elif projection == "equirectangular_perspective":
+            perspective = py360convert.e2p(
+                rgb, fov_deg=float(view.get("fov_deg", 110.0)),
+                u_deg=float(view.get("yaw_deg", 0.0)), v_deg=float(view.get("pitch_deg", 0.0)),
+                out_hw=output_hw, mode="bilinear",
+            )
+            frames.append(np.asarray(perspective, dtype=np.uint8))
+        else:
+            capture.release()
+            raise ValueError(f"unsupported observation projection: {projection}")
     capture.release()
     return np.stack(frames)
 
 
 def _hardware_robot(hardware: dict[str, Any], name: str) -> dict[str, Any]:
     return hardware.get("robots", {}).get(name, {})
+
+
+def _hardware_role(robot: dict[str, Any], fallback_name: str) -> str:
+    """Return the hardware slot used by a semantic robot role.
+
+    Capture operators can wear the two serialized rigs on the opposite hands.  The
+    episode keeps semantic names (left/right), while ``hardware_role`` binds the
+    complete camera/extrinsic chain to the physical serialized rig.  This avoids
+    the unsafe alternative of swapping only pose or gripper columns.
+    """
+    return str(robot.get("hardware_role", fallback_name)).strip() or fallback_name
 
 
 def _camera_serial_from_calibration(path: Path | None) -> str:
@@ -435,6 +587,12 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
     arrays: dict[str, np.ndarray] = {"timestamp_s": (timeline - start).astype(np.float64)}
     checks: list[dict[str, Any]] = []
     per_robot: list[dict[str, Any]] = []
+    pair_integrity = audit_multicamera_pair(spec_path, spec, robots)
+    checks.append({
+        "name": "sync.multi_camera_pair_integrity",
+        "pass": bool(pair_integrity["valid"]),
+        "value": pair_integrity,
+    })
     coordinate = spec.get("coordinate_frame", {})
     world_mode = coordinate.get("mode") == "world"
     world_frame = str(coordinate.get("frame_id", "")).strip()
@@ -444,6 +602,25 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
     expected_ids = {
         int(tag["id"]) for tag in world_map.get("tags", [])
     } if world_map else set()
+    metric_pose_audit_required = bool(spec.get("metric_pose_audit"))
+    metric_pose_audit_path = _resolve(base, spec.get("metric_pose_audit"))
+    metric_pose_audit = (
+        _load_json(metric_pose_audit_path)
+        if metric_pose_audit_path is not None and metric_pose_audit_path.is_file()
+        else {}
+    )
+    metric_quality_gates = metric_pose_audit.get("quality_gates", {})
+    metric_pose_audit_valid = bool(
+        metric_pose_audit.get("schema_version") == "asymmetric-gripper-world-fusion/1.0"
+        and metric_pose_audit.get("status") == "VERIFIED"
+        and metric_pose_audit.get("training_ready") is True
+        and metric_pose_audit.get("world_map_sha256") == expected_map_hash
+        and metric_pose_audit.get("screen_same_id_used") is False
+        and metric_pose_audit.get("synthetic_frames_used") is False
+        and metric_pose_audit.get("contact_constraint_used") is False
+        and bool(metric_quality_gates)
+        and all(value is True for value in metric_quality_gates.values())
+    )
     calibration_status = str(
         world_map.get("calibration_status", "") if world_map else ""
     ).upper()
@@ -457,16 +634,51 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
             {"name": "coordinate.global_tag_map_calibrated", "pass": calibration_final,
              "value": calibration_status or None},
         ])
+        if metric_pose_audit_required:
+            checks.append({
+                "name": "coordinate.metric_pose_audit_verified",
+                "pass": metric_pose_audit_valid,
+                "value": str(metric_pose_audit_path) if metric_pose_audit_path else None,
+            })
         if world_map and world_frame:
             checks.append({
                 "name": "coordinate.world_frame_matches_map",
                 "pass": world_map.get("world_frame") == world_frame,
                 "value": world_map.get("world_frame"),
             })
+    base_tag_bindings = []
+    for index, robot in enumerate(robots):
+        name = robot.get("name", f"robot{index}")
+        hw_robot = _hardware_robot(hardware, _hardware_role(robot, name))
+        declared = robot.get("base_tag_id", hw_robot.get("base_tag_id"))
+        base_tag_bindings.append((name, int(declared) if declared is not None else None))
+    declared_base_ids = [tag_id for _, tag_id in base_tag_bindings if tag_id is not None]
+    if len(robots) > 1:
+        checks.extend([
+            {
+                "name": "hardware.base_tag_ids_declared",
+                "pass": len(declared_base_ids) == len(robots),
+                "value": dict(base_tag_bindings),
+            },
+            {
+                "name": "hardware.base_tag_ids_unique",
+                "pass": len(declared_base_ids) == len(set(declared_base_ids)),
+                "value": declared_base_ids,
+            },
+            {
+                "name": "hardware.base_tag_ids_disjoint_from_world_map",
+                "pass": not bool(set(declared_base_ids) & expected_ids),
+                "value": {
+                    "base_tag_ids": declared_base_ids,
+                    "collisions": sorted(set(declared_base_ids) & expected_ids),
+                },
+            },
+        ])
     world_positions: dict[str, np.ndarray] = {}
 
     for index, robot in enumerate(robots):
         name = robot.get("name", f"robot{index}")
+        hardware_role = _hardware_role(robot, name)
         local_time = timeline + float(robot.get("source_time_offset_s", 0.0))
         pose_path = _resolve(base, robot.get("trajectory_csv"))
         if pose_path is None or not pose_path.is_file():
@@ -487,7 +699,7 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
                  "value": sorted(pose_series.detected_ids)},
             ])
         position, rotation, direct, tracked = resample_pose(pose_series, local_time)
-        hw = _hardware_robot(hardware, name)
+        hw = _hardware_robot(hardware, hardware_role)
         serial_binding_declared = "camera_serial" in robot or "camera_calibration" in robot
         declared_serial = str(robot.get("camera_serial", "")).strip()
         hardware_serial = str(hw.get("camera_serial", "")).strip()
@@ -516,9 +728,14 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
                  "pass": bool(str(hw.get("mount_revision", "")).strip()),
                  "value": str(hw.get("mount_revision", "")).strip() or None},
             ])
-        tag_reference = hw.get("camera_to_eef_reference")
-        use_mount_tag = isinstance(tag_reference, dict)
-        extrinsic = tag_reference if use_mount_tag else _compose_hardware_camera_to_tcp(hw)
+        eef_reference = hw.get("camera_to_eef_reference")
+        use_explicit_eef_reference = isinstance(eef_reference, dict)
+        extrinsic = eef_reference if use_explicit_eef_reference else _compose_hardware_camera_to_tcp(hw)
+        extrinsic_child = str(extrinsic.get("child_frame", "")) if extrinsic else ""
+        use_mount_tag = bool(re.fullmatch(
+            rf"{re.escape(hardware_role)}_mount_tag\d+", extrinsic_child,
+        ))
+        use_tcp_reference = extrinsic_child == f"{hardware_role}_tcp"
         position, rotation = apply_camera_to_tcp(position, rotation, extrinsic)
         raw_position = position.copy()
         position, rejected, motion_audit = smooth_positions(position, timeline)
@@ -568,6 +785,17 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
         longest_gap = _longest_false_run(trusted)
         redetect_interval = int(robot.get("detector_redetect_interval_frames", 1))
         refresh_success = min(1.0, float(np.mean(pose_series.direct)) * redetect_interval)
+        audit_role = str(metric_pose_audit.get("weak_role", ""))
+        if metric_pose_audit_valid and name == audit_role:
+            # The asymmetric raw-fisheye solver publishes position from the
+            # physical opposite BaseTag and attitude from the calibrated DJI
+            # IMU bridge.  It is intentionally not mislabeled as a full direct
+            # PnP pose; its audited visual-anchor coverage is the appropriate
+            # refresh metric for this robot.
+            refresh_success = max(
+                refresh_success,
+                float(metric_pose_audit.get("coverage", {}).get("weak_ratio", 0.0)),
+            )
         quality_config = spec.get("quality", {})
         minimum_tracked = float(quality_config.get("min_tracked_pose_ratio", 0.90))
         minimum_refresh = float(quality_config.get("min_direct_refresh_success", 0.70))
@@ -578,16 +806,16 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
         checks.extend([
             {"name": f"{name}.eef_reference_verified", "pass": bool(
                 extrinsic and (
-                    hw.get("eef_reference_verified") if use_mount_tag
+                    hw.get("eef_reference_verified") if use_explicit_eef_reference
                     else hw.get("camera_to_tcp_verified")
                 )
             )},
             {"name": f"{name}.camera_to_tcp_verified", "pass": bool(
                 extrinsic and hw.get("camera_to_tcp_verified")
-            ) if not use_mount_tag else True},
+            ) if not use_explicit_eef_reference else True},
             {"name": f"{name}.physical_extrinsic_chain_explicit", "pass": bool(
                 hw.get("camera_to_base") and hw.get("base_to_tcp")
-            ) if world_mode and not use_mount_tag else True},
+            ) if world_mode and not use_explicit_eef_reference else True},
             {"name": f"{name}.mount_revision_has_no_display_patch", "pass": not any(
                 token in str(hw.get("mount_revision", "")).lower()
                 for token in ("flat", "table", "shared-a", "shared_a")
@@ -595,8 +823,12 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
             {"name": f"{name}.camera_to_tcp_direction_explicit", "pass": bool(
                 extrinsic
                 and extrinsic.get("parent_frame") == "panorama_camera"
-                and extrinsic.get("child_frame") == (
-                    f"{name}_mount_tag2" if use_mount_tag else f"{name}_tcp"
+                and (
+                    bool(re.fullmatch(
+                        rf"{re.escape(hardware_role)}_mount_tag\d+",
+                        str(extrinsic.get("child_frame", "")),
+                    )) if use_mount_tag
+                    else use_tcp_reference
                 )
             ) if world_mode else True,
              "value": {
@@ -616,12 +848,20 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
         median_rmse = float(np.median(finite_rmse)) if len(finite_rmse) else math.inf
         p95_rmse = float(np.quantile(finite_rmse, 0.95)) if len(finite_rmse) else math.inf
         if world_mode:
-            checks.extend([
-                {"name": f"{name}.pnp_median_rmse<=1.5px", "pass": median_rmse <= 1.5,
-                 "value": median_rmse if math.isfinite(median_rmse) else None},
-                {"name": f"{name}.pnp_p95_rmse<=3.0px", "pass": p95_rmse <= 3.0,
-                 "value": p95_rmse if math.isfinite(p95_rmse) else None},
-            ])
+            if math.isfinite(median_rmse) and math.isfinite(p95_rmse):
+                checks.extend([
+                    {"name": f"{name}.pnp_median_rmse<=1.5px", "pass": median_rmse <= 1.5,
+                     "value": median_rmse},
+                    {"name": f"{name}.pnp_p95_rmse<=3.0px", "pass": p95_rmse <= 3.0,
+                     "value": p95_rmse},
+                ])
+            else:
+                checks.extend([
+                    {"name": f"{name}.raw_fisheye_metric_audit_median_quality",
+                     "pass": metric_pose_audit_valid, "value": None},
+                    {"name": f"{name}.raw_fisheye_metric_audit_p95_quality",
+                     "pass": metric_pose_audit_valid, "value": None},
+                ])
         if world_mode:
             world_positions[name] = stored_p.copy()
         per_robot.append({
@@ -634,13 +874,14 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
             "pnp_median_rmse_px": median_rmse if math.isfinite(median_rmse) else None,
             "pnp_p95_rmse_px": p95_rmse if math.isfinite(p95_rmse) else None,
             "camera_serial": declared_serial or None,
+            "hardware_role": hardware_role,
             "camera_calibration": str(calibration_path) if calibration_path else None,
             "calibration_camera_serial": actual_serial or None,
             "hardware_camera_serial": hardware_serial or None,
             "source_view": hw.get("source_view"),
             "mount_revision": hw.get("mount_revision"),
             "eef_reference": (
-                {"type": "mount_tag", "tag_id": 2, "frame_id": f"{name}_mount_tag2"}
+                {"type": "mount_tag", "frame_id": extrinsic.get("child_frame")}
                 if use_mount_tag else {"type": "tcp", "frame_id": f"{name}_tcp"}
             ),
         })
@@ -723,9 +964,14 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
         "training_frames": int(len(training_indices)), "training_episodes": len(training_runs),
         "training_segments": [[start_index, end_index] for start_index, end_index in training_runs],
         "robots": per_robot, "hardware_config": str(hardware_path) if hardware_path else None,
+        "sync": {
+            **spec.get("sync", {}),
+            "pair_integrity": pair_integrity,
+        },
         "eef_reference": (
-            {"type": "mount_tag", "tag_id": 2,
-             "definition": "centre of gripper-mounted Tag 2"}
+            {"type": "mount_tag",
+             "frame_ids": [item.get("eef_reference", {}).get("frame_id") for item in per_robot],
+             "definition": "centre of each gripper-mounted BaseTag"}
             if per_robot and all(
                 item.get("eef_reference", {}).get("type") == "mount_tag"
                 for item in per_robot
@@ -756,7 +1002,7 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
     (output_dir / "quality_report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (output_dir / "episode_spec.snapshot.json").write_text(json.dumps(spec, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
-    critical_prefixes = ("coordinate.",)
+    critical_prefixes = ("coordinate.", "sync.multi_camera_pair_integrity")
     critical_failures = [
         check["name"] for check in checks
         if not check["pass"] and (

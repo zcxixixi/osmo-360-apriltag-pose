@@ -1,0 +1,174 @@
+{
+  "schema_version": "x5-device-inventory/1.0",
+  "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+  "devices": {
+    "IAHEA2509AXKBJ": {
+      "serial": "IAHEA2509AXKBJ",
+      "model": "Insta360 X5",
+      "firmware": "v1.1.22",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": null
+    },
+    "IAHEA2604UX96C": {
+      "serial": "IAHEA2604UX96C",
+      "model": "Insta360 X5",
+      "firmware": "v1.7.8",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": null
+    },
+    "IAHEA2606K4MCD": {
+      "serial": "IAHEA2606K4MCD",
+      "model": "Insta360 X5",
+      "firmware": "v1.11.10",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": null
+    },
+    "IAHEA2606KDRVQ": {
+      "serial": "IAHEA2606KDRVQ",
+      "model": "Insta360 X5",
+      "firmware": "v1.7.8",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": null
+    },
+    "IAHEA2606KKPVG": {
+      "serial": "IAHEA2606KKPVG",
+      "model": "Insta360 X5",
+      "firmware": "v1.7.8",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": null
+    },
+    "IAHEA2606KKUKF": {
+      "serial": "IAHEA2606KKUKF",
+      "model": "Insta360 X5",
+      "firmware": "v1.7.8",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": null
+    },
+    "IAHEA2606KM43A": {
+      "serial": "IAHEA2606KM43A",
+      "model": "Insta360 X5",
+      "firmware": "v1.7.8",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": {
+        "role": "physical_left",
+        "base_tag_id": 2,
+        "label": "left-gripper-basetag2"
+      }
+    },
+    "IAHEA2606KMDGP": {
+      "serial": "IAHEA2606KMDGP",
+      "model": "Insta360 X5",
+      "firmware": "v1.7.8",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": null
+    },
+    "IAHEA2606KMURQ": {
+      "serial": "IAHEA2606KMURQ",
+      "model": "Insta360 X5",
+      "firmware": "v1.7.8",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": {
+        "role": "physical_right",
+        "base_tag_id": 3,
+        "label": "right-gripper-basetag3"
+      }
+    },
+    "IAHEA2606KN98S": {
+      "serial": "IAHEA2606KN98S",
+      "model": "Insta360 X5",
+      "firmware": "v1.7.8",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": null
+    },
+    "IAHEA2606M5DA6": {
+      "serial": "IAHEA2606M5DA6",
+      "model": "Insta360 X5",
+      "firmware": "v1.7.8",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": null
+    },
+    "IAHEA2606M5WSK": {
+      "serial": "IAHEA2606M5WSK",
+      "model": "Insta360 X5",
+      "firmware": "v1.7.8",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": null
+    },
+    "IAHEA2606M6GBX": {
+      "serial": "IAHEA2606M6GBX",
+      "model": "Insta360 X5",
+      "firmware": "v1.7.8",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": null
+    },
+    "IAHEA2606WRBGP": {
+      "serial": "IAHEA2606WRBGP",
+      "model": "Insta360 X5",
+      "firmware": "v1.7.8",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": null
+    },
+    "IAHEA2606WRKAW": {
+      "serial": "IAHEA2606WRKAW",
+      "model": "Insta360 X5",
+      "firmware": "v1.7.8",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": null
+    },
+    "IAHEA2606X8APN": {
+      "serial": "IAHEA2606X8APN",
+      "model": "Insta360 X5",
+      "firmware": "v1.7.8",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": null
+    },
+    "IAHEA2607UXU9F": {
+      "serial": "IAHEA2607UXU9F",
+      "model": "Insta360 X5",
+      "firmware": "v1.7.8",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": null
+    },
+    "IAHEA2607VJSEJ": {
+      "serial": "IAHEA2607VJSEJ",
+      "model": "Insta360 X5",
+      "firmware": "v1.7.8",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": null
+    },
+    "IAHEA2607VP4XM": {
+      "serial": "IAHEA2607VP4XM",
+      "model": "Insta360 X5",
+      "firmware": "v1.7.8",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": null
+    },
+    "IAHEA2607VX8DF": {
+      "serial": "IAHEA2607VX8DF",
+      "model": "Insta360 X5",
+      "firmware": "v1.7.8",
+      "identity_status": "SDK_VERIFIED",
+      "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+      "assignment": null
+    }
+  }
+}
