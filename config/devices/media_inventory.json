@@ -1,0 +1,44 @@
+{
+  "schema_version": "camera-media-asset-inventory/1.0",
+  "assets": {
+    "right-1": {
+      "camera_serial": "IAHEA2606KM43A",
+      "camera_model": "Insta360 X5",
+      "inventory_identity_status": "SDK_VERIFIED",
+      "verified_geometry_binding": {
+        "role": "physical_left",
+        "base_tag_id": 2,
+        "note": "Asset label right-1 is a user-assigned nickname and does not replace the observed geometry binding."
+      },
+      "sd_card": {
+        "asset_label": "right-1",
+        "status": "USER_ASSIGNED_FROM_DIRECT_SD_CAPTURE",
+        "volume_label": "Insta360 X5",
+        "filesystem_uuid": null,
+        "filesystem_uuid_status": "PENDING_NEXT_MOUNT",
+        "reader_usb_serial_observed": "000000002957",
+        "reader_identity_scope": "reader-level evidence; not a card-unique identifier",
+        "evidence_capture": "/home/cenxi/Videos/umi-captures/20260830/insta360-x5-162856-v1/raw/VID_20260830_162856_00_004.insv",
+        "evidence_capture_sha256": "68c3bfaa4da762c6f3da2f1a2973cf731d999884ff0efa743a8a19f2191e132a",
+        "evidence_sidecar": "LRV_20260830_162856_01_004.lrv",
+        "evidence_sidecar_sha256": "b06fe77350329d09900ebf8fbc738cc051530b879ca8cc94820f2ca04cfa65b9",
+        "camera_serial_evidence": "INSV embedded metadata serial IAHEA2606KM43A matched the SDK-verified fleet inventory"
+      }
+    },
+    "left-1": {
+      "camera_serial": "IAHEA2606M5WSK",
+      "camera_model": "Insta360 X5",
+      "inventory_identity_status": "SDK_VERIFIED",
+      "verified_geometry_binding": {
+        "status": "PENDING_CAPTURE_EVIDENCE",
+        "role": null,
+        "base_tag_id": null
+      },
+      "sd_card": {
+        "asset_label": "left-1",
+        "status": "PENDING_MEDIA_EVIDENCE",
+        "filesystem_uuid": null
+      }
+    }
+  }
+}

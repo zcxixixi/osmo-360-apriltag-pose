@@ -52,6 +52,7 @@
     },
     "IAHEA2606KM43A": {
       "serial": "IAHEA2606KM43A",
+      "asset_label": "right-1",
       "model": "Insta360 X5",
       "firmware": "v1.7.8",
       "identity_status": "SDK_VERIFIED",
@@ -59,7 +60,7 @@
       "assignment": {
         "role": "physical_left",
         "base_tag_id": 2,
-        "label": "left-gripper-basetag2"
+        "label": "right-1"
       }
     },
     "IAHEA2606KMDGP": {
@@ -100,6 +101,7 @@
     },
     "IAHEA2606M5WSK": {
       "serial": "IAHEA2606M5WSK",
+      "asset_label": "left-1",
       "model": "Insta360 X5",
       "firmware": "v1.7.8",
       "identity_status": "SDK_VERIFIED",
