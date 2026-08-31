@@ -19,8 +19,10 @@ src/osmo360/pipeline/device_ui.py
 src/osmo360/pipeline/devices.py
 src/osmo360/pipeline/manifest.py
 src/osmo360/pipeline/process.py
+src/osmo360/pipeline/progress_ui.py
 src/osmo360/pipeline/review.py
 src/osmo360/verification/__init__.py
+src/osmo360/verification/historical.py
 src/osmo360/verification/verify_dual_gripper_v50_baseline.py
 src/osmo360/verification/verify_x5_one_sided_force_baseline.py
 src/osmo360/visualization/__init__.py
@@ -41,6 +43,7 @@ tests/test_a4_wall_maps.py
 tests/test_accuracy_first_v52.py
 tests/test_camera_dataset_pipeline.py
 tests/test_camera_validation_timeline.py
+tests/test_device_asset_inventory.py
 tests/test_direct_cross_basetag_world_pose.py
 tests/test_direct_reciprocal_world_pose.py
 tests/test_dual_camera_alignment.py
@@ -62,6 +65,7 @@ tests/test_merge_pose_maps.py
 tests/test_mocap_evaluation.py
 tests/test_processing_strategy.py
 tests/test_quantify_pipeline_runtime.py
+tests/test_repository_layout.py
 tests/test_single_gripper_motion_demo.py
 tests/test_single_gripper_webgl_demo.py
 tests/test_small_vla_demo.py

@@ -20,6 +20,7 @@ from .devices import (
 from .device_ui import serve_device_ui
 from .process import process_capture
 from .review import review_capture
+from .progress_ui import serve_progress
 
 
 REGISTRY = ROOT / "config" / "pipeline_registry.json"
@@ -130,6 +131,13 @@ def parse_args() -> argparse.Namespace:
     command_parser = subparsers.add_parser("commands", help="list supported command paths")
     command_parser.add_argument("--legacy", action="store_true")
     subparsers.add_parser("verify", help="run every accepted successor baseline")
+    progress_parser = subparsers.add_parser(
+        "progress", help="serve a live pipeline status dashboard"
+    )
+    progress_parser.add_argument("status", type=Path)
+    progress_parser.add_argument("--host", default="127.0.0.1")
+    progress_parser.add_argument("--port", type=int, default=7868)
+    progress_parser.add_argument("--no-browser", action="store_true")
     return parser.parse_args()
 
 
@@ -150,6 +158,14 @@ def main() -> int:
             )
         elif args.command == "verify":
             result = verify_baselines()
+        elif args.command == "progress":
+            serve_progress(
+                args.status,
+                host=args.host,
+                port=args.port,
+                open_browser=not args.no_browser,
+            )
+            return 0
         elif args.command == "devices":
             if args.device_command == "scan":
                 result = {"devices": scan_devices()}

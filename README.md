@@ -32,12 +32,13 @@
 ./umi process manifests/captures/x5-20260829-114845-iahea2606kmurq-sdk-r3.json
 ./umi review manifests/captures/x5-20260829-114845-iahea2606kmurq-sdk-r3.json
 ./umi review manifests/captures/x5-20260829-114845-iahea2606kmurq-sdk-r3.json --publish
+./umi progress /path/to/pipeline_status.json
 ```
 
-`inspect` 校验全部哈希；`process` 只运行 manifest 指定的正式管线；`review`
-生成包含 timeline、视频、审计、manifest 和版本化 scene 的不可变发布包。
-底层 `render_*`、`calibrate_*`、`fuse_*` 脚本仍保留为内部实现或历史复现入口，
-其状态可用 `./umi commands --legacy` 查看。
+`inspect` 校验全部哈希；`process` 运行 manifest 管线；`review` 生成不可变审核包；
+`progress` 轮询状态 JSON，显示各 stage 的执行节点、进度、产物和错误。底层
+`render_*`、`calibrate_*`、`fuse_*` 工具仅用于内部实现或历史复现，其状态可用
+`./umi commands --legacy` 查看。
 
 仓库根目录只保留项目配置和 `umi` 主入口。正式产品代码统一放在
 `src/osmo360/`，离线实验工具放在 `tools/`，兼容命令放在 `bin/`，专项说明
