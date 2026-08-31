@@ -1,0 +1,38 @@
+{
+  "schema_version": "x5-camera-identity/1.0",
+  "status": "SDK_VERIFIED_SERIAL_DIRECT_SD_SOURCE_BOUND",
+  "serial": "IAHEA2606M5WSK",
+  "asset_label": "left-1",
+  "camera_model": "Insta360 X5",
+  "firmware": "v1.7.8",
+  "hardware_role": "physical_left",
+  "base_tag_id": 2,
+  "source_capture": "/home/cenxi/Videos/umi-captures/20260831/insta360-x5-left1-140303-v1/raw/VID_20260831_140303_00_002.insv",
+  "source_sha256": "c42d4caf09d06af0820bc4af4a088f555c9775a7693ed1248801da5ae442376d",
+  "serial_evidence": "INSV embedded serial IAHEA2606M5WSK matched live CameraSDK discovery and SDK-verified fleet inventory",
+  "observed_basetag_sample": {
+    "base_tag_id": 2,
+    "visible_frames": 11,
+    "sampled_frames": 12,
+    "other_base_tag_frames": 0
+  },
+  "source_import": {
+    "mode": "direct SD card mount",
+    "volume_label": "Insta360 X5",
+    "filesystem_uuid": "6632-3830",
+    "reader_usb_serial": "000000002957",
+    "source_path": "/run/media/cenxi/Insta360 X5/DCIM/Camera01/VID_20260831_140303_00_002.insv",
+    "sidecar_path": "/run/media/cenxi/Insta360 X5/DCIM/Camera01/LRV_20260831_140303_01_002.lrv",
+    "sidecar_sha256": "8700c7fd0a4a614e723ae74728ac668f4b34577978d5b2ad8cf03531e7240861"
+  },
+  "sdk_inventory": {
+    "identity_status": "SDK_VERIFIED",
+    "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
+    "assignment": {
+      "role": "physical_left",
+      "base_tag_id": 2,
+      "label": "left-1"
+    }
+  },
+  "revision_id": "x5-left1-camera-identity-20260831-r1"
+}

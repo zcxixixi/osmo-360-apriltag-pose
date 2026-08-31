@@ -1,0 +1,59 @@
+{
+  "schema_version": "capture-manifest/1.0",
+  "capture_id": "x5-20260831-140303-left1-single-hand-r1",
+  "status": "ACTIVE_DIAGNOSTIC_LEFT1_DIRECT_SD_60FPS_SINGLE_HAND_CAMERA_LOCAL_NOT_TRAINING",
+  "camera": {
+    "model": "Insta360 X5",
+    "serial": "IAHEA2606M5WSK",
+    "role": "physical_left",
+    "base_tag_id": 2,
+    "serial_status": "INSV metadata matched live CameraSDK discovery and SDK-verified fleet inventory"
+  },
+  "inputs": {
+    "raw_video": {
+      "path": "/home/cenxi/Videos/umi-captures/20260831/insta360-x5-left1-140303-v1/raw/VID_20260831_140303_00_002.insv",
+      "sha256": "c42d4caf09d06af0820bc4af4a088f555c9775a7693ed1248801da5ae442376d"
+    },
+    "camera_identity": {
+      "path": "config/rig_revisions/x5_left1_camera_identity_20260831_r1.json",
+      "sha256": "527e10792610b3fccd8bdeb05d3a579fc1bc3e62d422e1f33af34dd0287a114f"
+    },
+    "new_cad_source": {
+      "path": "/home/cenxi/Downloads/UMI-III.zip",
+      "sha256": "d928aee7ea6694444c35291515719a5c54204a2375e3bec3c8ffe0e3ee1e8959"
+    }
+  },
+  "revisions": {
+    "rig": {
+      "path": "config/rig_revisions/x5_left1_basetag2_single_hand_20260831_r1.json",
+      "sha256": "3fcc66d0c31c4b189189572c3aa4f702b9360750bc462da98e83b50eda421c46"
+    },
+    "jaw_angle": {
+      "path": "config/rig_revisions/x5_jaw_angle_yellow_dots_left1_20260831_r1.json",
+      "sha256": "d2d6c527732e4f879dc7d8a2042c7c542ce40d3b7d5e8ab8ddd329783eb864e8"
+    },
+    "marker_layout": {
+      "path": "config/rig_revisions/gripper_marker_layout_umi_iii_dxf_r2.json",
+      "sha256": "53d81ea9392de5b36f222a5c283130e01fced3f653d8fcd39217e1266b39850d"
+    },
+    "renderer": {
+      "path": "dual_gripper_3d/single_gripper_scene.html",
+      "sha256": "50f696c897631c726551749b87c40704ce039a218cb1cf098b52e67827a1af0a"
+    }
+  },
+  "pipeline": {
+    "profile": "single_x5_camera_local",
+    "maximum_recovery_gap_s": 0.25,
+    "contact_events_s": [],
+    "world_pose": "unavailable; A3 panel visibility is audited but the new-room world map is not frozen"
+  },
+  "outputs": {
+    "force_angle_dir": "/home/cenxi/Videos/umi-captures/20260831/insta360-x5-left1-140303-v1/force-angle-left1-single-hand-r1",
+    "timeline_dir": "/home/cenxi/Videos/umi-captures/20260831/insta360-x5-left1-140303-v1/webgl-left1-single-hand-r1",
+    "review_bundle_dir": "/home/cenxi/Videos/umi-captures/20260831/insta360-x5-left1-140303-v1/review-bundle-left1-single-hand-r1"
+  },
+  "review": {
+    "name": "left-1 single-hand collection environment · 60 FPS · BaseTag2",
+    "server": "http://192.168.111.62:7865"
+  }
+}
