@@ -1,17 +1,17 @@
 {
   "schema_version": "camera-media-asset-inventory/1.0",
   "assets": {
-    "右1": {
+    "right-1": {
       "camera_serial": "IAHEA2606KM43A",
       "camera_model": "Insta360 X5",
       "inventory_identity_status": "SDK_VERIFIED",
       "verified_geometry_binding": {
         "role": "physical_left",
         "base_tag_id": 2,
-        "note": "Asset label 右1 is a user-assigned nickname and does not replace the observed geometry binding."
+        "note": "Asset label right-1 is a user-assigned nickname and does not replace the observed geometry binding."
       },
       "sd_card": {
-        "asset_label": "右1",
+        "asset_label": "right-1",
         "status": "USER_ASSIGNED_FROM_DIRECT_SD_CAPTURE",
         "volume_label": "Insta360 X5",
         "filesystem_uuid": null,

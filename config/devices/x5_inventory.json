@@ -52,7 +52,7 @@
     },
     "IAHEA2606KM43A": {
       "serial": "IAHEA2606KM43A",
-      "asset_label": "右1",
+      "asset_label": "right-1",
       "model": "Insta360 X5",
       "firmware": "v1.7.8",
       "identity_status": "SDK_VERIFIED",
@@ -60,7 +60,7 @@
       "assignment": {
         "role": "physical_left",
         "base_tag_id": 2,
-        "label": "右1"
+        "label": "right-1"
       }
     },
     "IAHEA2606KMDGP": {
