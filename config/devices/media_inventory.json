@@ -30,14 +30,22 @@
       "camera_model": "Insta360 X5",
       "inventory_identity_status": "SDK_VERIFIED",
       "verified_geometry_binding": {
-        "status": "PENDING_CAPTURE_EVIDENCE",
-        "role": null,
-        "base_tag_id": null
+        "status": "BASE_TAG2_OBSERVED_IN_11_OF_12_SAMPLED_FRAMES",
+        "role": "physical_left",
+        "base_tag_id": 2
       },
       "sd_card": {
         "asset_label": "left-1",
-        "status": "PENDING_MEDIA_EVIDENCE",
-        "filesystem_uuid": null
+        "status": "USER_ASSIGNED_FROM_DIRECT_SD_CAPTURE",
+        "volume_label": "Insta360 X5",
+        "filesystem_uuid": "6632-3830",
+        "reader_usb_serial_observed": "000000002957",
+        "reader_identity_scope": "reader-level evidence; filesystem UUID identifies this card",
+        "evidence_capture": "/home/cenxi/Videos/umi-captures/20260831/insta360-x5-left1-140303-v1/raw/VID_20260831_140303_00_002.insv",
+        "evidence_capture_sha256": "c42d4caf09d06af0820bc4af4a088f555c9775a7693ed1248801da5ae442376d",
+        "evidence_sidecar": "LRV_20260831_140303_01_002.lrv",
+        "evidence_sidecar_sha256": "8700c7fd0a4a614e723ae74728ac668f4b34577978d5b2ad8cf03531e7240861",
+        "camera_serial_evidence": "INSV embedded serial IAHEA2606M5WSK matched live CameraSDK discovery and fleet inventory"
       }
     }
   }

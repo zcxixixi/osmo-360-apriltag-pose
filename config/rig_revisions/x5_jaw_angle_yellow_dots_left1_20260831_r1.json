@@ -1,0 +1,81 @@
+{
+  "schema_version": "x5-jaw-angle-revision/1.0",
+  "revision_id": "x5-jaw-angle-yellow-dots-left1-20260831-r1",
+  "status": "SD_CAPTURE_FITTED_60FPS_BILATERAL_WITH_ONE_SIDE_FALLBACK",
+  "detector": {
+    "algorithm": "three_yellow_pad_dot_centroids",
+    "included_angle_range_deg": [20.0, 80.0],
+    "opening_definition": "closed_reference_included_angle_deg - measured_included_angle_deg",
+    "maximum_recovery_gap_s": 0.25,
+    "marker_definition": "three highlighted yellow circular dots on each black jaw pad",
+    "dot_selection": "adaptive-black-pad",
+    "selection_policy": "black-annulus circular candidates; side-specific collinear triple; vertical-shift tolerant"
+  },
+  "hardware": {
+    "physical_left": {
+      "base_tag_id": 2,
+      "closed_reference_included_angle_deg": 45.768507757370124,
+      "zero_evidence": {
+        "source_video": "/home/cenxi/Videos/umi-captures/20260831/insta360-x5-left1-140303-v1/raw/VID_20260831_140303_00_002.insv",
+        "source_sha256": "c42d4caf09d06af0820bc4af4a088f555c9775a7693ed1248801da5ae442376d",
+        "frame_interval": [0, 979],
+        "measured_frames": 924,
+        "statistic": "97th percentile included angle over the complete SD capture"
+      },
+      "single_side_fallbacks": [
+        {
+          "available_side": "left",
+          "model": "quadratic_relative_axis_heading",
+          "heading_center_deg": -70.71040225480863,
+          "coefficients_high_to_low": [0.00864840050562357, -2.012091927285734, 5.784629429555268],
+          "validated_output_range_deg": [0.0, 25.73402789901399],
+          "maximum_step_deg": 3.0,
+          "continuity_max_age_frames": 15,
+          "measurement_state": "MEASURED_ONE_SIDED_LEFT_LOW_CONFIDENCE",
+          "blocked_holdout": {
+            "split": "alternating 2-second blocks",
+            "train_frames": 474,
+            "test_frames": 450,
+            "mae_deg": 0.23048674830105073,
+            "p95_deg": 0.548548611128512,
+            "max_deg": 1.4911821614507401
+          }
+        },
+        {
+          "available_side": "right",
+          "model": "quadratic_relative_axis_heading",
+          "heading_center_deg": -110.50510061203212,
+          "coefficients_high_to_low": [-0.008195224709992694, 1.9830238676547376, 6.167848695758233],
+          "validated_output_range_deg": [0.0, 25.73402789901399],
+          "maximum_step_deg": 3.0,
+          "continuity_max_age_frames": 15,
+          "measurement_state": "MEASURED_ONE_SIDED_RIGHT_LOW_CONFIDENCE",
+          "blocked_holdout": {
+            "split": "alternating 2-second blocks",
+            "train_frames": 474,
+            "test_frames": 450,
+            "mae_deg": 0.2029255415557636,
+            "p95_deg": 0.46554154512577695,
+            "max_deg": 1.5413616077805021
+          }
+        }
+      ]
+    }
+  },
+  "coverage": {
+    "frames": 980,
+    "fps": 59.94005994005994,
+    "bilateral_yellow_ratio": 0.9428571428571428,
+    "black_pair_ratio": 0.686734693877551,
+    "complete_ratio": 0.639795918367347,
+    "opening_range_deg": [0.0, 25.73402789901399]
+  },
+  "policy": {
+    "bilateral_measurement_preferred": true,
+    "one_sided_fallback_enabled": true,
+    "per_capture_percentile_zero_forbidden_after_this_revision": true,
+    "unavailable_longer_than_s": 0.25,
+    "unavailable_behavior": "preserve N/A; hide CAD jaw links",
+    "training_ready": false
+  }
+}

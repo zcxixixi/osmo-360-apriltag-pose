@@ -106,7 +106,11 @@
       "firmware": "v1.7.8",
       "identity_status": "SDK_VERIFIED",
       "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
-      "assignment": null
+      "assignment": {
+        "role": "physical_left",
+        "base_tag_id": 2,
+        "label": "left-1"
+      }
     },
     "IAHEA2606M6GBX": {
       "serial": "IAHEA2606M6GBX",
