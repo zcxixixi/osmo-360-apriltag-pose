@@ -35,10 +35,20 @@ def write_pose(path: Path, duration: float = 4.0, fps: int = 20) -> None:
 
 def write_gripper(path: Path, duration: float = 4.0, fps: int = 20) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["time_s", "opening_angle_deg", "measured"])
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "time_s", "opening_angle_deg", "relative_force_percent", "measured",
+            ],
+        )
         writer.writeheader()
         for frame in range(int(duration * fps) + 1):
-            writer.writerow({"time_s": frame / fps, "opening_angle_deg": frame / 2, "measured": 1})
+            writer.writerow({
+                "time_s": frame / fps,
+                "opening_angle_deg": frame / 2,
+                "relative_force_percent": frame,
+                "measured": 1,
+            })
 
 
 def test_gripper_loader_accepts_audio_aligned_common_time(tmp_path: Path) -> None:
@@ -52,9 +62,29 @@ def test_gripper_loader_accepts_audio_aligned_common_time(tmp_path: Path) -> Non
             {"common_time_s": 3.0, "opening_angle_deg": 4.0, "measured": 1},
             {"common_time_s": 4.0, "opening_angle_deg": 14.0, "measured": 0},
         ])
-    angle, _, measured = load_gripper(path, np.asarray([3.0, 3.5, 4.0]), None)
+    angle, _, force, measured, force_valid = load_gripper(
+        path, np.asarray([3.0, 3.5, 4.0]), None
+    )
     np.testing.assert_allclose(angle, [4.0, 9.0, 14.0])
+    assert np.isnan(force).all()
     assert measured.tolist() == [True, False, False]
+    assert not force_valid.any()
+
+
+def test_gripper_loader_preserves_relative_force_and_validity(tmp_path: Path) -> None:
+    path = tmp_path / "force.csv"
+    path.write_text(
+        "time_s,opening_angle_deg,relative_force_percent,measured\n"
+        "3,4,10,1\n"
+        "4,14,nan,0\n"
+        "5,24,30,1\n",
+        encoding="utf-8",
+    )
+    _, _, force, _, force_valid = load_gripper(
+        path, np.asarray([3.0, 3.5, 4.0, 4.5, 5.0]), None
+    )
+    np.testing.assert_allclose(force, [10, 15, 20, 25, 30])
+    assert force_valid.tolist() == [True, False, False, True, True]
 
 
 def test_semantic_hand_can_bind_the_opposite_serialized_hardware_slot() -> None:
@@ -362,15 +392,22 @@ def test_ready_episode_writes_umi_zarr(tmp_path: Path, monkeypatch) -> None:
     root = zarr.open_group(store=store, mode="r")
     assert root["data/camera0_rgb"].shape == (80, 8, 8, 3)
     assert root["data/robot0_eef_pos"].shape == (80, 3)
+    assert root["data/robot0_relative_force_percent"].shape == (80, 1)
+    assert root["data/robot0_relative_force_valid"][:].all()
     assert root["meta/episode_ends"][:].tolist() == [80]
     store.close()
 
 
-def test_dual_robot_world_mode_preserves_shared_positions(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "calibration_status", ["FROZEN", "VERIFIED_TWO_CAPTURE_HOLDOUT"]
+)
+def test_dual_robot_world_mode_preserves_shared_positions(
+    tmp_path: Path, calibration_status: str,
+) -> None:
     tag_map = {
         "schema_version": "world-apriltag-map/1.0",
         "map_id": "synthetic-frozen",
-        "calibration_status": "FROZEN",
+        "calibration_status": calibration_status,
         "world_frame": "room_world",
         "frame_convention": {"up_axis": "+Z", "up_vector": [0, 0, 1]},
         "tags": [

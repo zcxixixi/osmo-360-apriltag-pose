@@ -448,18 +448,27 @@ def apply_camera_to_tcp(position: np.ndarray, rotation: Rotation,
     )
 
 
-def load_gripper(path: Path | None, query_time: np.ndarray,
-                 mapping: dict[str, Any] | None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def load_gripper(
+    path: Path | None,
+    query_time: np.ndarray,
+    mapping: dict[str, Any] | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     if path is None:
         nan = np.full(len(query_time), np.nan, dtype=np.float32)
-        return nan, nan.copy(), np.zeros(len(query_time), dtype=bool)
+        unavailable = np.zeros(len(query_time), dtype=bool)
+        return nan, nan.copy(), nan.copy(), unavailable, unavailable.copy()
     with path.open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
     times = np.asarray([
         _number(row, ("time_s", "common_time_s", "timestamp_s", "timestamp"))
         for row in rows
     ])
-    angles = np.asarray([_number(row, ("opening_angle_deg", "angle_deg")) for row in rows])
+    angles = np.asarray([
+        _number(row, ("opening_angle_deg", "angle_deg")) for row in rows
+    ])
+    relative_force = np.asarray([
+        _number(row, ("relative_force_percent", "relative_force")) for row in rows
+    ])
     measured = np.asarray([
         (row.get("measured", "").strip().lower() in {"1", "true", "yes"})
         if row.get("measured", "").strip()
@@ -467,12 +476,22 @@ def load_gripper(path: Path | None, query_time: np.ndarray,
         for row in rows
     ])
     valid = np.isfinite(times) & np.isfinite(angles)
-    times, angles, measured = times[valid], angles[valid], measured[valid]
+    times = times[valid]
+    angles = angles[valid]
+    relative_force = relative_force[valid]
+    measured = measured[valid]
     if len(times) < 2:
         raise ValueError(f"gripper CSV needs two valid angle samples: {path}")
     angle = np.interp(query_time, times, angles).astype(np.float32)
     idx = np.clip(np.searchsorted(times, query_time), 0, len(times) - 1)
     angle_direct = measured[idx]
+    force_samples = np.isfinite(relative_force)
+    force = np.full(len(query_time), np.nan, dtype=np.float32)
+    if np.count_nonzero(force_samples) >= 2:
+        force[:] = np.interp(
+            query_time, times[force_samples], relative_force[force_samples]
+        )
+    force_direct = measured[idx] & force_samples[idx]
     width = np.full(len(query_time), np.nan, dtype=np.float32)
     if mapping:
         kind = mapping.get("type", "linear")
@@ -486,7 +505,7 @@ def load_gripper(path: Path | None, query_time: np.ndarray,
             width[:] = np.interp(angle, mapping["angle_deg"], mapping["width_m"])
         else:
             raise ValueError(f"unsupported gripper mapping: {kind}")
-    return angle, width, angle_direct
+    return angle, width, force, angle_direct, force_direct
 
 
 def extract_rgb(video: Path, query_time: np.ndarray, output_hw: tuple[int, int],
@@ -624,7 +643,10 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
     calibration_status = str(
         world_map.get("calibration_status", "") if world_map else ""
     ).upper()
-    calibration_final = calibration_status in {"CALIBRATED", "FROZEN", "VERIFIED"}
+    calibration_final = (
+        calibration_status in {"CALIBRATED", "FROZEN", "VERIFIED"}
+        or calibration_status.startswith("VERIFIED_")
+    )
     if len(robots) > 1:
         checks.extend([
             {"name": "coordinate.world_mode", "pass": world_mode, "value": coordinate.get("mode")},
@@ -747,7 +769,7 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
         relative_p = origin_r.inv().apply(position - origin_p)
         relative_r = origin_r.inv() * rotation
         raw_relative_p = origin_r.inv().apply(raw_position - origin_p)
-        angle, width, angle_direct = load_gripper(
+        angle, width, force, angle_direct, force_direct = load_gripper(
             _resolve(base, robot.get("gripper_csv")), local_time, hw.get("gripper_width_calibration")
         )
         stored_p = position if world_mode else relative_p
@@ -762,6 +784,9 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
         arrays[f"robot{index}_eef_delta_from_start_rot_6d"] = _rot6d(relative_r)
         arrays[f"robot{index}_gripper_width"] = width[:, None]
         arrays[f"robot{index}_gripper_angle_deg"] = angle[:, None]
+        if np.isfinite(force).any():
+            arrays[f"robot{index}_relative_force_percent"] = force[:, None]
+            arrays[f"robot{index}_relative_force_valid"] = force_direct
         arrays[f"robot{index}_pose_measured"] = direct
         arrays[f"robot{index}_pose_tracked"] = trusted
         arrays[f"robot{index}_pose_recovered"] = recovered

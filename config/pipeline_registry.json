@@ -22,6 +22,10 @@
       "purpose": "run every accepted successor baseline"
     },
     {
+      "command": "umi progress <pipeline_status.json>",
+      "purpose": "serve a live stage, host, progress, artifact, and error dashboard"
+    },
+    {
       "command": "umi devices ui",
       "purpose": "open the local visual fleet manager with scan, register, and assignment buttons"
     },
