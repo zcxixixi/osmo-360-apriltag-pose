@@ -14,6 +14,23 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/2d/6a/885bc91484e1aa8f618f6f0228d76d0e67000b0fdd6090673b777e311913/asciitree-0.3.3.tar.gz", hash = "sha256:4aa4b9b649f85e3fcb343363d97564aa1fb62e249677f2e18a96765145cc0f6e", size = 3951, upload-time = "2016-09-05T19:10:42.681Z" }
 
 [[package]]
+name = "av"
+version = "18.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8d/f4/f22114d30d3435e38c6af2b4870f37b864403dca6ae7af747a289ce0a18e/av-18.1.0.tar.gz", hash = "sha256:47bfc286e1bc9de7ab4681fc2b575cd2460a66919d31ffe1bd5aa54fae531a28", size = 4451061, upload-time = "2026-08-12T22:28:18.761Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/05/d4/d7cdc8bff143c17a6d35924375ae28dd692cacde38700a7d419fde54f44a/av-18.1.0-cp311-abi3-macosx_11_0_x86_64.whl", hash = "sha256:ae75d8bb6467895ed1f8572ededf7ffa49eac07f6e483222f5d7d62a41d12f04", size = 22546147, upload-time = "2026-08-12T22:27:11.851Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/c9/37a619297492256b77d5ed906e7d8166c10a26ed251dccf1ae03ab19bff6/av-18.1.0-cp311-abi3-macosx_14_0_arm64.whl", hash = "sha256:b30a4e8d934558e19602b68998a4d9ac9f250fa0dacef216f7e8e40153b13316", size = 18217603, upload-time = "2026-08-12T22:27:14.713Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/84/2464ffb64c08c5ce8b522c8e74594714414e3b0575267652c5c51c0574b9/av-18.1.0-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:6fc837cc51adf80331ac850779cd53b5d4c4460b0ebe9057a02a921c6736f19d", size = 33640142, upload-time = "2026-08-12T22:27:17.835Z" },
+    { url = "https://files.pythonhosted.org/packages/27/3a/204dbfc3e08eb4cdc6e6ff57be02150bc44523ebdb50182d10025792ebd9/av-18.1.0-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:8a032e8d8ebc73dec079364b9b4a6837638a2d106e8472314e685ffbf163e700", size = 35786210, upload-time = "2026-08-12T22:27:20.984Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/99/b0d04ec553ff9a7e00455458dfa3a39c8a8f627b273056b4e5fe57d590de/av-18.1.0-cp311-abi3-manylinux_2_31_armv7l.whl", hash = "sha256:3c8b1f8b46f99d52e2d8b0ed5d0cdadf172d24794d46e2077b16e44ed08e26ff", size = 39379798, upload-time = "2026-08-12T22:27:24.432Z" },
+    { url = "https://files.pythonhosted.org/packages/56/b1/e00d4feae59160149df6126585e726fdc6300798fd40c5dd324879e81f68/av-18.1.0-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:ab5ac081bc9eaf54109120d4e56284674fecfbe520d9aa1707c7fa911ec5f4d2", size = 34690321, upload-time = "2026-08-12T22:27:27.769Z" },
+    { url = "https://files.pythonhosted.org/packages/dc/94/836fa987e3084d11a21489f11357fb24843ef3aa8faf74ddddfc603d5062/av-18.1.0-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:191224788d87af06c31784a395bb73f14b72f33d7f4871ace0157de2abdc6276", size = 36859932, upload-time = "2026-08-12T22:27:31.403Z" },
+    { url = "https://files.pythonhosted.org/packages/33/b4/76ba21e46704f632004276b85289a1582e95f5eff760436d6149875a1881/av-18.1.0-cp311-abi3-win_amd64.whl", hash = "sha256:ea1480b7a8d5405cb5f382b344731bf125fd2c1c6fae3964f6c48595628387ff", size = 27595679, upload-time = "2026-08-12T22:27:35.177Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/ad/a3135884c5753b09773176b97201ae602f67ad14206c395ff838d66bf9b0/av-18.1.0-cp311-abi3-win_arm64.whl", hash = "sha256:5509ec12aaa19fd6601de13cfa6f4cdad450da07982118510592875d970454d6", size = 20257584, upload-time = "2026-08-12T22:27:38.472Z" },
+]
+
+[[package]]
 name = "blinker"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -751,18 +768,26 @@ dependencies = [
 gpu = [
     { name = "cupy-cuda13x", extra = ["ctk"] },
 ]
+node-gpu = [
+    { name = "av" },
+    { name = "cupy-cuda13x", extra = ["ctk"] },
+    { name = "pynvvideocodec", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+]
 test = [
     { name = "pytest" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "av", marker = "extra == 'node-gpu'", specifier = ">=18.1,<19" },
     { name = "cupy-cuda13x", extras = ["ctk"], marker = "extra == 'gpu'", specifier = ">=14.2,<15" },
+    { name = "cupy-cuda13x", extras = ["ctk"], marker = "extra == 'node-gpu'", specifier = ">=14.2,<15" },
     { name = "flask", specifier = ">=3.1.3" },
     { name = "matplotlib", specifier = ">=3.11.1" },
     { name = "numpy", specifier = ">=2.0,<3" },
     { name = "opencv-contrib-python", specifier = ">=4.10,<5" },
     { name = "py360convert", specifier = ">=1.0.4,<2" },
+    { name = "pynvvideocodec", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'node-gpu'", specifier = "==2.2.2" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3,<10" },
     { name = "python-fcl", specifier = ">=0.7,<0.8" },
     { name = "rtree", specifier = ">=1.4,<2" },
@@ -770,7 +795,7 @@ requires-dist = [
     { name = "trimesh", specifier = ">=5,<6" },
     { name = "zarr", specifier = ">=2.18,<3" },
 ]
-provides-extras = ["test", "gpu"]
+provides-extras = ["test", "gpu", "node-gpu"]
 
 [[package]]
 name = "packaging"
@@ -856,6 +881,16 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/49/2e/ced460408999b33da6b31b0021b0f37d329e202d4169aeb164493778f25b/pygments-2.21.0.tar.gz", hash = "sha256:610ca751c9bc2492b38eb9a38a7fbc93edbbb2d7182edaf34e66ae493dee5c8c", size = 5005329, upload-time = "2026-08-17T08:02:48.824Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/71/46/17f022dd3e953bf20a04a028a21ec746d942f8d2af30fa0f124fa0e6a684/pygments-2.21.0-py3-none-any.whl", hash = "sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9", size = 1250147, upload-time = "2026-08-17T08:02:44.912Z" },
+]
+
+[[package]]
+name = "pynvvideocodec"
+version = "2.2.2"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9a/79/7b067eeedcb9c2edd99b90bb60c76c92d1de195602426b1f7807587167ca/pynvvideocodec-2.2.2-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:f4dd80dd46636ee3b33f744e8acc592034251bdb837575a6804ee91a49ec8abf", size = 26429567, upload-time = "2026-08-26T08:02:49.233Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/53/a1d91b359a5ddb44a2955dd6f6a0465f27223cd455821d9dabcac3847555/pynvvideocodec-2.2.2-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:b29dd4ac5aefbe909b8d3d3e57e5a1e84aeea5c4c862116f90c0cd0193972cbb", size = 26427190, upload-time = "2026-08-26T08:04:23.094Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/b1/31f9a5296ef30e17ffafd87c1ad7bdc0a8b42ee8e6a61937ce2e0403b8b3/pynvvideocodec-2.2.2-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:92effa6f3cab0e64eec85cd448c4ecb2899f301a478cb344be285257ad44e009", size = 26427210, upload-time = "2026-08-26T08:05:36.25Z" },
 ]
 
 [[package]]

@@ -1,0 +1,20 @@
+{
+  "schema_version": "vendor-sdk-revision/v1",
+  "revision_id": "insta360-camera-2.1.1-media-3.1.1-linux-x86_64",
+  "redistribution": "NOT_AUTHORIZED_BY_REPOSITORY",
+  "installation": "local licensed copy outside Git; set INSTA360_SDK_ROOT",
+  "components": {
+    "camera_sdk": "2.1.1",
+    "media_sdk": "3.1.1"
+  },
+  "required_files": {
+    "camera-2.1.1/lib/libCameraSDK.so": "d55091f120fa04632decd2230c1ebf5e0c87037d7ec01ffae089eb4a9236b2ad",
+    "camera-2.1.1/bin/CameraSDKTest": "58b5afac4f3e2eeb1000f86d6359313bd54c185b49e81b595d371d8a9af0dec0",
+    "media-3.1.1/usr/bin/MediaSDKTest": "e44e25680213e262064cba5378ed452f2f9d2f491cbdfbf4b3a8603e06da49f6",
+    "media-3.1.1/usr/lib/libMediaSDK.so": "a0c98c2ae8a5f6b734fbc14dc43a24c883d60fa7e1bd207b2c34dc0b3b33247d",
+    "media-3.1.1/usr/lib/libMNN_Cuda_Main.so": "3359f26e6e342505182506bd6a946a0c66e89e26b692fb8bc1b7b6236c4a46eb",
+    "media-3.1.1/usr/lib/libtscsdk_center.so": "362befde51c1201bb1620c2d2c0459ea693f2a69dfaecd14f1087758b8eaa1f4",
+    "media-3.1.1/models/ai_stitcher_v2.ins": "d8e9fb7ef67b18cb1855d1600d3552f3f3c659d345be280abc3b70cc23e6d6e7",
+    "media-3.1.1/models/colorplus_model.ins": "8864c23f677a589145aaadaeb9ab28fd9454d4fa5cb33a232c1876a71b561dcd"
+  }
+}
