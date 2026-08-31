@@ -24,6 +24,21 @@
         "evidence_sidecar_sha256": "b06fe77350329d09900ebf8fbc738cc051530b879ca8cc94820f2ca04cfa65b9",
         "camera_serial_evidence": "INSV embedded metadata serial IAHEA2606KM43A matched the SDK-verified fleet inventory"
       }
+    },
+    "left-1": {
+      "camera_serial": "IAHEA2606M5WSK",
+      "camera_model": "Insta360 X5",
+      "inventory_identity_status": "SDK_VERIFIED",
+      "verified_geometry_binding": {
+        "status": "PENDING_CAPTURE_EVIDENCE",
+        "role": null,
+        "base_tag_id": null
+      },
+      "sd_card": {
+        "asset_label": "left-1",
+        "status": "PENDING_MEDIA_EVIDENCE",
+        "filesystem_uuid": null
+      }
     }
   }
 }

@@ -101,6 +101,7 @@
     },
     "IAHEA2606M5WSK": {
       "serial": "IAHEA2606M5WSK",
+      "asset_label": "left-1",
       "model": "Insta360 X5",
       "firmware": "v1.7.8",
       "identity_status": "SDK_VERIFIED",
