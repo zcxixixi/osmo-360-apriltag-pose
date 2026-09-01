@@ -118,6 +118,8 @@ Deployment overrides:
 ```bash
 OSMO_CPU_WORKERS=4 \
 OSMO_THREADS_PER_WORKER=2 \
+OSMO_MAX_CONCURRENT_JOBS=1 \
+OSMO_JOB_SLOT_TIMEOUT_S=3600 \
 OSMO_TRAJECTORY_FPS=30 \
 OSMO_DECODE_FPS=30 \
 OSMO_CACHE_CHUNK_SECONDS=120 \
@@ -125,11 +127,18 @@ OSMO_PIPELINE_CACHE=/fast-local-disk/osmo-cache \
 ./run_pipeline.sh /data/session
 ```
 
-`OSMO_CPU_WORKERS` is capped at 4 and `OSMO_THREADS_PER_WORKER` at 8. For a
-shared CPU server, `1 x 2` is the conservative setting; the tested 9950X speed
-setting is `4 x 4`. `OSMO_TRAJECTORY_FPS` controls measured corner samples
-written to the cache. H5 timestamps remain 59.94 Hz even though images are
-retrieved for detection/tracking at 30 Hz.
+`OSMO_CPU_WORKERS` is capped at 4 and `OSMO_THREADS_PER_WORKER` at 8. Each job
+is additionally capped at 16 logical threads and the profile is automatically
+scaled down on smaller hosts. A user-scoped host lock admits one job by default;
+`OSMO_MAX_CONCURRENT_JOBS` may be raised only when its aggregate thread budget
+does not exceed the host's logical CPUs. Separate repository clones owned by
+the same user share the lock. For a shared CPU server, `1 x 2` is the
+conservative setting; the tested 9950X speed setting is `4 x 4` with one job.
+BLAS, OpenMP, OpenCV and FFmpeg decoder thread pools inherit the same bound;
+the parallel pose-graph uses one math thread per Python worker to avoid nested
+oversubscription. `OSMO_TRAJECTORY_FPS` controls measured corner samples written
+to the cache. H5 timestamps remain 59.94 Hz even though images are retrieved
+for detection/tracking at 30 Hz.
 
 On the supplied four-stream, 1920×1920, 59.94 FPS, 10-second dataset, the v3
 30 Hz pipeline measured 21.77 seconds uncached and 1.27 seconds fully cached on

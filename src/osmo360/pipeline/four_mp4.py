@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import math
 import os
 import re
+import stat
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -305,12 +309,15 @@ def _boolean_option(
 def resource_budget(config: dict[str, Any] | None = None) -> dict[str, Any]:
     processing = (config or {}).get("processing", {})
     cpu_count = os.cpu_count() or 1
-    workers = int(_positive_number(
+    requested_workers = int(_positive_number(
         processing, "OSMO_CPU_WORKERS", "cache_workers", 1
     ))
-    threads = int(_positive_number(
+    requested_threads = int(_positive_number(
         processing, "OSMO_THREADS_PER_WORKER", "threads_per_worker", min(2, cpu_count)
     ))
+    per_job_limit = min(cpu_count, 16)
+    workers = min(requested_workers, min(4, per_job_limit))
+    threads = min(requested_threads, min(8, max(1, per_job_limit // workers)))
     trajectory_fps_default = processing.get(
         "trajectory_observation_fps", processing.get("detection_fps", 30.0)
     )
@@ -389,15 +396,41 @@ def resource_budget(config: dict[str, Any] | None = None) -> dict[str, Any]:
         raise ManifestError("optical_flow_window_size must be an odd integer >= 9")
     if optical_flow_max_level > 8 or optical_flow_max_iterations > 100:
         raise ManifestError("optical flow level/iteration limits are too large")
-    if workers > 4:
+    if requested_workers > 4:
         raise ManifestError("OSMO_CPU_WORKERS is capped at 4 for the low-resource profile")
-    if threads > 8:
+    if requested_threads > 8:
         raise ManifestError("OSMO_THREADS_PER_WORKER is capped at 8")
+    if "OSMO_CPU_WORKERS" in os.environ and workers != requested_workers:
+        raise ManifestError(
+            f"OSMO_CPU_WORKERS={requested_workers} exceeds this host's safe limit {workers}"
+        )
+    if "OSMO_THREADS_PER_WORKER" in os.environ and threads != requested_threads:
+        raise ManifestError(
+            f"OSMO_THREADS_PER_WORKER={requested_threads} exceeds this host's safe limit {threads}"
+        )
+    maximum_active_cpu_threads = workers * threads
+    concurrent_jobs = int(_positive_number(
+        processing, "OSMO_MAX_CONCURRENT_JOBS", "maximum_concurrent_jobs", 1
+    ))
+    if concurrent_jobs > 4:
+        raise ManifestError("OSMO_MAX_CONCURRENT_JOBS is capped at 4")
+    aggregate_threads = maximum_active_cpu_threads * concurrent_jobs
+    if aggregate_threads > cpu_count:
+        raise ManifestError(
+            "maximum_concurrent_jobs * active threads per job must not exceed "
+            f"the {cpu_count} logical CPUs"
+        )
+    slot_timeout_s = _positive_number(
+        processing, "OSMO_JOB_SLOT_TIMEOUT_S", "job_slot_timeout_s", 3600.0
+    )
     return {
         "profile": str(processing.get("profile", "bounded-cpu")),
         "cache_workers": workers,
         "threads_per_worker": threads,
-        "maximum_active_cpu_threads": workers * threads,
+        "maximum_active_cpu_threads": maximum_active_cpu_threads,
+        "maximum_concurrent_jobs": concurrent_jobs,
+        "aggregate_maximum_active_cpu_threads": aggregate_threads,
+        "job_slot_timeout_s": slot_timeout_s,
         "trajectory_observation_fps": trajectory_fps,
         "decode_fps": decode_fps,
         "native_grayscale_decode": native_grayscale,
@@ -418,6 +451,91 @@ def resource_budget(config: dict[str, Any] | None = None) -> dict[str, Any]:
         "cuda_required": False,
         "stitching_required": False,
     }
+
+
+@contextlib.contextmanager
+def pipeline_job_slot(
+    maximum_concurrent_jobs: int,
+    *,
+    timeout_s: float,
+    lock_root: Path | None = None,
+):
+    """Hold one host-local slot so independent datasets cannot oversubscribe CPUs."""
+
+    if maximum_concurrent_jobs <= 0 or timeout_s <= 0:
+        raise ManifestError("pipeline job slot count and timeout must be positive")
+    if lock_root is None:
+        configured = os.environ.get("OSMO_JOB_LOCK_DIR", "").strip()
+        if configured:
+            raw_directory = Path(configured).expanduser()
+        else:
+            runtime = os.environ.get("XDG_RUNTIME_DIR", "").strip()
+            raw_directory = (
+                Path(runtime) / "osmo360-pipeline-job-slots"
+                if runtime
+                else Path(f"/tmp/osmo360-pipeline-job-slots-{os.getuid()}")
+            )
+    else:
+        raw_directory = Path(lock_root)
+    if not raw_directory.is_absolute():
+        raise ManifestError(f"pipeline lock root must be absolute: {raw_directory}")
+    if raw_directory.is_symlink():
+        raise ManifestError(f"pipeline lock root must not be a symlink: {raw_directory}")
+    try:
+        raw_directory.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
+    metadata = raw_directory.lstat()
+    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
+        raise ManifestError(
+            f"pipeline lock root must be a real directory owned by this user: {raw_directory}"
+        )
+    directory = raw_directory.resolve()
+    directory.chmod(0o700)
+    deadline = time.monotonic() + timeout_s
+    started = time.monotonic()
+    flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+    while True:
+        for slot in range(maximum_concurrent_jobs):
+            path = directory / f"slot-{slot}.lock"
+            try:
+                descriptor = os.open(path, flags, 0o600)
+            except OSError as exc:
+                raise ManifestError(f"cannot open pipeline job slot {path}: {exc}") from exc
+            try:
+                metadata = os.fstat(descriptor)
+                if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
+                    raise ManifestError(
+                        f"pipeline job slot must be a regular file owned by this user: {path}"
+                    )
+                os.fchmod(descriptor, 0o600)
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    os.close(descriptor)
+                    continue
+                try:
+                    yield {
+                        "slot": slot,
+                        "maximum_concurrent_jobs": maximum_concurrent_jobs,
+                        "waited_s": time.monotonic() - started,
+                    }
+                finally:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+                    os.close(descriptor)
+                return
+            except BaseException:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+                raise
+        if time.monotonic() >= deadline:
+            raise ManifestError(
+                f"timed out after {timeout_s:.1f}s waiting for one of "
+                f"{maximum_concurrent_jobs} pipeline job slots"
+            )
+        time.sleep(min(0.2, max(0.0, deadline - time.monotonic())))
 
 
 def chunk_ranges(
@@ -540,12 +658,17 @@ def process_four_mp4_dataset(dataset_root: Path, *, dry_run: bool = False) -> di
             "resource_budget": lock["resource_budget"],
             "command": command,
         }
-    process = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
+    with pipeline_job_slot(
+        int(lock["resource_budget"]["maximum_concurrent_jobs"]),
+        timeout_s=float(lock["resource_budget"]["job_slot_timeout_s"]),
+    ) as job_slot:
+        process = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
     result = {
         "command": command,
         "returncode": process.returncode,
         "stdout": process.stdout,
         "stderr": process.stderr,
+        "job_slot": job_slot,
     }
     pair_status_path = confined_path(
         final_root, "pairs", pair["pair_id"], "status.json", field="pair status path"

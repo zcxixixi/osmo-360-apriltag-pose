@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from osmo360.pipeline import dataset, four_mp4
-from osmo360.pipeline.four_mp4_worker import build_chunk_tasks
+from osmo360.pipeline.four_mp4_worker import _worker_environment, build_chunk_tasks
 from osmo360.pipeline.manifest import ManifestError
 from tools.merge_fisheye_observation_chunks import merge_chunks
 from tools.cache_fisheye_apriltag_observations import should_run_rectified
@@ -182,6 +182,76 @@ def test_instaumi_h5_is_native_four_mp4_input(monkeypatch, tmp_path: Path):
     assert all(task.expected["frame_stride"] == 1 for task in tasks)
     assert all(task.expected["decode_stride"] == 1 for task in tasks)
     assert all(task.expected["timestamp_source"].startswith("instaumi_h5:") for task in tasks)
+
+
+def test_resource_budget_bounds_host_aggregate_threads(monkeypatch):
+    monkeypatch.setattr(four_mp4.os, "cpu_count", lambda: 32)
+    budget = four_mp4.resource_budget({
+        "processing": {
+            "cache_workers": 4,
+            "threads_per_worker": 4,
+            "maximum_concurrent_jobs": 2,
+        }
+    })
+
+    assert budget["maximum_active_cpu_threads"] == 16
+    assert budget["maximum_concurrent_jobs"] == 2
+    assert budget["aggregate_maximum_active_cpu_threads"] == 32
+
+    with pytest.raises(ManifestError, match="must not exceed the 32 logical CPUs"):
+        four_mp4.resource_budget({
+            "processing": {
+                "cache_workers": 4,
+                "threads_per_worker": 4,
+                "maximum_concurrent_jobs": 3,
+            }
+        })
+
+
+def test_resource_budget_downscales_manifest_profile_on_small_cpu(monkeypatch):
+    monkeypatch.setattr(four_mp4.os, "cpu_count", lambda: 4)
+
+    budget = four_mp4.resource_budget({
+        "processing": {"cache_workers": 4, "threads_per_worker": 4}
+    })
+
+    assert budget["cache_workers"] == 4
+    assert budget["threads_per_worker"] == 1
+    assert budget["maximum_active_cpu_threads"] == 4
+
+
+def test_pipeline_job_slots_serialize_and_release(tmp_path: Path):
+    lock_root = tmp_path / "slots"
+    with four_mp4.pipeline_job_slot(1, timeout_s=1, lock_root=lock_root) as first:
+        assert first["slot"] == 0
+        with pytest.raises(ManifestError, match="timed out"):
+            with four_mp4.pipeline_job_slot(
+                1, timeout_s=0.02, lock_root=lock_root
+            ):
+                raise AssertionError("the occupied slot must not be acquired")
+
+    with four_mp4.pipeline_job_slot(1, timeout_s=1, lock_root=lock_root) as reused:
+        assert reused["slot"] == 0
+    assert (lock_root / "slot-0.lock").stat().st_mode & 0o777 == 0o600
+
+
+def test_worker_environment_caps_every_common_native_thread_pool(monkeypatch):
+    monkeypatch.setenv("OPENBLAS_NUM_THREADS", "32")
+
+    environment = _worker_environment(2)
+
+    for name in (
+        "OMP_NUM_THREADS",
+        "OMP_THREAD_LIMIT",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "BLIS_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+    ):
+        assert environment[name] == "2"
+    assert environment["OMP_DYNAMIC"] == "FALSE"
+    assert environment["MKL_DYNAMIC"] == "FALSE"
 
 
 def test_four_mp4_requires_factory_offset_when_mp4_has_no_embedded_metadata(
