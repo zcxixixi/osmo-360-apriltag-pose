@@ -18,6 +18,10 @@ from osmo360.localization.cached_a3_bootstrap import (
     write_joint_pose_csv,
     write_pose_csv,
 )
+from osmo360.localization.instaumi_imu import (
+    ImuAssistanceUnavailable,
+    load_instaumi_imu,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,6 +35,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--minimum-calibration-inliers", type=int, default=20)
     parser.add_argument("--max-angular-rmse-deg", type=float, default=2.0)
     parser.add_argument("--maximum-interpolation-gap-s", type=float, default=0.25)
+    parser.add_argument(
+        "--imu-h5",
+        type=Path,
+        help="optional InstaUMI H5 with independently calibrated per-side IMU streams",
+    )
     parser.add_argument("--opencv-threads", type=int, default=2)
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser.parse_args()
@@ -82,12 +91,34 @@ def main() -> int:
         write_pose_csv(args.output_dir / f"{side}_pose.csv", rows)
         trajectory_rows[side] = rows
         trajectories[side] = summary
+    imu_streams = {}
+    imu_audit = {
+        "status": "NOT_REQUESTED",
+        "translation_source": "visual_endpoint_interpolation",
+        "orientation_source": "visual_slerp",
+    }
+    if args.imu_h5 is not None:
+        try:
+            imu_bundle = load_instaumi_imu(args.imu_h5)
+        except (ImuAssistanceUnavailable, OSError, ValueError, KeyError) as exc:
+            imu_audit = {
+                "status": "UNAVAILABLE_INVALID_H5",
+                "h5": str(args.imu_h5.resolve()),
+                "reason": str(exc),
+                "translation_source": "visual_endpoint_interpolation",
+                "orientation_source": "visual_slerp_fallback",
+            }
+        else:
+            imu_streams = imu_bundle.streams
+            imu_audit = imu_bundle.audit
     trajectories["joint"] = write_joint_pose_csv(
         args.output_dir / "joint_trajectory.csv",
         trajectory_rows["left"],
         trajectory_rows["right"],
         map_id=world_map["map_id"],
         maximum_interpolation_gap_s=args.maximum_interpolation_gap_s,
+        imu_streams=imu_streams,
+        imu_audit=imu_audit,
     )
     gates = {
         "calibration_inliers_at_least_minimum": (
@@ -122,7 +153,7 @@ def main() -> int:
     }
     passed = all(gates.values())
     report = {
-        "schema_version": "cached-a3-self-calibrated-trajectories/1.2",
+        "schema_version": "cached-a3-self-calibrated-trajectories/1.3",
         "pair_id": args.pair_id,
         "status": "SELF_CALIBRATED_PASS" if passed else "SELF_CALIBRATED_GATE_FAILED",
         "claims": {
@@ -132,13 +163,17 @@ def main() -> int:
             "fixed_left_right_camera_extrinsic_used": False,
             "stitching_used": False,
             "joint_timeline_interpolation_used": True,
+            "calibrated_per_side_imu_assistance_enabled": bool(imu_streams),
+            "accelerometer_translation_integration_used": False,
             "maximum_trusted_interpolation_gap_s": args.maximum_interpolation_gap_s,
             "long_gap_policy": (
+                "calibrated per-side gyro bridge when available; otherwise visual "
                 "INTERPOLATED_UNTRUSTED; numeric pose retained with explicit confidence"
             ),
         },
         "calibration": calibration,
         "trajectories": trajectories,
+        "imu_assistance": trajectories["joint"]["imu_assistance"],
         "gates": gates,
     }
     (args.output_dir / "report.json").write_text(

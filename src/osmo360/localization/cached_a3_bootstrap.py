@@ -21,6 +21,10 @@ from scipy.spatial.transform import Rotation, Slerp
 from osmo360.localization.coordinate_frames import (
     X5_STREAM0_OPENCV_FROM_HAND_CAMERA_FLU,
 )
+from osmo360.localization.instaumi_imu import (
+    ImuAssistanceUnavailable,
+    ImuSeries,
+)
 from tools.calibrate_wall_pair_transform import PoseSample, robust_panel_transform
 
 
@@ -607,6 +611,8 @@ def write_joint_pose_csv(
     *,
     map_id: str,
     maximum_interpolation_gap_s: float = MAXIMUM_TRUSTED_INTERPOLATION_GAP_S,
+    imu_streams: dict[str, ImuSeries] | None = None,
+    imu_audit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write synchronized left/right poses in one explicitly shared map."""
     if (
@@ -652,6 +658,12 @@ def write_joint_pose_csv(
     untrusted_side_frames = {"left": 0, "right": 0}
     untrusted_joint_frames = 0
     held_untrusted_side_frames = {"left": 0, "right": 0}
+    imu_assisted_side_frames = {"left": 0, "right": 0}
+    visual_long_gap_fallback_side_frames = {"left": 0, "right": 0}
+    imu_bridge_maximum_sample_gap_s = {"left": 0.0, "right": 0.0}
+    imu_bridge_maximum_endpoint_closure_deg = {"left": 0.0, "right": 0.0}
+    imu_fallback_reasons: dict[str, dict[str, int]] = {"left": {}, "right": {}}
+    imu_streams = {} if imu_streams is None else imu_streams
 
     valid_series = {}
     for side in ("left", "right"):
@@ -742,6 +754,51 @@ def write_joint_pose_csv(
                     for axis in range(3)
                 ])
                 quaternion = slerp([now_s]).as_quat()[0]
+                pose_state = "INTERPOLATED_UNTRUSTED"
+                quality_status = "interpolation_untrusted"
+                measurement_source = (
+                    "temporal_interpolation_rejected_long_gap:"
+                    f"source={source_status}"
+                )
+                stream = imu_streams.get(side)
+                if stream is None:
+                    reason = "imu_stream_unavailable"
+                    visual_long_gap_fallback_side_frames[side] += 1
+                    imu_fallback_reasons[side][reason] = (
+                        imu_fallback_reasons[side].get(reason, 0) + 1
+                    )
+                else:
+                    try:
+                        bridge = stream.bridge_orientations(
+                            float(series_times[lower]),
+                            valid_series[side][2][lower],
+                            float(series_times[upper]),
+                            valid_series[side][2][upper],
+                            np.asarray([now_s]),
+                        )
+                    except ImuAssistanceUnavailable as exc:
+                        reason = str(exc)
+                        visual_long_gap_fallback_side_frames[side] += 1
+                        imu_fallback_reasons[side][reason] = (
+                            imu_fallback_reasons[side].get(reason, 0) + 1
+                        )
+                    else:
+                        quaternion = bridge.rotations.as_quat()[0]
+                        pose_state = "IMU_ASSISTED_UNTRUSTED"
+                        quality_status = "imu_assisted_untrusted"
+                        measurement_source = (
+                            "visual_position_interpolation+calibrated_gyro_bridge:"
+                            f"source={source_status}"
+                        )
+                        imu_assisted_side_frames[side] += 1
+                        imu_bridge_maximum_sample_gap_s[side] = max(
+                            imu_bridge_maximum_sample_gap_s[side],
+                            bridge.maximum_sample_gap_s,
+                        )
+                        imu_bridge_maximum_endpoint_closure_deg[side] = max(
+                            imu_bridge_maximum_endpoint_closure_deg[side],
+                            bridge.endpoint_closure_deg,
+                        )
                 resolved[side] = {
                     "camera_x_m": f"{position[0]:.9f}",
                     "camera_y_m": f"{position[1]:.9f}",
@@ -750,15 +807,12 @@ def write_joint_pose_csv(
                     "qy": f"{quaternion[1]:.12f}",
                     "qz": f"{quaternion[2]:.12f}",
                     "qw": f"{quaternion[3]:.12f}",
-                    "quality_status": "interpolation_untrusted",
-                    "pose_state": "INTERPOLATED_UNTRUSTED",
+                    "quality_status": quality_status,
+                    "pose_state": pose_state,
                     "angular_rmse_deg": "",
                     "detected_tag_count": "",
                     "inlier_tag_count": "",
-                    "measurement_source": (
-                        "temporal_interpolation_rejected_long_gap:"
-                        f"source={source_status}"
-                    ),
+                    "measurement_source": measurement_source,
                 }
                 continue
             position = np.asarray([
@@ -784,7 +838,9 @@ def write_joint_pose_csv(
             }
         untrusted_joint_frames += int(any(
             source is not None
-            and source.get("pose_state") == "INTERPOLATED_UNTRUSTED"
+            and source.get("pose_state") in {
+                "INTERPOLATED_UNTRUSTED", "IMU_ASSISTED_UNTRUSTED"
+            }
             for source in resolved.values()
         ))
         joint_has_pose = all(
@@ -849,6 +905,22 @@ def write_joint_pose_csv(
         "untrusted_long_gap_frames": untrusted_joint_frames,
         "untrusted_long_gap_side_frames": untrusted_side_frames,
         "held_untrusted_side_frames": held_untrusted_side_frames,
+        "imu_assistance": {
+            **({} if imu_audit is None else imu_audit),
+            "assisted_side_frames": imu_assisted_side_frames,
+            "assisted_frames": sum(imu_assisted_side_frames.values()),
+            "visual_long_gap_fallback_side_frames": (
+                visual_long_gap_fallback_side_frames
+            ),
+            "visual_long_gap_fallback_frames": sum(
+                visual_long_gap_fallback_side_frames.values()
+            ),
+            "bridge_maximum_sample_gap_s": imu_bridge_maximum_sample_gap_s,
+            "bridge_maximum_endpoint_closure_deg": (
+                imu_bridge_maximum_endpoint_closure_deg
+            ),
+            "fallback_reasons": imu_fallback_reasons,
+        },
         "world_frame": "session_grid_A",
         "map_id": map_id,
     }
