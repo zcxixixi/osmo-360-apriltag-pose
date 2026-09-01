@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import errno
 import os
 import re
+import stat
 import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -57,8 +59,7 @@ def load_platform_write_token(token_file: Path | None = None) -> str:
                 "--write-token-file cannot be combined with OSMO_PLATFORM_WRITE_TOKEN "
                 "or OSMO_PLATFORM_WRITE_TOKEN_FILE"
             )
-        path = token_file.expanduser().resolve(strict=True)
-        token = _read_private_token_file(path)
+        token = _read_private_token_file(token_file.expanduser())
     elif inline:
         if configured_file:
             raise RuntimeError(
@@ -78,7 +79,7 @@ def load_platform_write_token(token_file: Path | None = None) -> str:
                 "OSMO_PLATFORM_WRITE_TOKEN_FILE or create "
                 f"{DEFAULT_WRITE_TOKEN_FILE} with mode 0600"
             )
-        token = _read_private_token_file(path.resolve(strict=True))
+        token = _read_private_token_file(path)
     if not TOKEN_PATTERN.fullmatch(token):
         raise RuntimeError(
             "platform write token must contain at least 256 bits of random "
@@ -94,8 +95,56 @@ def platform_authorization_headers(
 
 
 def _read_private_token_file(path: Path) -> str:
-    if os.name == "posix" and path.stat().st_mode & 0o077:
+    expanded = path.expanduser()
+    if os.name != "posix":
+        resolved = expanded.resolve(strict=True)
+        if not resolved.is_file():
+            raise RuntimeError(
+                f"platform write-token path must be a regular file: {resolved}"
+            )
+        return resolved.read_text(encoding="utf-8").strip()
+
+    if expanded.is_symlink():
         raise RuntimeError(
-            f"platform write-token file must have mode 0600: {path}"
+            f"platform write-token file must not be a symlink: {expanded}"
         )
-    return path.read_text(encoding="utf-8").strip()
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    try:
+        descriptor = os.open(expanded, flags)
+    except OSError as error:
+        if error.errno == errno.ELOOP or expanded.is_symlink():
+            raise RuntimeError(
+                f"platform write-token file must not be a symlink: {expanded}"
+            ) from error
+        raise RuntimeError(
+            f"cannot securely open platform write-token file: {expanded}"
+        ) from error
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise RuntimeError(
+                f"platform write-token path must be a regular file: {expanded}"
+            )
+        if metadata.st_uid != os.getuid():
+            raise RuntimeError(
+                "platform write-token file must be owned by the current user: "
+                f"{expanded}"
+            )
+        if metadata.st_mode & 0o077:
+            raise RuntimeError(
+                f"platform write-token file must have mode 0600: {expanded}"
+            )
+        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+            descriptor = -1
+            value = handle.read(4097)
+        if len(value) > 4096:
+            raise RuntimeError("platform write-token file is too large")
+        return value.strip()
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)

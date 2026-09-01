@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -46,6 +47,28 @@ def test_group_readable_token_file_is_rejected(monkeypatch, tmp_path):
 
     with pytest.raises(RuntimeError, match="mode 0600"):
         load_platform_write_token(token_file)
+
+
+def test_symlinked_token_file_is_rejected(monkeypatch, tmp_path):
+    monkeypatch.delenv("OSMO_PLATFORM_WRITE_TOKEN", raising=False)
+    monkeypatch.delenv("OSMO_PLATFORM_WRITE_TOKEN_FILE", raising=False)
+    token_file = _token_file(tmp_path)
+    symlink = tmp_path / "token-link"
+    symlink.symlink_to(token_file)
+
+    with pytest.raises(RuntimeError, match="must not be a symlink"):
+        load_platform_write_token(symlink)
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="POSIX FIFO required")
+def test_fifo_token_path_is_rejected_without_blocking(monkeypatch, tmp_path):
+    monkeypatch.delenv("OSMO_PLATFORM_WRITE_TOKEN", raising=False)
+    monkeypatch.delenv("OSMO_PLATFORM_WRITE_TOKEN_FILE", raising=False)
+    fifo = tmp_path / "token-fifo"
+    os.mkfifo(fifo, mode=0o600)
+
+    with pytest.raises(RuntimeError, match="regular file"):
+        load_platform_write_token(fifo)
 
 
 def test_device_inventory_sync_sends_bearer_token(monkeypatch, tmp_path):
