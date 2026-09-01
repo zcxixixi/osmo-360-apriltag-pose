@@ -98,6 +98,10 @@ def estimate_audio_offset(left_path: Path, right_path: Path, approximate_s: floa
     }
 
 
+def trajectory_sample_stride(left_fps: float, right_fps: float) -> int:
+    return max(1, round(min(left_fps, right_fps) / 30.0))
+
+
 
 
 def cache_signature_matches(
@@ -298,6 +302,9 @@ def process_pair(root: Path, pair: dict[str, Any], scratch: Path) -> int:
             initial_pose=panel_poses[(side, "A")],
             start_common_s=0.0, end_common_s=common_duration,
         )
+    joint_sample_stride = trajectory_sample_stride(
+        float(pair["left"]["fps"]), float(pair["right"]["fps"]),
+    )
     joint = scratch / "joint"
     run([
         str(PYTHON), "-m", "tools.joint_dual_camera_pose_graph_cached",
@@ -310,7 +317,8 @@ def process_pair(root: Path, pair: dict[str, Any], scratch: Path) -> int:
         "--left-tag-id", str(pair["left"]["base_tag_id"]),
         "--right-tag-id", str(pair["right"]["base_tag_id"]),
         "--start-common-s", "0", "--end-common-s", str(common_duration),
-        "--sample-stride", "6", "--alternations", "4", "--workers", "8",
+        "--sample-stride", str(joint_sample_stride),
+        "--alternations", "4", "--workers", "8",
         "--anchored-two-pass", "--output-dir", str(joint),
     ], logs / "joint.log", gate=True)
     report = json.loads((joint / "report.json").read_text())

@@ -11,7 +11,11 @@ import pytest
 from scipy.io import wavfile
 
 from osmo360.pipeline import dataset
-from osmo360.pipeline.dataset_worker import cache_signature_matches, estimate_audio_offset
+from osmo360.pipeline.dataset_worker import (
+    cache_signature_matches,
+    estimate_audio_offset,
+    trajectory_sample_stride,
+)
 from osmo360.pipeline.instaumi_format import common_window, write_dataset_h5
 from osmo360.pipeline.manifest import ManifestError
 
@@ -94,6 +98,12 @@ def test_audio_sync_reports_right_time_from_left_offset(tmp_path: Path):
 def test_common_window_trims_the_leading_side() -> None:
     assert common_window(10.0, 12.0, 0.25) == pytest.approx((0.0, 0.25, 10.0))
     assert common_window(10.0, 12.0, -0.25) == pytest.approx((0.25, 0.0, 9.75))
+
+
+def test_trajectory_sampling_targets_thirty_hz_without_upsampling() -> None:
+    assert trajectory_sample_stride(60.0, 59.94) == 2
+    assert trajectory_sample_stride(30.0, 29.97) == 1
+    assert trajectory_sample_stride(15.0, 15.0) == 1
 
 
 def test_fisheye_cache_reuse_requires_complete_matching_signature(tmp_path: Path) -> None:
