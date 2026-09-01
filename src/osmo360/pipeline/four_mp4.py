@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .devices import load_device_pairs
-from .manifest import ManifestError, ROOT
+from .manifest import ManifestError, ROOT, confined_path, validate_path_component
 
 
 PIPELINE_REVISION = "dual-x5-four-mp4-cpu-v3"
@@ -477,7 +477,10 @@ def discover_four_mp4_dataset(dataset_root: Path) -> dict[str, Any]:
             "window_s": float(sync_config.get("window_s", 120.0)),
             "mapping": "right_time_s = left_time_s + offset_s",
         }
-    pair_id = str(config.get("pair_id") or f"pair-01-{recorded_at:%H%M%S}")
+    pair_id = validate_path_component(
+        config["pair_id"] if "pair_id" in config else f"pair-01-{recorded_at:%H%M%S}",
+        field="pair_id",
+    )
     return {
         "schema_version": LOCK_SCHEMA,
         "pipeline_revision": PIPELINE_REVISION,
@@ -504,14 +507,21 @@ def discover_four_mp4_dataset(dataset_root: Path) -> dict[str, Any]:
 def process_four_mp4_dataset(dataset_root: Path, *, dry_run: bool = False) -> dict[str, Any]:
     root = dataset_root.resolve(strict=True)
     lock = discover_four_mp4_dataset(root)
-    final_root = root / "final" / PIPELINE_REVISION
+    final_root = confined_path(root, "final", PIPELINE_REVISION, field="final output root")
     lock_path = final_root / "manifest.lock.json"
     _atomic_json(lock_path, lock)
     cache_base = Path(
         os.environ.get("OSMO_PIPELINE_CACHE", str(root / ".osmo-cache"))
     ).expanduser().resolve()
     pair = lock["pairs"][0]
-    cache_root = cache_base / root.name / PIPELINE_REVISION / pair["pair_id"]
+    dataset_component = validate_path_component(root.name, field="dataset directory name")
+    cache_root = confined_path(
+        cache_base,
+        dataset_component,
+        PIPELINE_REVISION,
+        pair["pair_id"],
+        field="pipeline cache root",
+    )
     command = [
         str(ROOT / ".venv/bin/python"),
         "-m",
@@ -537,7 +547,9 @@ def process_four_mp4_dataset(dataset_root: Path, *, dry_run: bool = False) -> di
         "stdout": process.stdout,
         "stderr": process.stderr,
     }
-    pair_status_path = final_root / "pairs" / pair["pair_id"] / "status.json"
+    pair_status_path = confined_path(
+        final_root, "pairs", pair["pair_id"], "status.json", field="pair status path"
+    )
     pair_status = (
         json.loads(pair_status_path.read_text(encoding="utf-8"))
         if pair_status_path.is_file()

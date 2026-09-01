@@ -8,7 +8,6 @@ import hashlib
 import json
 import math
 import os
-import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,7 +15,13 @@ from typing import Any
 
 from .dataset_worker import estimate_audio_offset
 from .four_mp4 import PIPELINE_REVISION, chunk_ranges
-from .manifest import ManifestError, ROOT
+from .manifest import (
+    ManifestError,
+    ROOT,
+    confined_path,
+    publish_directory,
+    validate_path_component,
+)
 
 
 PYTHON = ROOT / ".venv/bin/python"
@@ -656,6 +661,7 @@ def run_tracking(
 
 
 def process_pair(root: Path, pair: dict[str, Any], cache_root: Path, budget: dict[str, Any]) -> int:
+    pair_id = validate_path_component(pair.get("pair_id"), field="manifest pair_id")
     cache_root.mkdir(parents=True, exist_ok=True)
     logs = cache_root / "logs"
     status = cache_root / "status.json"
@@ -678,7 +684,14 @@ def process_pair(root: Path, pair: dict[str, Any], cache_root: Path, budget: dic
         chunk_seek_keyframe_overlap_possible=True,
     )
     tracking = run_tracking(root, pair, dual, cache_root, budget, logs)
-    final = root / "final" / PIPELINE_REVISION / "pairs" / pair["pair_id"]
+    final = confined_path(
+        root,
+        "final",
+        PIPELINE_REVISION,
+        "pairs",
+        pair_id,
+        field="pair output directory",
+    )
     final.mkdir(parents=True, exist_ok=True)
     atomic_json(
         final / "cache-index.json",
@@ -700,10 +713,8 @@ def process_pair(root: Path, pair: dict[str, Any], cache_root: Path, budget: dic
         )
         overall = "OBSERVATIONS_READY"
     else:
-        destination = final / "tracking"
-        if destination.exists():
-            shutil.rmtree(destination)
-        shutil.copytree(tracking, destination)
+        destination = confined_path(final, "tracking", field="tracking output directory")
+        publish_directory(tracking, destination, allowed_root=root)
         report = json.loads((tracking / "report.json").read_text(encoding="utf-8"))
         tracking_passed = report.get("status") in {"HOLDOUT_PASS", "SELF_CALIBRATED_PASS"}
         status_update(
@@ -727,13 +738,28 @@ def process_pair(root: Path, pair: dict[str, Any], cache_root: Path, budget: dic
 def main() -> int:
     args = parse_args()
     root = args.dataset_root.resolve(strict=True)
-    lock_path = root / "final" / PIPELINE_REVISION / "manifest.lock.json"
+    requested_pair_id = validate_path_component(args.pair_id, field="--pair-id")
+    lock_path = confined_path(
+        root, "final", PIPELINE_REVISION, "manifest.lock.json", field="manifest lock"
+    )
     if not lock_path.is_file():
         raise ManifestError(f"internal manifest lock is missing: {lock_path}")
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
-    pair = next((value for value in lock["pairs"] if value["pair_id"] == args.pair_id), None)
+    if lock.get("pipeline_revision") != PIPELINE_REVISION:
+        raise ManifestError("internal manifest lock uses a different pipeline revision")
+    pairs = lock.get("pairs")
+    if not isinstance(pairs, list):
+        raise ManifestError("internal manifest lock pairs must be a list")
+    for value in pairs:
+        if not isinstance(value, dict):
+            raise ManifestError("internal manifest lock pair must be an object")
+        validate_path_component(value.get("pair_id"), field="manifest pair_id")
+    pair = next(
+        (value for value in pairs if value["pair_id"] == requested_pair_id),
+        None,
+    )
     if pair is None:
-        raise ManifestError(f"pair not found in internal manifest: {args.pair_id}")
+        raise ManifestError(f"pair not found in internal manifest: {requested_pair_id}")
     return process_pair(root, pair, args.cache_root.resolve(), lock["resource_budget"])
 
 

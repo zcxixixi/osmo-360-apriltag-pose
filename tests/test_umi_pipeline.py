@@ -11,7 +11,14 @@ from osmo360.pipeline.devices import (
     register_devices,
 )
 from osmo360.pipeline.device_ui import PAGE
-from osmo360.pipeline.manifest import ManifestError, load_manifest, sha256
+from osmo360.pipeline.manifest import (
+    ManifestError,
+    confined_path,
+    load_manifest,
+    publish_directory,
+    sha256,
+    validate_path_component,
+)
 from osmo360.pipeline.process import process_capture
 from osmo360.pipeline.review import build_review_bundle
 
@@ -127,6 +134,48 @@ def test_manifest_rejects_hash_drift(tmp_path):
     path.write_text(json.dumps(data))
     with pytest.raises(ManifestError, match="hash mismatch"):
         load_manifest(path)
+
+
+@pytest.mark.parametrize("value", ["../escape", "a/b", " leading", "", None])
+def test_manifest_rejects_unsafe_path_components(value):
+    with pytest.raises(ManifestError):
+        validate_path_component(value, field="pair_id")
+
+
+def test_confined_path_rejects_parent_traversal(tmp_path):
+    with pytest.raises(ManifestError, match="stay inside"):
+        confined_path(tmp_path, "..", "outside", field="output")
+
+
+def test_publish_directory_replaces_only_after_staging(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "result.txt").write_text("new")
+    destination = tmp_path / "final" / "tracking"
+    destination.mkdir(parents=True)
+    (destination / "result.txt").write_text("old")
+
+    publish_directory(source, destination, allowed_root=tmp_path)
+
+    assert (destination / "result.txt").read_text() == "new"
+    assert not list(destination.parent.glob(".tracking.publish-*"))
+    assert not list(destination.parent.glob(".tracking.backup-*"))
+
+
+def test_publish_directory_rejects_symlink_escape(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "result.txt").write_text("new")
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    final = tmp_path / "final"
+    final.mkdir()
+    destination = final / "tracking"
+    destination.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ManifestError, match="symlink"):
+        publish_directory(source, destination, allowed_root=tmp_path)
+    assert not (outside / "result.txt").exists()
 
 
 def test_manifest_optional_relative_force_revision_reaches_processor(tmp_path):

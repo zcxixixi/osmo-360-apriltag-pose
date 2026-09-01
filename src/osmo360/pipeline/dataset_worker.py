@@ -15,7 +15,13 @@ from scipy.signal import correlate, correlation_lags
 from scipy.spatial.transform import Rotation
 
 from .dataset import FFPROBE, PIPELINE_REVISION
-from .manifest import ManifestError, ROOT
+from .manifest import (
+    ManifestError,
+    ROOT,
+    confined_path,
+    publish_directory,
+    validate_path_component,
+)
 
 PYTHON = ROOT / ".venv/bin/python"
 FFMPEG = FFPROBE.with_name("ffmpeg")
@@ -171,6 +177,7 @@ def export_tcp(camera_csv: Path, own_tag: dict[str, Any], output: Path) -> None:
 
 
 def process_pair(root: Path, pair: dict[str, Any], scratch: Path) -> int:
+    pair_id = validate_path_component(pair.get("pair_id"), field="manifest pair_id")
     scratch.mkdir(parents=True, exist_ok=True)
     logs = scratch / "logs"; status = scratch / "status.json"
     left_source = root / pair["left"]["path"]; right_source = root / pair["right"]["path"]
@@ -265,13 +272,19 @@ def process_pair(root: Path, pair: dict[str, Any], scratch: Path) -> int:
     passed = report["status"] == "HOLDOUT_PASS"
     status_update(status, "joint_closure", "PASS" if passed else "FAIL")
 
-    final = root / "final" / PIPELINE_REVISION / "pairs" / pair["pair_id"]
+    final = confined_path(
+        root,
+        "final",
+        PIPELINE_REVISION,
+        "pairs",
+        pair_id,
+        field="pair output directory",
+    )
     final.mkdir(parents=True, exist_ok=True)
     for name, source in (("calibration", calibration), ("trajectories", trajectories),
                          ("gates", joint)):
-        destination = final / name
-        if destination.exists(): shutil.rmtree(destination)
-        shutil.copytree(source, destination)
+        destination = confined_path(final, name, field=f"{name} output directory")
+        publish_directory(source, destination, allowed_root=root)
     shutil.copy2(status, final / "status.json")
     shutil.copy2(audio / "sync.json", final / "sync.json")
     return 0 if passed else 2
@@ -279,13 +292,28 @@ def process_pair(root: Path, pair: dict[str, Any], scratch: Path) -> int:
 
 def main() -> int:
     args = parse_args(); root = args.dataset_root.resolve(strict=True)
-    lock_path = root / "final" / PIPELINE_REVISION / "manifest.lock.json"
+    requested_pair_id = validate_path_component(args.pair_id, field="--pair-id")
+    lock_path = confined_path(
+        root, "final", PIPELINE_REVISION, "manifest.lock.json", field="manifest lock"
+    )
     if not lock_path.is_file():
         raise ManifestError(f"internal manifest lock is missing: {lock_path}")
     lock = json.loads(lock_path.read_text())
-    pair = next((item for item in lock["pairs"] if item["pair_id"] == args.pair_id), None)
+    if lock.get("pipeline_revision") != PIPELINE_REVISION:
+        raise ManifestError("internal manifest lock uses a different pipeline revision")
+    pairs = lock.get("pairs")
+    if not isinstance(pairs, list):
+        raise ManifestError("internal manifest lock pairs must be a list")
+    for item in pairs:
+        if not isinstance(item, dict):
+            raise ManifestError("internal manifest lock pair must be an object")
+        validate_path_component(item.get("pair_id"), field="manifest pair_id")
+    pair = next(
+        (item for item in pairs if item["pair_id"] == requested_pair_id),
+        None,
+    )
     if pair is None:
-        raise ManifestError(f"pair not found in internal manifest: {args.pair_id}")
+        raise ManifestError(f"pair not found in internal manifest: {requested_pair_id}")
     return process_pair(root, pair, args.scratch_root.resolve())
 
 
