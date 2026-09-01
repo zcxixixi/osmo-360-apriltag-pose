@@ -4,7 +4,9 @@ import argparse
 import csv
 import json
 import math
+import os
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -16,8 +18,8 @@ from scipy.spatial.transform import Rotation
 
 from .dataset import FFPROBE, PIPELINE_REVISION
 from .manifest import (
-    ManifestError,
     ROOT,
+    ManifestError,
     confined_path,
     publish_directory,
     validate_path_component,
@@ -178,7 +180,13 @@ def export_tcp(camera_csv: Path, own_tag: dict[str, Any], output: Path) -> None:
 
 def process_pair(root: Path, pair: dict[str, Any], scratch: Path) -> int:
     pair_id = validate_path_component(pair.get("pair_id"), field="manifest pair_id")
-    scratch.mkdir(parents=True, exist_ok=True)
+    if not scratch.is_absolute() or ".." in scratch.parts or scratch.is_symlink():
+        raise ManifestError(f"scratch root must be an absolute non-symlink path: {scratch}")
+    scratch.mkdir(mode=0o700, parents=True, exist_ok=True)
+    metadata = scratch.lstat()
+    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
+        raise ManifestError(f"scratch root must be a real directory owned by this user: {scratch}")
+    scratch.chmod(0o700)
     logs = scratch / "logs"; status = scratch / "status.json"
     left_source = root / pair["left"]["path"]; right_source = root / pair["right"]["path"]
     status_update(status, "identity", "PASS", left=pair["left"], right=pair["right"])
@@ -314,7 +322,7 @@ def main() -> int:
     )
     if pair is None:
         raise ManifestError(f"pair not found in internal manifest: {requested_pair_id}")
-    return process_pair(root, pair, args.scratch_root.resolve())
+    return process_pair(root, pair, args.scratch_root.expanduser())
 
 
 if __name__ == "__main__":

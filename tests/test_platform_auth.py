@@ -10,9 +10,9 @@ from osmo360.pipeline import devices
 from osmo360.pipeline.platform_auth import (
     load_platform_write_token,
     platform_authorization_headers,
+    validate_http_url,
 )
 from tools import upload_visualization_bundle as uploader
-
 
 TOKEN = "b" * 64
 
@@ -125,3 +125,46 @@ def test_upload_file_sends_bearer_token(monkeypatch, tmp_path):
     assert result == {"bytes": 2}
     assert captured["headers"]["Authorization"] == f"Bearer {TOKEN}"
     assert captured["body"] == b"{}"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///etc/passwd",
+        "ftp://platform.invalid/file",
+        "http://user:password@platform.invalid/api",
+        "http://platform.invalid/api#fragment",
+        "http://platform.invalid/api\\redirect",
+        "http://platform.invalid:invalid/api",
+    ],
+)
+def test_http_client_rejects_ambiguous_or_non_http_urls(url):
+    with pytest.raises(ValueError):
+        validate_http_url(url)
+
+
+def test_device_inventory_sync_rejects_non_http_server_before_reading_token(tmp_path):
+    inventory = tmp_path / "inventory.json"
+    inventory.write_text(
+        json.dumps(
+            {
+                "schema_version": "x5-device-inventory/1.0",
+                "sdk_revision_id": "sdk-test",
+                "devices": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(devices.ManifestError, match="invalid visualization server URL"):
+        devices.sync_inventory(inventory, "file:///tmp/platform")
+
+
+def test_visualization_uploader_rejects_non_http_urls(tmp_path):
+    source = tmp_path / "timeline.json"
+    source.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="scheme must be http or https"):
+        uploader.request_json("file:///etc/passwd")
+    with pytest.raises(ValueError, match="scheme must be http or https"):
+        uploader.put_file("file:///tmp/output", source, "application/json")

@@ -12,11 +12,12 @@ import tarfile
 import tempfile
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from tools._root import ROOT
 
-
 REVISION = ROOT / "config/runtime_revisions/node_linux_x64_24_20_0.json"
+MAX_NODE_ARCHIVE_BYTES = 128 * 1024 * 1024
 
 
 def _sha256(path: Path) -> str:
@@ -37,9 +38,34 @@ def _load_revision(path: Path) -> dict:
 
 
 def _download(url: str, output: Path) -> None:
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "nodejs.org"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+    ):
+        raise ValueError("Node archive URL must be an HTTPS URL on nodejs.org")
+    try:
+        _ = parsed.port
+    except ValueError as error:
+        raise ValueError("Node archive URL contains an invalid port") from error
     request = urllib.request.Request(url, headers={"User-Agent": "osmo360-node-installer/1"})
-    with urllib.request.urlopen(request, timeout=30) as response, output.open("wb") as handle:
+    # The source is pinned to nodejs.org above and verified by SHA-256 after download.
+    with urllib.request.urlopen(request, timeout=30) as response, output.open("wb") as handle:  # nosec B310
+        final_url = response.geturl()
+        final = urlsplit(final_url)
+        if final.scheme != "https" or final.hostname != "nodejs.org":
+            raise ValueError("Node archive redirect left https://nodejs.org")
+        length = response.headers.get("Content-Length")
+        if length is not None and int(length) > MAX_NODE_ARCHIVE_BYTES:
+            raise ValueError("Node archive exceeds the download size limit")
+        downloaded = 0
         while chunk := response.read(4 * 1024 * 1024):
+            downloaded += len(chunk)
+            if downloaded > MAX_NODE_ARCHIVE_BYTES:
+                raise ValueError("Node archive exceeds the download size limit")
             handle.write(chunk)
 
 

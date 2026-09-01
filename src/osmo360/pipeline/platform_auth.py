@@ -3,10 +3,34 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-
+from urllib.parse import urlsplit
 
 DEFAULT_WRITE_TOKEN_FILE = Path.home() / ".config/osmo360/platform-write-token"
 TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9._~-]{43,256}$")
+
+
+def validate_http_url(url: str, *, expected_host: str | None = None) -> str:
+    """Reject ambiguous or non-HTTP URLs before handing them to urllib."""
+    if not url or any(character.isspace() or ord(character) < 32 for character in url):
+        raise ValueError("HTTP URL must not be empty or contain whitespace/control bytes")
+    if "\\" in url:
+        raise ValueError("HTTP URL must not contain backslashes")
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("URL scheme must be http or https")
+    if not parsed.hostname:
+        raise ValueError("HTTP URL must include a host")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("credentials are not allowed in HTTP URLs")
+    if parsed.fragment:
+        raise ValueError("fragments are not allowed in HTTP URLs")
+    try:
+        _ = parsed.port
+    except ValueError as error:
+        raise ValueError("HTTP URL contains an invalid port") from error
+    if expected_host is not None and parsed.hostname.lower() != expected_host.lower():
+        raise ValueError(f"HTTP URL host must be {expected_host}")
+    return url
 
 
 def load_platform_write_token(token_file: Path | None = None) -> str:

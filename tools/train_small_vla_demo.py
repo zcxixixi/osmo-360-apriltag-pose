@@ -32,7 +32,6 @@ from tools.train_zarr_overfit_smoke import (
     transition_indices,
 )
 
-
 FONT = Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")
 
 
@@ -239,15 +238,15 @@ def main() -> int:
     checkpoint_path = args.output_dir / "small_vla_policy.pt"
     checkpoint = {
         "model": model.state_dict(),
-        "state_mean": state_mean,
-        "state_std": state_std,
-        "action_mean": action_mean,
-        "action_std": action_std,
+        "state_mean": torch.from_numpy(state_mean),
+        "state_std": torch.from_numpy(state_std),
+        "action_mean": torch.from_numpy(action_mean),
+        "action_std": torch.from_numpy(action_std),
         "instruction": instruction,
         "parameter_count": parameter_count,
     }
     torch.save(checkpoint, checkpoint_path)
-    restored_checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    restored_checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
     restored = SmallVlaPolicy(current.shape[1], actions.shape[1]).to(device)
     restored.load_state_dict(restored_checkpoint["model"], strict=True)
     restored.eval()

@@ -2,17 +2,18 @@ import hashlib
 import io
 import json
 import tarfile
+import urllib.request
 from pathlib import Path
 
 import pytest
 
 from osmo360.visualization import node_runtime
 from osmo360.visualization.node_runtime import (
-    NodeRuntimeError,
     PINNED_RUNTIME_DIR,
+    NodeRuntimeError,
     resolve_node_binary,
 )
-from tools.install_node_runtime import install_node_runtime
+from tools.install_node_runtime import _download, install_node_runtime
 
 
 def _fake_node(path: Path, version: str) -> Path:
@@ -105,3 +106,23 @@ def test_installer_rejects_archive_path_traversal(tmp_path: Path) -> None:
         )
 
     assert not (tmp_path / "escaped").exists()
+
+
+def test_node_installer_rejects_non_official_download_hosts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    called = False
+
+    def fail_if_called(*args, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("network must not be reached")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fail_if_called)
+
+    with pytest.raises(ValueError, match="HTTPS URL on nodejs.org"):
+        _download("file:///tmp/node.tar.xz", tmp_path / "node.tar.xz")
+    with pytest.raises(ValueError, match="HTTPS URL on nodejs.org"):
+        _download("https://example.invalid/node.tar.xz", tmp_path / "node.tar.xz")
+
+    assert called is False

@@ -13,9 +13,11 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
 
-from osmo360.pipeline.platform_auth import platform_authorization_headers
+from osmo360.pipeline.platform_auth import (
+    platform_authorization_headers,
+    validate_http_url,
+)
 from tools._root import ROOT
-
 
 DEFAULT_SERVER = os.environ.get("OSMO_VISUALIZATION_URL", "http://192.168.111.62:7865")
 DEFAULT_SCENE = ROOT / "dual_gripper_3d/single_gripper_scene.html"
@@ -27,12 +29,14 @@ def request_json(
     payload: dict | None = None,
     authorization: dict[str, str] | None = None,
 ) -> dict:
+    validate_http_url(url)
     body = json.dumps(payload).encode() if payload is not None else None
     headers = {"Content-Type": "application/json"} if body is not None else {}
     headers.update(authorization or {})
     request = urllib.request.Request(url, data=body, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        # validate_http_url limits urllib to unambiguous HTTP(S) targets.
+        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
             return json.load(response)
     except urllib.error.HTTPError as error:
         try:
@@ -50,6 +54,7 @@ def put_file(
     content_type: str,
     authorization: dict[str, str] | None = None,
 ) -> dict:
+    validate_http_url(url)
     parsed = urlparse(url)
     connection_type = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
     connection = connection_type(parsed.hostname, parsed.port, timeout=120)

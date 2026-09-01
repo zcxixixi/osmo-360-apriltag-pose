@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .devices import load_device_pairs
-from .manifest import ManifestError, ROOT
+from .manifest import ROOT, ManifestError
 
 FFPROBE = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffprobe"
 SERIAL_PATTERN = re.compile(rb"IAHE[A-Z0-9]{10}")
@@ -177,6 +177,22 @@ def _worker_command(root: Path, pair_id: str, scratch: Path) -> list[str]:
     ]
 
 
+def _scratch_base_for_node(node: str) -> Path:
+    configured = os.environ.get("OSMO_PIPELINE_SCRATCH", "").strip()
+    if configured:
+        scratch = Path(configured).expanduser()
+    elif node == "local":
+        scratch = ROOT / "work/pipeline-scratch"
+    else:
+        remote_repo = Path(os.environ.get(
+            "OSMO_REMOTE_REPO", "/home/current/osmo-360-apriltag-pose"
+        ))
+        scratch = remote_repo / "work/pipeline-scratch"
+    if not scratch.is_absolute() or ".." in scratch.parts:
+        raise ManifestError(f"pipeline scratch root must be an absolute safe path: {scratch}")
+    return scratch
+
+
 def _run_assigned(node: str, commands: list[list[str]]) -> list[dict[str, Any]]:
     results = []
     remote_repo = os.environ.get(
@@ -213,10 +229,10 @@ def process_dataset(dataset_root: Path, *, dry_run: bool = False) -> dict[str, A
     lock_path = final_root / "manifest.lock.json"
     lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     nodes = _nodes()
-    scratch_base = Path(os.environ.get("OSMO_PIPELINE_SCRATCH", "/tmp/osmo-pipeline"))
     assignments: dict[str, list[list[str]]] = {node: [] for node in nodes}
     for index, pair in enumerate(lock["pairs"]):
         node = nodes[index % len(nodes)]
+        scratch_base = _scratch_base_for_node(node)
         scratch = scratch_base / root.name / PIPELINE_REVISION / pair["pair_id"]
         assignments[node].append(_worker_command(root, pair["pair_id"], scratch))
     if dry_run:

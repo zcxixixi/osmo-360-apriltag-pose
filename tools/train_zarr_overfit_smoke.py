@@ -14,15 +14,14 @@ import json
 import random
 from pathlib import Path
 
+import cv2
 import matplotlib.pyplot as plt
 import numpy as np
-import cv2
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import zarr
 from scipy.spatial.transform import Rotation
-
 
 STATE_KEYS = (
     "robot0_eef_pos", "robot0_eef_rot_axis_angle", "robot0_gripper_width",
@@ -225,9 +224,11 @@ def main() -> None:
         "metrics": metrics,
     }
     checkpoint_path = args.output_dir / "overfit_policy.pt"
-    torch.save({"model": model.state_dict(), "state_mean": state_mean, "state_std": state_std,
-                "target_mean": target_mean, "target_std": target_std}, checkpoint_path)
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    torch.save({"model": model.state_dict(), "state_mean": torch.from_numpy(state_mean),
+                "state_std": torch.from_numpy(state_std),
+                "target_mean": torch.from_numpy(target_mean),
+                "target_std": torch.from_numpy(target_std)}, checkpoint_path)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
     restored = DualCameraPolicy(states.shape[1]).to(device)
     restored.load_state_dict(checkpoint["model"], strict=True)
     restored.eval()
