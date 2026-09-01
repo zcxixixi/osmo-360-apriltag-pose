@@ -22,14 +22,15 @@
 
 | 项目 | 当前证据 |
 |---|---|
-| 流水线 | `dual-x5-four-mp4-cpu-v5`，30 Hz，手部相机 FLU，`back = +X`，每帧数值位姿与可信度解耦 |
+| 流水线 | `dual-x5-four-mp4-cpu-v6`，30 Hz，手部相机 FLU，`back = +X`，每帧数值位姿与可信度解耦，项目 FFmpeg 9.0.1 哈希锁定 |
 | 本地算法提交 | `72203d6` (`fix: retain a pose on every joint frame`) |
 | 服务器等价算法提交 | `b9f7803` |
-| 服务器无缓存耗时 | 6.49 s 处理 10 s 四路视频；`time -v` 平均 CPU 1164%，峰值 RSS 311,272 KiB |
+| 运行时提交 | 本地 `0e0a2d4`，服务器等价 `45802c5` |
+| 服务器无缓存耗时 | 无竞争 v5 基线 6.49 s；v6 在两条独立 ORB-SLAM 各占约 335% CPU、load 18 时为 12.21 s，峰值 RSS 310,236 KiB |
 | 输出 | 300/300 帧具备双侧数值位姿；268 帧联合可信，266 帧双侧实测，`SELF_CALIBRATED_PASS` |
-| 回归测试 | 本地和服务器均为 265 passed，7 skipped |
-| 一致性 | v5 全部 300 帧数值位姿与撤回前 v3 逐项最大差值为 0；只额外保留长间隔不可信标记 |
-| 最新已发视频 | v5 `processed_joint_trajectory_30hz_front_above_v5.mp4`，SHA-256 `fef54acf...c9a7f7` |
+| 回归测试 | 本地和服务器均为 269 passed，7 skipped；Bandit 0 high/0 medium |
+| 一致性 | v6/v5 `joint_trajectory.csv` SHA-256 同为 `52c3e192...b82ed`；v6/v5 审阅视频 299 帧解码像素逐帧相同 |
+| 最新已发视频 | v6 `processed_joint_trajectory_30hz_front_above_v6.mp4`，固定 `flu-front-above`，SHA-256 `5fca5373...f79b0e` |
 
 ## 问题清单
 
@@ -47,7 +48,7 @@
 | DEP-001 | 中 | IN_PROGRESS | 已完成锁定 Python 与 Node 依赖审计：`pip-audit` 基础 32 项、全 extras 49 项均为 0 已知漏洞；Node 漏洞链已由 DEP-002 修复。主机系统与 FFmpeg 风险分别转入 DEP-003/004。 | 保持锁文件扫描；完成 DEP-003/004 的授权、替换和真实数据回归后关闭总项。 |
 | DEP-002 | 高 | RESOLVED | `puppeteer-core 24.16.0` 经 `@puppeteer/browsers` 引入受 GHSA-jmr9-qjv8-65gv 影响的 `extract-zip 2.0.1`；本地 Node 18、服务器 Node 20 均已停止安全维护。生产 `:7865` 仅安装 Three.js，漏洞不可达，但离线渲染树可达依赖。 | 已固定官方 Node 24.20.0 归档/二进制 SHA-256，所有 Python 渲染入口拒绝 Node <22.12；Puppeteer 25.9.0，依赖 80→26，`npm audit` 3 high→0。提交本地 `8e1fab9`、服务器 `fa14ff0`；生产服务已运行在项目 Node 24。 |
 | DEP-003 | 高 | OPEN | Ubuntu 22.04 主机有 28 个可直接安装的 standard-security 更新；另有 79 个 ESM Apps 安全更新在未 attach Ubuntu Pro 时不可用。模拟升级共 38 个包，涉及 coreutils、util-linux、libssh、bzip2、bind9、PIL 等。 | 系统级升级可能影响其他项目，需用户授权维护窗口；先备份/列出服务，升级后重启受影响服务并运行整套服务器回归。 |
-| DEP-004 | 高 | OPEN | 项目名为 `ffmpeg-master-latest-linux64-gpl` 的二进制实际与系统相同，均为 Ubuntu FFmpeg 4.4.2；Ubuntu 报告 FFmpeg/库的 `+esm14` 安全更新仅 ESM 可用。当前流水线确实调用该旧二进制，目录名也会误导运维。 | 选择受维护、校验哈希的项目级 FFmpeg；建立逐帧像素/Tag 检测/轨迹回归，用新输出版本无缓存重跑 `instaumi_000001` 并按固定 `flu-front-above` 视角出片。 |
+| DEP-004 | 高 | RESOLVED | 旧兼容目录名为 `ffmpeg-master-latest-linux64-gpl`，实际是 Ubuntu FFmpeg 4.4.2。主像素解码虽已由 OpenCV 内置 FFmpeg 8.1.2 完成，外部旧版仍参与 MP4 探测/音频/审阅编码。 | 已从官方签名源构建项目 FFmpeg 9.0.1，PGP 指纹 `FCF9...58D8`；源归档、离线归档和二进制 SHA 均锁定，关闭网络协议，拒绝旧版/哈希篡改/可写文件/符号链接。四路共 2396 帧像素、v5/v6 审阅 299 帧、轨迹 SHA 均完全一致；服务器 v6 无缓存通过并固定视角出片。 |
 | SEC-005 | 高 | OPEN | 独立 `/home/ps/rk3576/offline_flu_viewer` 以系统 Python 3.10 在 `0.0.0.0:8000` 从登录 session 连续运行 4 天，无认证接口可启动/取消处理、修改处理配置/标记，并对选定数据集递归删除 `slam`/`mocap_output` 等输出；请求体也没有大小上限。进程 RSS 约 463 MiB。 | 该目录不属于当前仓库，不能擅自改业务。需用户确认用途后立即停止旧 session，或改为受管 unit、loopback/反代认证、写请求体上限和 CSRF 防护；破坏性接口需二次确认/能力令牌。 |
 | SEC-006 | 高 | IN_PROGRESS | 同项目旧 checkout 的审核 UI 在 `0.0.0.0:7869`，无认证 POST 可写审核、分段和人工时间对齐；公开 GET 返回 32 条记录、绝对源路径及审核字段。原 user unit 无任何沙箱，空闲 63 线程。 | unit 已先做无接口变化的硬化：只写状态目录、`NoNewPrivileges`/`PrivateTmp`/只读 home/system、线程池固定 1；状态目录/SQLite `0700/0600`。仍需给网页写接口增加认证与 CSRF，按需收窄公开 GET。 |
 | SEC-007 | 低 | OPEN | `:7864` 是 4 天前从登录 session 启动的旧静态审核页面，只提供 GET，但绑定全 LAN、公开时间线/视频/网格，且仍运行 EOL 的系统 Node 20。 | 确认是否仍被使用；若已由 `:7865` 取代则停止，若保留则迁移受管 unit、项目 Node 24，并按数据敏感度限制访问。 |
@@ -56,7 +57,7 @@
 | SEC-010 | 中 | OPEN | `:7865` 仍允许任意 LAN 客户端列出 50 个可视化项目，并直接读取每个 ready 项目的 scene、完整轨迹 timeline 和相机视频。这是当前“点击链接直接审阅”的既有设计，但视频/轨迹可能属于敏感采集数据，不能因为写接口已认证就视为完整访问控制。 | 需要明确产品策略：若只供王浩/授权人员查看，增加独立读会话或短期签名 capability，避免令牌进入 URL/日志；若确认局域网公开是需求，则记录数据分级、网络边界和接受风险。未经选择不擅自让现有 50 个审阅链接失效。 |
 | SEC-011 | 高 | RESOLVED | CPython `urllib` 的默认 302 处理会把原请求的 `Authorization` 原样转发到跨域 Location；本地双 HTTP 服务已复现 Bearer 到达第二个域。设备同步和可视化 JSON API 使用默认 `urlopen`，上传客户端还信任创建响应中的绝对 `links`，错误配置或被攻破的平台可窃取写令牌。 | 所有带认证的 urllib API 请求使用拒绝重定向 opener，302 直接报错且第二服务未收到请求；上传 URL 不再读取响应中的绝对 links，而是校验 `[a-z0-9-]{1,64}` 项目 ID 后从用户配置的 server 本地构造四个端点。新增真实双服务泄露回归、恶意 links 和路径 ID 测试；本地 `5ae4c84`、服务器 `2c7f2d7`。 |
 | EFF-001 | 高 | RESOLVED | 压缩 NPZ 的每个数组被重复打开和解压。缓存读取改为一次加载所有成员。 | 服务器无缓存耗时 14.26 s → 6.10 s；输出逐字节一致；提交 `293df8b`。 |
-| EFF-002 | 中 | DEFERRED | FFmpeg 管道软件解码约 2.04 s，OpenCV 包装约 2.70 s；VAAPI 四路约 7.43 s。FFmpeg 像素输出与当前路径不完全一致，且缓存修复后解码已非主要瓶颈。 | 若后续解码占比重新升高，建立像素/检测回归门后再切换；当前不以小收益换算法输入变化。 |
+| EFF-002 | 中 | DEFERRED | FFmpeg 管道软件解码约 2.04 s，OpenCV 包装约 2.70 s；VAAPI 四路约 7.43 s。主路径 OpenCV 4.14 已内置 FFmpeg 8.1.2。外部 FFprobe 9.0.1 的 800 次探测由 23.44 s 降至 4.34 s，但每任务仅探测四个文件，端到端收益很小。 | 若后续解码占比重新升高，建立完整像素/Tag/轨迹回归门后再调整主 `cv2.VideoCapture`；当前继续使用已验证的软件解码和线程上限。 |
 | EFF-003 | 中 | RESOLVED | 观察缓存已有 4×4 预算，但备用联合 pose-graph 的 8 个 Python worker 未限制 BLAS/OpenMP，存在 8×32 嵌套线程放大；不同任务之间也没有主机级并发门。 | 每任务最多 16 逻辑线程，小主机自动降配；OpenCV/FFmpeg/BLAS/OpenMP/BLIS/vecLib 全部继承限额，pose-graph 每 worker 1 个数学线程。默认同用户整机 1 个任务槽，可在总量不超过逻辑核时显式增加。双任务并发实测串行、无发布竞态；轨迹 SHA 不变。提交本地 `5dad620`/`e2400fb`，服务器 `5d550f6`/`449fde0`。 |
 | EFF-004 | 低 | RESOLVED | `:7869` 审核服务主要待机，却因 OpenCV/数学库默认线程池保持 63 个线程、RSS 103,004 KiB。 | systemd 环境将所有原生线程池限制为 1；重启后接口仍为 200、32 条记录可读，线程 63→1、RSS 103,004→68,804 KiB，systemd `MemoryCurrent` 约 62.2→33.8 MiB。 |
 | EFF-005 | 低 | OPEN | `:7869 /api/items` 会在读取 32 条记录时同步扫描/汇总数据；本轮冷探测 5 s 超时，随后稳定返回 200 但耗时 3.06 s。请求期间进程为 2 线程、RSS 80,092 KiB，`MemoryCurrent` 约 123 MiB，明显高于空闲基线；根页面仅 0.0006 s。 | 先在其可维护源码迁移后做端点分段计时、结果缓存和失效策略；不得为了提速放宽已设置的原生线程池或认证边界。与 SEC-006 一起处理。 |
@@ -163,12 +164,24 @@
 - 服务器真实 `umi devices sync` 成功；写前/写后文件 SHA 不同，因此不能宣称字节不变，且没有保留写前语义快照。写后库存为 20 台，与 CPU 仓库 JSON 语义逐项相等、规范化 SHA-256 同为 `5cc0fb49...25d30`，文件 SHA-256 同为 `8f3cf1e6...7b557`，权限 `0600`，服务 active。差异最可能来自此前序列化/字段顺序，但不把该推断当成已证明事实。
 - 本轮只改变平台安全/发布边界，不改变四 MP4 检测、位姿、坐标、时间线内容或录制渲染。v5 轨迹 SHA 仍为 `52c3e192...b82ed`，视频 SHA 仍为 `fef54acf...c9a7f7`，因此不重跑数据集、不生成或发送重复视频。
 
-## 最近一次算法改动验证
+### 2026-09-01 / Cycle 005
 
-- 改动：v5 撤销长间隔空位姿/隐藏策略，保证每帧数值位姿，同时保留独立可信度（QUAL-002）。
-- 提交：本地 `72203d6`，服务器等价 `b9f7803`。
-- 服务器输出：`/home/ps/instaumi-data/instaumi_000001/final/dual-x5-four-mp4-cpu-v5/`。
+- DEP-004 深审确认旧外部运行时是 FFmpeg 4.4.2；但主帧读取由 OpenCV 4.14 内置 FFmpeg 8.1.2（avcodec 62.28.102）完成，因此旧版影响探测、可选音频提取和审阅编码，不是主 Tag 像素解码器。
+- 官方当前稳定版 9.0.1 源归档经 PGP 验证；签名指纹 `FCF9 86EA 15E6 E293 A564 4F10 B432 2F04 D676 58D8`，源 SHA-256 `cf38e0e2...7f635`。构建关闭网络/共享库/调试/文档，保留 GPL libx264；离线归档 SHA `6d221609...0487`，ffmpeg/ffprobe SHA 分别为 `91f3138d...1143`、`cc11804f...15c`。
+- 新增项目内离线安装器、运行时解析与哈希/版本/权限/属主/符号链接 fail-closed，流水线锁记录完整运行时身份。聚焦测试 24 passed；完整测试本地/服务器均为 `269 passed, 7 skipped`；Bandit 32,643 行仍为 0 high/0 medium。
+- 兼容性回归：四个输入各 599 帧，共 2396 帧的 `framemd5` 完全相同；同一 v5 审阅视频转码的旧/新编码结果 299 帧解码像素完全相同。FFprobe 800 次探测旧/新为 23.44/4.34 s；完整视频解码新版快约 5–7%，但 CLI RSS 约 224–230 MiB，高于旧版约 112 MiB，主路径不使用该 CLI 解码。
+- v6 提交本地 `0e0a2d4`、服务器等价 `45802c5`。服务器从同一离线归档安装，运行时哈希与本地相同；旧 4.4.2 不再进入四 MP4 流水线。
+- 服务器 v6 无缓存处理 12.21 s，平均 CPU 921%、峰值 RSS 310,236 KiB、无 swap。当时系统 load 18.10，另有两条独立 ORB-SLAM 各占约 335% CPU，所以不能将本次墙钟时间与无竞争 6.49 s 基线作为版本回归比较。
+- v6 结果仍为 300/300 双侧数值位姿、268 联合可信、266 双侧实测、32 长间隔不可信、`SELF_CALIBRATED_PASS`；`joint_trajectory.csv` SHA 与 v5 同为 `52c3e192...b82ed`。
+- 新视频 `processed_joint_trajectory_30hz_front_above_v6.mp4` 为 1920×1080、30 FPS、299 帧、SHA `5fca5373...f79b0e`；audit 明确 `view_preset=flu-front-above`。封面和 7.1 s 帧已检查，v5/v6 全部解码帧完全相同，证明机位仍是两个 AprilGrid 正面一侧固定斜上俯视。
+- 飞书文字 `om_x100b66593b0430b0df3dababcc942fe`、视频 `om_x100b665938b15ca4c2cc95ee1ae8c26` 均发送成功。
+
+## 最近一次流水线版本变更验证
+
+- 改动：v6 将外部探测/音频/审阅编码切到哈希锁定的项目 FFmpeg 9.0.1；轨迹算法仍是 v5 的每帧数值位姿 + 独立可信度。
+- 提交：本地 `0e0a2d4`，服务器等价 `45802c5`；算法提交仍为本地 `72203d6`、服务器 `b9f7803`。
+- 服务器输出：`/home/ps/instaumi-data/instaumi_000001/final/dual-x5-four-mp4-cpu-v6/`。
 - 服务器报告：300/300 帧具备数值位姿；联合可信 268（89.33%）；联合实测 266（88.67%）；长间隔不可信 32 帧；全部门通过。
-- 服务器运行：6.49 s；`time -v` 平均 CPU 1164%；峰值 RSS 311,272 KiB；无 swap。
-- 最终审阅视频：`reviews/processed_joint_trajectory_30hz_front_above_v5.mp4`，SHA-256 `fef54acf...c9a7f7`。
-- 飞书：文字与视频均发送成功，消息 ID 见 Cycle 002 日志。
+- 服务器运行：竞争负载下 12.21 s；`time -v` 平均 CPU 921%；峰值 RSS 310,236 KiB；无 swap。无竞争基线仍采用 v5 的 6.49 s，待服务器空闲时再做同条件 v6 测量。
+- 最终审阅视频：`reviews/processed_joint_trajectory_30hz_front_above_v6.mp4`，SHA-256 `5fca5373...f79b0e`，固定 `flu-front-above`。
+- 飞书：文字和视频均发送成功，消息 ID 见 Cycle 005 日志。
