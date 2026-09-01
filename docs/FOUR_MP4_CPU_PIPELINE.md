@@ -1,6 +1,6 @@
-# Four-MP4 CPU pipeline v6
+# Four-MP4 CPU pipeline v7
 
-`dual-x5-four-mp4-cpu-v6` accepts the four independent raw fisheye MP4 streams
+`dual-x5-four-mp4-cpu-v7` accepts the four independent raw fisheye MP4 streams
 produced by two X5 cameras. It does not import INSV and does not invoke the
 Insta360 stitching SDK. The official panorama is therefore no longer a
 localization prerequisite.
@@ -36,6 +36,26 @@ schema exposes only the active rear lens. The complete H5 hash and calibration
 hash are cache inputs, so replacing H5 invalidates stale bearings even when the
 four MP4 files are unchanged. `T_right_left` is not used: the two cameras move
 independently and are localized against the same fixed AprilGrid map.
+
+The observation worker launches the verified project FFmpeg executable as a
+bounded subprocess and transports selected `gray8` luma frames to Python over
+`rawvideo` stdout. FFmpeg performs accurate timestamp seeking at chunk starts,
+selects only the requested decode cadence, and emits an exact expected frame
+count. Python validates every `width x height` payload, the final byte boundary,
+and the subprocess exit code. No BGR/RGB frame is produced.
+
+Optional IMU assistance is fail-closed. Because the two hand cameras move
+independently, usable H5 data must contain `/sensor/imu/left/...` and
+`/sensor/imu/right/...` (or `/sensor/{left,right}/imu/...`) plus explicit
+`T_rig_imu_left/right`, `T_rig_camera_left/right`, and `T_target_source`
+transform semantics. A singular `/sensor/imu` stream is never silently assigned
+to both hands. During a visually untrusted internal gap, calibrated gyro
+increments shape orientation between the two trusted visual anchors and a
+distributed closure correction keeps both endpoints exact. Position remains
+visual endpoint interpolation; accelerometer double integration is deliberately
+not used. IMU-assisted rows remain `IMU_ASSISTED_UNTRUSTED`. Missing, empty,
+ambiguous, poorly sampled, or incompletely calibrated IMU data falls back to
+`INTERPOLATED_UNTRUSTED` and is recorded in `report.json`.
 
 ## Generic four-MP4 input contract
 
@@ -129,7 +149,7 @@ Run the same one-argument entry point:
 ```
 
 The generic conservative profile defaults to one detector process and two
-OpenCV/decoder threads. The InstaUMI fast profile runs four lens processes with
+OpenCV/FFmpeg decoder threads. The InstaUMI fast profile runs four lens processes with
 four threads each (bounded at 16 active CPU threads), uses about 1 GiB for four
 resident decoders, and requires neither CUDA nor panorama stitching.
 
@@ -196,7 +216,7 @@ records every flow, redetection, scout, fallback, and rejection count.
 Persistent cache defaults to:
 
 ```text
-dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v6/<pair-id>/
+dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v7/<pair-id>/
 ```
 
 Set `OSMO_PIPELINE_CACHE` to a server-local SSD if the dataset itself is on a
@@ -219,7 +239,7 @@ self-calibration, not external ground truth.
 The principal outputs are:
 
 ```text
-final/dual-x5-four-mp4-cpu-v6/pairs/<pair-id>/tracking/
+final/dual-x5-four-mp4-cpu-v7/pairs/<pair-id>/tracking/
 ├── session_world_map.json
 ├── left_pose.csv
 ├── right_pose.csv
@@ -231,7 +251,9 @@ final/dual-x5-four-mp4-cpu-v6/pairs/<pair-id>/tracking/
 row, followed by both left and right 6DoF poses. Direct bearing measurements
 are marked `MEASURED`; gaps bounded by measurements are filled and retain a
 numeric pose on every common-timeline frame. Gaps up to 0.25 seconds are marked
-`INTERPOLATED`; longer gaps are marked `INTERPOLATED_UNTRUSTED`. Leading or
+`INTERPOLATED`; longer gaps use a calibrated per-side gyro bridge when safely
+available and are marked `IMU_ASSISTED_UNTRUSTED`; otherwise they are marked
+`INTERPOLATED_UNTRUSTED`. Leading or
 trailing gaps use the nearest accepted pose and are marked `HELD_UNTRUSTED`.
 `joint_has_pose` therefore describes numeric availability independently from
 `joint_valid`, which remains false whenever either side is untrusted. The audit
@@ -275,7 +297,7 @@ Render the four source views beside the synchronized shared-map 3D tracks:
 ```bash
 .venv/bin/python -m tools.render_joint_four_mp4_trajectory \
   /data/session \
-  /data/session/final/dual-x5-four-mp4-cpu-v6/pairs/<pair-id>/tracking \
+  /data/session/final/dual-x5-four-mp4-cpu-v7/pairs/<pair-id>/tracking \
   /data/session/final/joint_trajectory_comparison.mp4
 ```
 

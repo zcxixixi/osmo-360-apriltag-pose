@@ -135,7 +135,7 @@ def test_four_mp4_discovery_and_dataset_dry_run(monkeypatch, tmp_path: Path):
     lock = four_mp4.discover_four_mp4_dataset(root)
     result = dataset.process_dataset(root, dry_run=True)
 
-    assert lock["pipeline_revision"] == "dual-x5-four-mp4-cpu-v6"
+    assert lock["pipeline_revision"] == "dual-x5-four-mp4-cpu-v7"
     assert lock["pairs"][0]["left"]["lenses"][0]["stream"] == 0
     assert lock["pairs"][0]["right"]["base_tag_id"] == 3
     assert lock["pairs"][0]["sync"]["offset_s"] == 0.0125
@@ -178,7 +178,9 @@ def test_instaumi_h5_is_native_four_mp4_input(monkeypatch, tmp_path: Path):
     )
     assert len(tasks) == 4
     assert all("--timeline-h5" in task.command for task in tasks)
-    assert all("--native-grayscale-decode" in task.command for task in tasks)
+    assert all("--ffmpeg-gray-pipe" in task.command for task in tasks)
+    assert all("--native-grayscale-decode" not in task.command for task in tasks)
+    assert all(task.expected["decoder_transport"] == "ffmpeg_rawvideo_pipe" for task in tasks)
     assert all("--optical-flow-window-size" in task.command for task in tasks)
     assert all(task.expected["frame_stride"] == 1 for task in tasks)
     assert all(task.expected["decode_stride"] == 1 for task in tasks)

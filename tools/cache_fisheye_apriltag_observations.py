@@ -19,6 +19,10 @@ from osmo360.pipeline.temporal_apriltag import (
     redetect_rois,
     track_quads_forward_backward,
 )
+from osmo360.pipeline.ffmpeg_gray_pipe import (
+    FFmpegGrayPipe,
+    probe_video_stream,
+)
 from osmo360.localization.raw_fisheye_world_pose import (
     detect_rectified_tags,
     make_kannala_brandt_ray_converter,
@@ -83,10 +87,16 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="retrieve grayscale images only every N source frames; intermediate frames are decoder-grabbed",
     )
-    parser.add_argument(
+    decoder = parser.add_mutually_exclusive_group()
+    decoder.add_argument(
         "--native-grayscale-decode",
         action="store_true",
         help="request the decoder luma plane directly instead of converting a BGR frame",
+    )
+    decoder.add_argument(
+        "--ffmpeg-gray-pipe",
+        action="store_true",
+        help="stream selected luma planes from the verified FFmpeg runtime into Python",
     )
     parser.add_argument(
         "--optical-flow-scale",
@@ -204,6 +214,8 @@ def main() -> int:
         raise ValueError("--decode-stride must be positive")
     if args.frame_stride % args.decode_stride:
         raise ValueError("--frame-stride must be a multiple of --decode-stride")
+    if args.ffmpeg_gray_pipe and not args.temporal_tracking:
+        raise ValueError("--ffmpeg-gray-pipe requires --temporal-tracking")
     if not 0.25 <= args.optical_flow_scale <= 1.0:
         raise ValueError("--optical-flow-scale must be between 0.25 and 1.0")
     if args.optical_flow_window_size < 9 or not args.optical_flow_window_size % 2:
@@ -344,20 +356,46 @@ def main() -> int:
     parameters.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
     parameters.adaptiveThreshWinSizeMax = 63
     detector = cv2.aruco.ArucoDetector(dictionary, parameters)
-    if args.opencv_threads and hasattr(cv2, "CAP_PROP_N_THREADS"):
-        capture = cv2.VideoCapture(
-            str(video),
-            cv2.CAP_FFMPEG,
-            [cv2.CAP_PROP_N_THREADS, args.opencv_threads],
-        )
+    capture: cv2.VideoCapture | None = None
+    gray_pipe: FFmpegGrayPipe | None = None
+    decoder_provenance: dict[str, object]
+    if args.ffmpeg_gray_pipe:
+        stream_info = probe_video_stream(video)
+        fps = stream_info.fps
+        source_frame_count = stream_info.frame_count
+        if (stream_info.width, stream_info.height) != (
+            args.source_width, args.source_height
+        ):
+            raise RuntimeError(
+                "ffprobe/video geometry does not match the manifest: "
+                f"{stream_info.width}x{stream_info.height} != "
+                f"{args.source_width}x{args.source_height}"
+            )
+        decoder_provenance = {
+            "decoder_transport": "ffmpeg_rawvideo_pipe",
+            "pixel_format": "gray8_luma",
+        }
     else:
-        capture = cv2.VideoCapture(str(video))
-    if not capture.isOpened():
-        raise RuntimeError(f"cannot open {video}")
-    if args.native_grayscale_decode and not capture.set(cv2.CAP_PROP_CONVERT_RGB, 0):
-        raise RuntimeError("video backend does not support native grayscale decode")
-    fps = float(capture.get(cv2.CAP_PROP_FPS))
-    source_frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        if args.opencv_threads and hasattr(cv2, "CAP_PROP_N_THREADS"):
+            capture = cv2.VideoCapture(
+                str(video),
+                cv2.CAP_FFMPEG,
+                [cv2.CAP_PROP_N_THREADS, args.opencv_threads],
+            )
+        else:
+            capture = cv2.VideoCapture(str(video))
+        if not capture.isOpened():
+            raise RuntimeError(f"cannot open {video}")
+        if args.native_grayscale_decode and not capture.set(cv2.CAP_PROP_CONVERT_RGB, 0):
+            raise RuntimeError("video backend does not support native grayscale decode")
+        fps = float(capture.get(cv2.CAP_PROP_FPS))
+        source_frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        decoder_provenance = {
+            "decoder_transport": "opencv_videocapture",
+            "pixel_format": (
+                "native_decoder_luma" if args.native_grayscale_decode else "bgr_to_gray"
+            ),
+        }
     if fps <= 0 or source_frame_count <= 0:
         raise RuntimeError(f"invalid video timing metadata: fps={fps}, frames={source_frame_count}")
     exact_timestamp_s: np.ndarray | None = None
@@ -377,13 +415,36 @@ def main() -> int:
             raise RuntimeError("InstaUMI timestamps must start at zero and increase")
     frame = 0
     if args.seek_to_start:
-        if not capture.set(cv2.CAP_PROP_POS_FRAMES, args.start_frame):
-            raise RuntimeError(f"decoder cannot seek to frame {args.start_frame}: {video}")
-        frame = int(round(capture.get(cv2.CAP_PROP_POS_FRAMES)))
-        if frame != args.start_frame:
-            raise RuntimeError(
-                f"decoder seek was not exact: requested {args.start_frame}, got {frame}"
-            )
+        if args.ffmpeg_gray_pipe:
+            frame = args.start_frame
+        else:
+            assert capture is not None
+            if not capture.set(cv2.CAP_PROP_POS_FRAMES, args.start_frame):
+                raise RuntimeError(f"decoder cannot seek to frame {args.start_frame}: {video}")
+            frame = int(round(capture.get(cv2.CAP_PROP_POS_FRAMES)))
+            if frame != args.start_frame:
+                raise RuntimeError(
+                    f"decoder seek was not exact: requested {args.start_frame}, got {frame}"
+                )
+    if args.ffmpeg_gray_pipe:
+        image_start_frame = args.start_frame
+        image_end_frame = (
+            source_frame_count - 1
+            if args.end_frame is None
+            else min(args.end_frame, source_frame_count - 1)
+        )
+        image_stride = args.decode_stride if args.temporal_tracking else 1
+        gray_pipe = FFmpegGrayPipe(
+            video,
+            width=args.source_width,
+            height=args.source_height,
+            fps=fps,
+            start_frame=image_start_frame,
+            end_frame=image_end_frame,
+            frame_stride=image_stride,
+            decoder_threads=args.opencv_threads,
+        )
+        decoder_provenance = gray_pipe.provenance
     timeline_frame = []
     timeline_local = []
     timeline_common = []
@@ -417,6 +478,8 @@ def main() -> int:
     last_decoded_frame: int | None = None
     retrieved_frame_count = 0
     while True:
+        if gray_pipe is not None and frame >= source_frame_count:
+            break
         if args.stop_after_end_frame and frame > args.end_frame:
             break
         in_detection_range = frame >= args.start_frame and (
@@ -425,10 +488,14 @@ def main() -> int:
         retrieve_image = not args.temporal_tracking or (
             in_detection_range and (frame - args.start_frame) % args.decode_stride == 0
         )
-        if retrieve_image:
+        if retrieve_image and gray_pipe is not None:
+            image = gray_pipe.read()
+            ok = True
+        elif retrieve_image:
+            assert capture is not None
             ok, image = capture.read()
         else:
-            ok = capture.grab()
+            ok = True if gray_pipe is not None else capture.grab()
             image = None
         if not ok:
             break
@@ -620,7 +687,10 @@ def main() -> int:
         previous_gray = flow_gray if args.temporal_tracking else None
         previous_image_frame = frame if args.temporal_tracking else None
         frame += 1
-    capture.release()
+    if gray_pipe is not None:
+        gray_pipe.close()
+    elif capture is not None:
+        capture.release()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     temporary = args.output.with_suffix(args.output.suffix + ".tmp")
     with temporary.open("wb") as handle:
@@ -655,6 +725,9 @@ def main() -> int:
         ),
         "calibration_bundle_sha256": args.calibration_bundle_sha256,
         "native_grayscale_decode": args.native_grayscale_decode,
+        "ffmpeg_gray_pipe": args.ffmpeg_gray_pipe,
+        "decoder_transport": decoder_provenance["decoder_transport"],
+        "decoder_pixel_format": decoder_provenance["pixel_format"],
         "optical_flow_scale": args.optical_flow_scale,
         "forward_backward_check_interval_frames": (
             args.forward_backward_check_interval_frames
@@ -717,6 +790,8 @@ def main() -> int:
         "frame_stride": args.frame_stride,
         "decode_stride": args.decode_stride,
         "native_grayscale_decode": args.native_grayscale_decode,
+        "ffmpeg_gray_pipe": args.ffmpeg_gray_pipe,
+        "decoder": decoder_provenance,
         "optical_flow_scale": args.optical_flow_scale,
         "forward_backward_check_interval_frames": (
             args.forward_backward_check_interval_frames
@@ -741,6 +816,8 @@ def main() -> int:
                 "output_stride_frames": args.frame_stride,
                 "decode_stride_frames": args.decode_stride,
                 "native_grayscale_decode": args.native_grayscale_decode,
+                "ffmpeg_gray_pipe": args.ffmpeg_gray_pipe,
+                "decoder_transport": decoder_provenance["decoder_transport"],
                 "optical_flow_scale": args.optical_flow_scale,
                 "forward_backward_check_interval_frames": (
                     args.forward_backward_check_interval_frames

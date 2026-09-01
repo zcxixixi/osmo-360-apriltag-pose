@@ -283,7 +283,7 @@ def build_chunk_tasks(
         optical_flow_window_size = int(budget["optical_flow_window_size"])
         optical_flow_max_level = int(budget["optical_flow_max_level"])
         optical_flow_max_iterations = int(budget["optical_flow_max_iterations"])
-        native_grayscale = bool(budget["native_grayscale_decode"])
+        use_ffmpeg_gray_pipe = bool(budget["native_grayscale_decode"])
         timestamp_source = (
             f"instaumi_h5:/sensor/camera/{camera['timeline_camera']}/timestamp_ns"
             if camera.get("timeline_h5")
@@ -293,7 +293,10 @@ def build_chunk_tasks(
             "temporal_tracking": True,
             "output_stride_frames": stride,
             "decode_stride_frames": decode_stride,
-            "native_grayscale_decode": native_grayscale,
+            "native_grayscale_decode": False,
+            "ffmpeg_gray_pipe": use_ffmpeg_gray_pipe,
+            "decoder_transport": "ffmpeg_rawvideo_pipe",
+            "decoder_pixel_format": "gray8_luma",
             "optical_flow_scale": optical_flow_scale,
             "forward_backward_check_interval_frames": forward_backward_interval,
             "optical_flow_window_size": optical_flow_window_size,
@@ -379,8 +382,8 @@ def build_chunk_tasks(
                     "--optical-flow-max-iterations", str(optical_flow_max_iterations),
                     "--output", str(output),
                 ]
-                if native_grayscale:
-                    command.append("--native-grayscale-decode")
+                if use_ffmpeg_gray_pipe:
+                    command.append("--ffmpeg-gray-pipe")
                 if camera.get("timeline_h5"):
                     command.extend([
                         "--timeline-h5", str(root / camera["timeline_h5"]),
@@ -408,7 +411,9 @@ def build_chunk_tasks(
                             "decoded_frame_range": [start, end],
                             "frame_stride": stride,
                             "decode_stride": decode_stride,
-                            "native_grayscale_decode": native_grayscale,
+                            "native_grayscale_decode": False,
+                            "ffmpeg_gray_pipe": use_ffmpeg_gray_pipe,
+                            "decoder_transport": "ffmpeg_rawvideo_pipe",
                             "optical_flow_scale": optical_flow_scale,
                             "forward_backward_check_interval_frames": forward_backward_interval,
                             "optical_flow_window_size": optical_flow_window_size,
@@ -550,7 +555,7 @@ def run_tracking(
         signature = {
             "schema_version": "four-mp4-auto-tracking-input/1.0",
             "algorithm_revision": (
-                "cached-a3-shared-map-joint-v7-continuous-pose-confidence-hand-flu-back-x"
+                "cached-a3-shared-map-joint-v8-ffmpeg-gray-calibrated-gyro-bridge-hand-flu-back-x"
             ),
             "mode": automatic.get("mode"),
             "observation_processing_signature": {
@@ -573,17 +578,23 @@ def run_tracking(
                 pass
         if not report.is_file() or cached_signature != signature:
             threads = min(int(budget["maximum_active_cpu_threads"]), 4)
+            command = [
+                str(PYTHON), "-m", "tools.bootstrap_cached_a3_trajectories",
+                "--left-cache", str(dual["left"]),
+                "--right-cache", str(dual["right"]),
+                "--panel-a-map", str(panel_a),
+                "--panel-b-map", str(panel_b),
+                "--pair-id", pair["pair_id"],
+                "--opencv-threads", str(threads),
+                "--output-dir", str(output),
+            ]
+            timeline_h5 = {
+                str(pair[side].get("timeline_h5", "")) for side in ("left", "right")
+            } - {""}
+            if len(timeline_h5) == 1:
+                command.extend(("--imu-h5", str(root / timeline_h5.pop())))
             run(
-                [
-                    str(PYTHON), "-m", "tools.bootstrap_cached_a3_trajectories",
-                    "--left-cache", str(dual["left"]),
-                    "--right-cache", str(dual["right"]),
-                    "--panel-a-map", str(panel_a),
-                    "--panel-b-map", str(panel_b),
-                    "--pair-id", pair["pair_id"],
-                    "--opencv-threads", str(threads),
-                    "--output-dir", str(output),
-                ],
+                command,
                 logs / "auto-shared-map-tracking.log",
                 environment=_worker_environment(threads),
                 gate=True,
