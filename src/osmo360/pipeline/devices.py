@@ -3,15 +3,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import urllib.error
 import urllib.request
-import subprocess
 from pathlib import Path
 from typing import Any
 
-from .manifest import ManifestError, ROOT
-from .platform_auth import platform_authorization_headers
-
+from .manifest import ROOT, ManifestError
+from .platform_auth import platform_authorization_headers, validate_http_url
 
 CAMERA_SDK_ROOT = ROOT / "work/insta360-sdk/camera-2.1.1"
 CAMERA_SDK_BINARY = CAMERA_SDK_ROOT / "bin/CameraSDKTest"
@@ -175,17 +174,22 @@ def sync_inventory(
     inventory = load_inventory(path)
     body = json.dumps(inventory, ensure_ascii=False).encode()
     try:
+        endpoint = validate_http_url(server.rstrip("/") + "/api/devices")
+    except ValueError as error:
+        raise ManifestError(f"invalid visualization server URL: {error}") from error
+    try:
         authorization = platform_authorization_headers(token_file)
     except RuntimeError as error:
         raise ManifestError(str(error)) from error
     request = urllib.request.Request(
-        server.rstrip("/") + "/api/devices",
+        endpoint,
         data=body,
         method="PUT",
         headers={"Content-Type": "application/json", **authorization},
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        # The URL was restricted to unambiguous HTTP(S) above.
+        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
             return json.load(response)
     except urllib.error.HTTPError as error:
         try:

@@ -9,9 +9,8 @@ import pytest
 from scipy.io import wavfile
 
 from osmo360.pipeline import dataset
-from osmo360.pipeline.dataset_worker import estimate_audio_offset
+from osmo360.pipeline.dataset_worker import estimate_audio_offset, process_pair
 from osmo360.pipeline.manifest import ManifestError
-
 
 LEFT_SERIAL = "IAHEA2606M5WSK"
 RIGHT_SERIAL = "IAHEA2606KKUKF"
@@ -94,3 +93,30 @@ def test_run_pipeline_shell_requires_only_dataset_path(tmp_path: Path):
     assert process.returncode == 2
     assert "dataset.h5 + video/*.mp4" in process.stderr
     assert "raw/left + raw/right" in process.stderr
+
+
+def test_default_scratch_roots_stay_inside_each_node_checkout(monkeypatch):
+    monkeypatch.delenv("OSMO_PIPELINE_SCRATCH", raising=False)
+    monkeypatch.setenv("OSMO_REMOTE_REPO", "/srv/osmo-checkout")
+
+    assert dataset._scratch_base_for_node("local") == dataset.ROOT / "work/pipeline-scratch"
+    assert dataset._scratch_base_for_node("worker@example") == Path(
+        "/srv/osmo-checkout/work/pipeline-scratch"
+    )
+
+
+def test_relative_scratch_override_is_rejected(monkeypatch):
+    monkeypatch.setenv("OSMO_PIPELINE_SCRATCH", "relative/scratch")
+
+    with pytest.raises(ManifestError, match="absolute safe path"):
+        dataset._scratch_base_for_node("local")
+
+
+def test_raw_worker_rejects_symlink_scratch_root(tmp_path: Path):
+    target = tmp_path / "target"
+    target.mkdir()
+    scratch_link = tmp_path / "scratch-link"
+    scratch_link.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(ManifestError, match="non-symlink"):
+        process_pair(tmp_path, {"pair_id": "pair-01"}, scratch_link)

@@ -9,6 +9,7 @@ src/osmo360/calibration/estimate_gripper_extrinsic.py
 src/osmo360/datasets/__init__.py
 src/osmo360/datasets/vla_dataset_export.py
 src/osmo360/localization/__init__.py
+src/osmo360/localization/cached_a3_bootstrap.py
 src/osmo360/localization/coordinate_frames.py
 src/osmo360/localization/fuse_asymmetric_gripper_world_pose.py
 src/osmo360/localization/raw_fisheye_world_pose.py
@@ -21,7 +22,9 @@ src/osmo360/pipeline/device_ui.py
 src/osmo360/pipeline/devices.py
 src/osmo360/pipeline/four_mp4.py
 src/osmo360/pipeline/four_mp4_worker.py
+src/osmo360/pipeline/instaumi.py
 src/osmo360/pipeline/manifest.py
+src/osmo360/pipeline/platform_auth.py
 src/osmo360/pipeline/process.py
 src/osmo360/pipeline/progress_ui.py
 src/osmo360/pipeline/review.py
@@ -31,6 +34,7 @@ src/osmo360/verification/historical.py
 src/osmo360/verification/verify_dual_gripper_v50_baseline.py
 src/osmo360/verification/verify_x5_one_sided_force_baseline.py
 src/osmo360/visualization/__init__.py
+src/osmo360/visualization/node_runtime.py
 src/osmo360/visualization/render_dual_camera_alignment_demo.py
 src/osmo360/visualization/render_fused_world_audit.py
 src/osmo360/visualization/render_gripper_force_angle_demo.py
@@ -46,6 +50,8 @@ src/osmo_apriltag_demo.egg-info/requires.txt
 src/osmo_apriltag_demo.egg-info/top_level.txt
 tests/test_a4_wall_maps.py
 tests/test_accuracy_first_v52.py
+tests/test_browser_runtime.py
+tests/test_cached_a3_bootstrap.py
 tests/test_camera_dataset_pipeline.py
 tests/test_camera_validation_timeline.py
 tests/test_compute_node_sdk.py
@@ -68,10 +74,13 @@ tests/test_insta360_media_stitch.py
 tests/test_insta360_mocap.py
 tests/test_insta360_pipeline.py
 tests/test_insta360_sdk_revision.py
+tests/test_joint_four_mp4_renderer.py
 tests/test_joint_raw_fisheye_gate.py
 tests/test_merge_pose_maps.py
 tests/test_mocap_evaluation.py
+tests/test_node_runtime.py
 tests/test_pipeline_progress_ui.py
+tests/test_platform_auth.py
 tests/test_processing_strategy.py
 tests/test_quantify_pipeline_runtime.py
 tests/test_repository_layout.py
@@ -82,6 +91,7 @@ tests/test_temporal_tracking.py
 tests/test_two_tag_synthetic_experiment.py
 tests/test_umi_pipeline.py
 tests/test_visualization_platform.py
+tests/test_visualization_security.py
 tests/test_vla_dataset_export.py
 tests/test_wall_pair_calibration.py
 tests/test_world_frames.py

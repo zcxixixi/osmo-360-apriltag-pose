@@ -7,17 +7,26 @@ import argparse
 import csv
 import json
 import struct
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
 import numpy as np
+from defusedxml import ElementTree as ET
 from scipy.spatial.transform import Rotation, Slerp
 
 from osmo360.visualization.render_mocap_comparison import (
-    AMBER, BG, CYAN, GREEN, MUTED, RED, WHITE,
-    draw_gripper, load_gripper_edges, project, text,
+    AMBER,
+    BG,
+    CYAN,
+    GREEN,
+    MUTED,
+    RED,
+    WHITE,
+    draw_gripper,
+    load_gripper_edges,
+    project,
+    text,
 )
 from osmo360.visualization.render_trajectory_overlay_video import kalman_rts_filter
 

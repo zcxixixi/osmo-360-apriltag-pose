@@ -473,7 +473,9 @@ def pipeline_job_slot(
             raw_directory = (
                 Path(runtime) / "osmo360-pipeline-job-slots"
                 if runtime
-                else Path(f"/tmp/osmo360-pipeline-job-slots-{os.getuid()}")
+                # This fallback is user-scoped and validated below as a real,
+                # 0700, same-owner directory before any lock file is opened.
+                else Path(f"/tmp/osmo360-pipeline-job-slots-{os.getuid()}")  # nosec B108
             )
     else:
         raw_directory = Path(lock_root)
