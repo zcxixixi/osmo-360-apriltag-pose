@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from .manifest import ROOT, ManifestError
-from .platform_auth import platform_authorization_headers, validate_http_url
+from .platform_auth import (
+    open_http_no_redirect,
+    platform_authorization_headers,
+    validate_http_url,
+)
 
 CAMERA_SDK_ROOT = ROOT / "work/insta360-sdk/camera-2.1.1"
 CAMERA_SDK_BINARY = CAMERA_SDK_ROOT / "bin/CameraSDKTest"
@@ -188,8 +192,7 @@ def sync_inventory(
         headers={"Content-Type": "application/json", **authorization},
     )
     try:
-        # The URL was restricted to unambiguous HTTP(S) above.
-        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
+        with open_http_no_redirect(request, timeout=30) as response:
             return json.load(response)
     except urllib.error.HTTPError as error:
         try:

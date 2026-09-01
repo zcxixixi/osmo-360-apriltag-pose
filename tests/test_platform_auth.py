@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -9,6 +11,7 @@ import pytest
 from osmo360.pipeline import devices
 from osmo360.pipeline.platform_auth import (
     load_platform_write_token,
+    open_http_no_redirect,
     platform_authorization_headers,
     validate_http_url,
 )
@@ -64,7 +67,7 @@ def test_device_inventory_sync_sends_bearer_token(monkeypatch, tmp_path):
         captured.append((request, timeout))
         return io.BytesIO(b'{"status":"saved","count":0}')
 
-    monkeypatch.setattr(devices.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(devices, "open_http_no_redirect", fake_urlopen)
 
     result = devices.sync_inventory(
         inventory, "http://platform.invalid:7865", token_file
@@ -168,3 +171,79 @@ def test_visualization_uploader_rejects_non_http_urls(tmp_path):
         uploader.request_json("file:///etc/passwd")
     with pytest.raises(ValueError, match="scheme must be http or https"):
         uploader.put_file("file:///tmp/output", source, "application/json")
+
+
+def test_authenticated_api_redirect_is_rejected_without_forwarding_token():
+    forwarded_authorization = []
+
+    class Target(BaseHTTPRequestHandler):
+        def do_GET(self):
+            forwarded_authorization.append(self.headers.get("Authorization"))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    target = ThreadingHTTPServer(("127.0.0.1", 0), Target)
+
+    class Redirect(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header(
+                "Location", f"http://127.0.0.1:{target.server_port}/capture"
+            )
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    redirect = ThreadingHTTPServer(("127.0.0.1", 0), Redirect)
+    threads = [
+        threading.Thread(target=server.serve_forever, daemon=True)
+        for server in (target, redirect)
+    ]
+    for thread in threads:
+        thread.start()
+    try:
+        request = devices.urllib.request.Request(
+            f"http://127.0.0.1:{redirect.server_port}/redirect",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+        )
+        with pytest.raises(devices.urllib.error.HTTPError) as error:
+            open_http_no_redirect(request, timeout=2)
+        assert error.value.code == 302
+        assert forwarded_authorization == []
+    finally:
+        redirect.shutdown()
+        target.shutdown()
+        for thread in threads:
+            thread.join(timeout=2)
+
+
+def test_upload_urls_ignore_server_supplied_absolute_links():
+    project = {
+        "id": "20260901213000-abcdef",
+        "links": {
+            "timeline_upload": "https://attacker.invalid/steal-token",
+            "video_upload": "https://attacker.invalid/steal-token",
+            "scene_upload": "https://attacker.invalid/steal-token",
+            "publish": "https://attacker.invalid/steal-token",
+        },
+    }
+
+    urls = uploader.project_upload_urls("http://platform.invalid:7865", project)
+
+    assert set(urls.values()) == {
+        "http://platform.invalid:7865/api/projects/20260901213000-abcdef/timeline",
+        "http://platform.invalid:7865/api/projects/20260901213000-abcdef/video",
+        "http://platform.invalid:7865/api/projects/20260901213000-abcdef/scene",
+        "http://platform.invalid:7865/api/projects/20260901213000-abcdef/publish",
+    }
+
+
+def test_upload_urls_reject_invalid_project_id():
+    with pytest.raises(RuntimeError, match="invalid project id"):
+        uploader.project_upload_urls(
+            "http://platform.invalid:7865", {"id": "../escape"}
+        )
