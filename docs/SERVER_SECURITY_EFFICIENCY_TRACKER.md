@@ -16,7 +16,7 @@
   6. 从 Tag 正前方斜上视角录制四视频与联合 3D 轨迹对照视频；
   7. 将进度文字和新视频发送到既定飞书会话。
 - 整点自动任务：`instaumi`（`InstaUMI服务器整点维护`），每小时第 0 分钟唤醒当前任务并执行巡检/飞书同步。
-- 审阅视频视角固定沿用 19 点已接受样式：使用 `flu-front-above`，机位始终位于两个 AprilGrid 正面一侧，从斜上方向下拍且镜头面朝 AprilGrid；不跟随轨迹、不自动旋转，后续算法修改也不得改变该录制方式。
+- 审阅视频以飞书 CLI 19:03 原视频 `processed_joint_trajectory_30hz_front_above_v1.mp4` 为唯一模板：世界坐标保持原生 `Tag Map`，手部相机仅作为 `Camera FLU` 子坐标且 `back = +X`，渲染必须使用 `tag-map-front-above`。机位始终位于两个 AprilGrid 正面一侧，从斜上方向下拍且镜头面朝网格，两块网格在画面中横向排列；不跟随轨迹、不自动旋转，禁止用会重表达世界坐标的 `flu-front-above` 代替。
 
 ## 当前已验证基线
 
@@ -28,9 +28,9 @@
 | 运行时提交 | 本地 `0e0a2d4`，服务器等价 `45802c5` |
 | 服务器无缓存耗时 | 无竞争 v5 基线 6.49 s；v6 在两条独立 ORB-SLAM 各占约 335% CPU、load 18 时为 12.21 s，峰值 RSS 310,236 KiB |
 | 输出 | 300/300 帧具备双侧数值位姿；268 帧联合可信，266 帧双侧实测，`SELF_CALIBRATED_PASS` |
-| 回归测试 | 本地和服务器均为 269 passed，7 skipped；Bandit 0 high/0 medium |
-| 一致性 | v6/v5 `joint_trajectory.csv` SHA-256 同为 `52c3e192...b82ed`；v6/v5 审阅视频 299 帧解码像素逐帧相同 |
-| 最新已发视频 | v6 `processed_joint_trajectory_30hz_front_above_v6.mp4`，固定 `flu-front-above`，SHA-256 `5fca5373...f79b0e` |
+| 回归测试 | 本地为 270 passed，7 skipped；服务器待部署本轮兼容入口与默认视角后复测；Bandit 0 high/0 medium |
+| 一致性 | v6/v5 `joint_trajectory.csv` SHA-256 同为 `52c3e192...b82ed`；视角纠正只重新渲染，未改轨迹文件 |
+| 最新已发视频 | v6 `processed_joint_trajectory_30hz_tag_map_front_above_v6.mp4`，固定 `tag-map-front-above`，SHA-256 `ba80d1d7...127238` |
 
 ## 问题清单
 
@@ -48,7 +48,7 @@
 | DEP-001 | 中 | IN_PROGRESS | 已完成锁定 Python 与 Node 依赖审计：`pip-audit` 基础 32 项、全 extras 49 项均为 0 已知漏洞；Node 漏洞链已由 DEP-002 修复。主机系统与 FFmpeg 风险分别转入 DEP-003/004。 | 保持锁文件扫描；完成 DEP-003/004 的授权、替换和真实数据回归后关闭总项。 |
 | DEP-002 | 高 | RESOLVED | `puppeteer-core 24.16.0` 经 `@puppeteer/browsers` 引入受 GHSA-jmr9-qjv8-65gv 影响的 `extract-zip 2.0.1`；本地 Node 18、服务器 Node 20 均已停止安全维护。生产 `:7865` 仅安装 Three.js，漏洞不可达，但离线渲染树可达依赖。 | 已固定官方 Node 24.20.0 归档/二进制 SHA-256，所有 Python 渲染入口拒绝 Node <22.12；Puppeteer 25.9.0，依赖 80→26，`npm audit` 3 high→0。提交本地 `8e1fab9`、服务器 `fa14ff0`；生产服务已运行在项目 Node 24。 |
 | DEP-003 | 高 | OPEN | Ubuntu 22.04 主机有 28 个可直接安装的 standard-security 更新；另有 79 个 ESM Apps 安全更新在未 attach Ubuntu Pro 时不可用。模拟升级共 38 个包，涉及 coreutils、util-linux、libssh、bzip2、bind9、PIL 等。 | 系统级升级可能影响其他项目，需用户授权维护窗口；先备份/列出服务，升级后重启受影响服务并运行整套服务器回归。 |
-| DEP-004 | 高 | RESOLVED | 旧兼容目录名为 `ffmpeg-master-latest-linux64-gpl`，实际是 Ubuntu FFmpeg 4.4.2。主像素解码虽已由 OpenCV 内置 FFmpeg 8.1.2 完成，外部旧版仍参与 MP4 探测/音频/审阅编码。 | 已从官方签名源构建项目 FFmpeg 9.0.1，PGP 指纹 `FCF9...58D8`；源归档、离线归档和二进制 SHA 均锁定，关闭网络协议，拒绝旧版/哈希篡改/可写文件/符号链接。四路共 2396 帧像素、v5/v6 审阅 299 帧、轨迹 SHA 均完全一致；服务器 v6 无缓存通过并固定视角出片。 |
+| DEP-004 | 高 | RESOLVED | 旧兼容目录名为 `ffmpeg-master-latest-linux64-gpl`，实际是 Ubuntu FFmpeg 4.4.2。主像素解码虽已由 OpenCV 内置 FFmpeg 8.1.2 完成，外部旧版仍参与 MP4 探测/音频/审阅编码。 | 已从官方签名源构建项目 FFmpeg 9.0.1，PGP 指纹 `FCF9...58D8`；源归档、离线归档和二进制 SHA 均锁定，关闭网络协议，拒绝旧版/哈希篡改/可写文件/符号链接；旧兼容入口也改为受校验运行时的包装器。四路共 2396 帧像素、同一视角编码回归的 299 帧、轨迹 SHA 均完全一致；服务器 v6 无缓存通过。 |
 | SEC-005 | 高 | OPEN | 独立 `/home/ps/rk3576/offline_flu_viewer` 以系统 Python 3.10 在 `0.0.0.0:8000` 从登录 session 连续运行 4 天，无认证接口可启动/取消处理、修改处理配置/标记，并对选定数据集递归删除 `slam`/`mocap_output` 等输出；请求体也没有大小上限。进程 RSS 约 463 MiB。 | 该目录不属于当前仓库，不能擅自改业务。需用户确认用途后立即停止旧 session，或改为受管 unit、loopback/反代认证、写请求体上限和 CSRF 防护；破坏性接口需二次确认/能力令牌。 |
 | SEC-006 | 高 | IN_PROGRESS | 同项目旧 checkout 的审核 UI 在 `0.0.0.0:7869`，无认证 POST 可写审核、分段和人工时间对齐；公开 GET 返回 32 条记录、绝对源路径及审核字段。原 user unit 无任何沙箱，空闲 63 线程。 | unit 已先做无接口变化的硬化：只写状态目录、`NoNewPrivileges`/`PrivateTmp`/只读 home/system、线程池固定 1；状态目录/SQLite `0700/0600`。仍需给网页写接口增加认证与 CSRF，按需收窄公开 GET。 |
 | SEC-007 | 低 | OPEN | `:7864` 是 4 天前从登录 session 启动的旧静态审核页面，只提供 GET，但绑定全 LAN、公开时间线/视频/网格，且仍运行 EOL 的系统 Node 20。 | 确认是否仍被使用；若已由 `:7865` 取代则停止，若保留则迁移受管 unit、项目 Node 24，并按数据敏感度限制访问。 |
@@ -121,14 +121,14 @@
 - Node 修复提交：本地 `8e1fab9`、服务器等价 `fa14ff0`。生产 `:7865` 的 user systemd unit 已从系统 Node 20 切到项目 Node 24，旧 unit 备份为 `osmo-visualization.service.pre-node24-20260901.bak`；服务 active/enabled、0 次重启，进程 RSS 约 61.2 MiB。
 - 生产切换后 `GET /healthz` 为 200，无认证 `POST /api/projects` 为 401 且保留 `WWW-Authenticate: Bearer`；实际进程 `/proc/.../exe` 指向校验过的项目 Node 24.20.0。
 - 服务器缺少任何 Chrome/Chromium，原 WebGL 离线渲染本就不可用。新增显式浏览器路径解析和 fail-fast，提交本地 `29f91f4`、服务器 `78c734c`；本地同一单帧输出修改前后 SHA-256 均为 `caee3906...6a3c82`，证明默认路径上的像素/编码不变。
-- 不为当前未使用的服务器 WebGL 能力安装大型浏览器；四 MP4 审阅视频仍由 Python/OpenCV 生成，并继续强制 `flu-front-above` 固定视角。
+- 不为当前未使用的服务器 WebGL 能力安装大型浏览器；四 MP4 审阅视频仍由 Python/OpenCV 生成。此轮当时沿用了 `flu-front-above`；Cycle 006 读取 19:03 原视频后确认该预设并非用户指定模板，现已纠正为 `tag-map-front-above`。
 - 主机级风险单列而未擅自修改：28 个 standard-security 更新可用、79 个 ESM Apps 更新因未 attach 不可用；`apt-get -s upgrade` 会升级 38 个包。
 - 项目所谓 `ffmpeg-master-latest-linux64-gpl` 实际是 FFmpeg 4.4.2，且流水线正在使用。由于替换会改变解码输入，必须按算法输入变更闭环重跑数据和固定视角录制，不能混在 Node 安全修复中悄悄替换。
 - EFF-003 资源隔离修复：单任务上限 16 逻辑线程，主机按用户默认只放行 1 个任务；小 CPU 主机自动降低 4×4 配置，显式超配则 fail-closed。任务槽目录/文件权限为 `0700/0600`，拒绝符号链接和非本用户所有者。
 - 备用联合 pose-graph 原先可由 8 个 Python worker 各自继承 32 线程数学库；现固定为每 worker 1 个 BLAS/OpenMP 线程，并补齐 BLIS、vecLib、OpenMP/MKL dynamic 限制。
 - 本地/服务器全量测试均为 `247 passed, 7 skipped`。服务器缓存重跑 1.07 s，平均 CPU 824%，峰值 RSS 105,316 KiB、无 swap；任务槽等待约 18 µs。
 - 同时提交两条相同数据任务，先到者立即运行，后到者在 slot 0 等待 0.400 s 后运行；两者均成功，发布区没有 `.tmp`/`.publish-*`/`.backup-*` 残留。
-- 并发修复前后 `joint_trajectory.csv`、双侧 pose、世界图、跟踪报告和输入签名 6 个 SHA-256 全部相同；这不是轨迹/渲染算法变更，因此没有重复录制或发送视频，最近审阅视频仍为固定 `flu-front-above` 的 v5。
+- 并发修复前后 `joint_trajectory.csv`、双侧 pose、世界图、跟踪报告和输入签名 6 个 SHA-256 全部相同；这不是轨迹/渲染算法变更，因此当时没有重复录制或发送视频。该轮引用的 `flu-front-above` 后经 Cycle 006 核对确认为错误模板。
 - LAN 深审确认 `:7869` 来自 `/home/ps/osmo-360-apriltag-pose` 的 `osmo-alignment-review.service`，`:8000` 来自独立 `/home/ps/rk3576/offline_flu_viewer` 登录 session，`:7864` 是旧静态 Node session；均非当前 CPU worker 进程。
 - `:7869` 已部署可恢复 unit 硬化，备份为 `osmo-alignment-review.service.pre-hardening-20260901.bak`。新 unit 仅允许写 `/home/ps/review-state/alignment-review-v1`，接口 `/`、`/api/items`、`/api/reprocess-queue` 均继续 200；线程 63→1，RSS 103,004→68,804 KiB，0 次重启。
 - 审核状态目录和现有 SQLite/WAL/SHM 从 `0775/0644` 收紧为 `0700/0600`，未来文件由 unit `UMask=0077` 约束。
@@ -173,8 +173,19 @@
 - v6 提交本地 `0e0a2d4`、服务器等价 `45802c5`。服务器从同一离线归档安装，运行时哈希与本地相同；旧 4.4.2 不再进入四 MP4 流水线。
 - 服务器 v6 无缓存处理 12.21 s，平均 CPU 921%、峰值 RSS 310,236 KiB、无 swap。当时系统 load 18.10，另有两条独立 ORB-SLAM 各占约 335% CPU，所以不能将本次墙钟时间与无竞争 6.49 s 基线作为版本回归比较。
 - v6 结果仍为 300/300 双侧数值位姿、268 联合可信、266 双侧实测、32 长间隔不可信、`SELF_CALIBRATED_PASS`；`joint_trajectory.csv` SHA 与 v5 同为 `52c3e192...b82ed`。
-- 新视频 `processed_joint_trajectory_30hz_front_above_v6.mp4` 为 1920×1080、30 FPS、299 帧、SHA `5fca5373...f79b0e`；audit 明确 `view_preset=flu-front-above`。封面和 7.1 s 帧已检查，v5/v6 全部解码帧完全相同，证明机位仍是两个 AprilGrid 正面一侧固定斜上俯视。
-- 飞书文字 `om_x100b66593b0430b0df3dababcc942fe`、视频 `om_x100b665938b15ca4c2cc95ee1ae8c26` 均发送成功。
+- 21:47 视频 `processed_joint_trajectory_30hz_front_above_v6.mp4` 为 1920×1080、30 FPS、299 帧、SHA `5fca5373...f79b0e`；audit 明确 `view_preset=flu-front-above`。它只证明与此前同一错误预设的 v5 像素一致，不能证明复现了 19:03 模板；Cycle 006 已将该视频标记为作废并发送更正版。
+- 21:47 飞书文字 `om_x100b66593b0430b0df3dababcc942fe`、视频 `om_x100b665938b15ca4c2cc95ee1ae8c26` 发送成功，但均被 Cycle 006 的更正消息取代。
+
+### 2026-09-01 / Cycle 006
+
+- 通过飞书 CLI 读取 19:03 原始消息和媒体：文字 `om_x100b665f4046cca4c3b32975f3ae7a8`，视频 `om_x100b665f40716cacc264ada80e2ff9d`，文件名 `processed_joint_trajectory_30hz_front_above_v1.mp4`。
+- 原视频 SHA-256 为 `f816a988...450f83`，封面 SHA-256 为 `afcace27...a8b42`；直接检查封面确认标题为 `TAG MAP + CAM FLU`，视角注记为 `TAG-WALL FRONT + PHYSICAL ABOVE / UP = -Y MAP`。因此权威模板是 `tag-map-front-above`，不是 `flu-front-above`。
+- 语义差异：`Tag Map` 必须继续作为世界坐标；`Camera FLU/back=+X` 只定义手部相机子坐标。`flu-front-above` 会把世界视角重表达为 FLU，造成两个 AprilGrid 垂直堆叠，不符合 19:03 构图。
+- 在服务器用同一 v6 轨迹重新渲染 `processed_joint_trajectory_30hz_tag_map_front_above_v6.mp4`；audit 为 `view_preset=tag-map-front-above`、`coordinate_frame=TAG MAP`、`camera_frame=CAMERA FLU`，1920×1080、30 FPS、299 帧、SHA-256 `ba80d1d7...127238`。
+- 人工检查封面与 7.1 s 帧：两块 AprilGrid 横向朝向观察者；固定机位未跟随/旋转；7.1 s 左侧仍显示真实的 `INTERPOLATED_UNTRUSTED` 数值位姿。只纠正渲染语义，`joint_trajectory.csv` 未修改。
+- 飞书更正文字 `om_x100b6659c54deca0c3e103b57ba0ff7`、视频 `om_x100b6659c5740cacc3e63fcd9fc94b4` 发送成功；21:47 的 `flu-front-above` 视频正式作废。
+- 整点自动任务已同步改为强制 `tag-map-front-above`，并明确禁止 `flu-front-above`；后续算法变更出片必须匹配 19:03 的世界坐标和构图。
+- 渲染器默认预设也由 `legacy-oblique` 改为 `tag-map-front-above`，即使人工漏写参数也不会偏离 19:03 模板；聚焦测试 9 passed、完整测试 270 passed/7 skipped、Bandit 0 high/0 medium。
 
 ## 最近一次流水线版本变更验证
 
@@ -183,5 +194,5 @@
 - 服务器输出：`/home/ps/instaumi-data/instaumi_000001/final/dual-x5-four-mp4-cpu-v6/`。
 - 服务器报告：300/300 帧具备数值位姿；联合可信 268（89.33%）；联合实测 266（88.67%）；长间隔不可信 32 帧；全部门通过。
 - 服务器运行：竞争负载下 12.21 s；`time -v` 平均 CPU 921%；峰值 RSS 310,236 KiB；无 swap。无竞争基线仍采用 v5 的 6.49 s，待服务器空闲时再做同条件 v6 测量。
-- 最终审阅视频：`reviews/processed_joint_trajectory_30hz_front_above_v6.mp4`，SHA-256 `5fca5373...f79b0e`，固定 `flu-front-above`。
-- 飞书：文字和视频均发送成功，消息 ID 见 Cycle 005 日志。
+- 最终审阅视频：`reviews/processed_joint_trajectory_30hz_tag_map_front_above_v6.mp4`，SHA-256 `ba80d1d7...127238`，固定 `tag-map-front-above`；21:47 的 `flu-front-above` 文件仅保留作拒绝样本。
+- 飞书：更正文字和视频均发送成功，消息 ID 见 Cycle 006 日志。
