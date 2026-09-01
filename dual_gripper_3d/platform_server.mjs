@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import {promises as fsp} from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import {randomBytes} from 'node:crypto';
+import {randomBytes,timingSafeEqual} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 
 const argv={};
@@ -24,17 +24,44 @@ const MAX_SCENE_BYTES=2*1024*1024;
 const MAX_DEVICE_INVENTORY_BYTES=4*1024*1024;
 const deviceInventoryPath=path.join(dataDir,'x5_device_inventory.json');
 const PROJECT_ID=/^[a-z0-9-]{1,64}$/;
+const WRITE_TOKEN_PATTERN=/^[A-Za-z0-9._~-]{43,256}$/;
+
+function loadWriteToken(){
+  const inline=String(process.env.OSMO_PLATFORM_WRITE_TOKEN||'').trim();
+  const tokenFile=String(process.env.OSMO_PLATFORM_WRITE_TOKEN_FILE||'').trim();
+  if(inline&&tokenFile)throw new Error('configure only one of OSMO_PLATFORM_WRITE_TOKEN or OSMO_PLATFORM_WRITE_TOKEN_FILE');
+  let token=inline;
+  if(tokenFile){
+    const stat=fs.statSync(tokenFile);
+    if((stat.mode&0o077)!==0)throw new Error('platform write-token file must not be accessible by group or others');
+    token=fs.readFileSync(tokenFile,'utf8').trim();
+  }
+  if(!WRITE_TOKEN_PATTERN.test(token))throw new Error('platform write token is required and must contain at least 256 bits of random URL-safe text');
+  return token
+}
+const writeToken=loadWriteToken();
 
 await fsp.mkdir(dataDir,{recursive:true});
 
 const mime=file=>file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.json')?'application/json; charset=utf-8':file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.stl')?'model/stl':file.endsWith('.mp4')?'video/mp4':'application/octet-stream';
-const sendJson=(response,status,payload)=>{const body=Buffer.from(JSON.stringify(payload));response.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Content-Length':body.length,'Cache-Control':'no-store'});response.end(body)};
+const sendJson=(response,status,payload,headers={})=>{const body=Buffer.from(JSON.stringify(payload));response.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Content-Length':body.length,'Cache-Control':'no-store',...headers});response.end(body)};
 function safeAsset(base,relative){
   const resolved=path.resolve(base,relative),prefix=path.resolve(base)+path.sep;
   if(!resolved.startsWith(prefix))throw Object.assign(new Error('invalid asset path'),{status:400});
   return resolved
 }
 const sendError=(response,status,message)=>sendJson(response,status,{error:message});
+function authorizedForWrite(request){
+  const header=request.headers.authorization;
+  if(typeof header!=='string'||!header.startsWith('Bearer '))return false;
+  const presented=Buffer.from(header.slice(7),'utf8'),expected=Buffer.from(writeToken,'utf8');
+  return presented.length===expected.length&&timingSafeEqual(presented,expected)
+}
+function requireWriteAuthorization(request,response){
+  if(authorizedForWrite(request))return true;
+  sendJson(response,401,{error:'write authorization required'},{'WWW-Authenticate':'Bearer realm="osmo-motion-studio"'});
+  return false
+}
 const requestOrigin=request=>publicBaseUrl||`${String(request.headers['x-forwarded-proto']||'http').split(',')[0]}://${request.headers.host}`;
 const projectResponse=(request,metadata)=>{
   const origin=requestOrigin(request),base=`${origin}/api/projects/${metadata.id}`;
@@ -141,9 +168,11 @@ async function handle(request,response){
   const url=new URL(request.url,'http://localhost');
   const pathname=decodeURIComponent(url.pathname);
 
+  if(['POST','PUT','PATCH','DELETE'].includes(request.method)&&!requireWriteAuthorization(request,response))return;
+
   if(request.method==='GET'&&pathname==='/'){serveFile(request,response,platform);return}
-  if(request.method==='GET'&&pathname==='/healthz'){sendJson(response,200,{status:'ok',service:'osmo-motion-studio',api_version:'v1'});return}
-  if(request.method==='GET'&&pathname==='/api/capabilities'){sendJson(response,200,{api_version:'v1',input_mode:'processed_bundle',required_files:{timeline:{name:'timeline.json',content_type:'application/json',max_bytes:MAX_JSON_BYTES},video:{name:'front-video.mp4',content_type:'video/mp4',max_bytes:MAX_VIDEO_BYTES},scene:{name:'scene.html',content_type:'text/html',max_bytes:MAX_SCENE_BYTES}},upload_sequence:['POST /api/projects','PUT {links.timeline_upload}','PUT {links.video_upload}','PUT {links.scene_upload}','POST {links.publish}'],renderer:{scene:'project-versioned',legacy_fallback:'single_gripper_scene',fixed_mesh_revision:'gripper_v52_new_r1'}});return}
+  if(request.method==='GET'&&pathname==='/healthz'){sendJson(response,200,{status:'ok',service:'osmo-motion-studio',api_version:'v1',write_authentication:'bearer'});return}
+  if(request.method==='GET'&&pathname==='/api/capabilities'){sendJson(response,200,{api_version:'v1',input_mode:'processed_bundle',write_authentication:{type:'bearer',required:true},required_files:{timeline:{name:'timeline.json',content_type:'application/json',max_bytes:MAX_JSON_BYTES},video:{name:'front-video.mp4',content_type:'video/mp4',max_bytes:MAX_VIDEO_BYTES},scene:{name:'scene.html',content_type:'text/html',max_bytes:MAX_SCENE_BYTES}},upload_sequence:['POST /api/projects','PUT {links.timeline_upload}','PUT {links.video_upload}','PUT {links.scene_upload}','POST {links.publish}'],renderer:{scene:'project-versioned',legacy_fallback:'single_gripper_scene',fixed_mesh_revision:'gripper_v52_new_r1'}});return}
   if(pathname==='/api/devices'&&request.method==='GET'){const inventory=await readDeviceInventory();validateDeviceInventory(inventory);sendJson(response,200,inventory);return}
   if(pathname==='/api/devices'&&request.method==='PUT'){
     const inventory=await readJsonBody(request,MAX_DEVICE_INVENTORY_BYTES),count=validateDeviceInventory(inventory),temporary=deviceInventoryPath+'.part';

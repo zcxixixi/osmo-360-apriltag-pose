@@ -13,6 +13,7 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
 
+from osmo360.pipeline.platform_auth import platform_authorization_headers
 from tools._root import ROOT
 
 
@@ -20,9 +21,15 @@ DEFAULT_SERVER = os.environ.get("OSMO_VISUALIZATION_URL", "http://192.168.111.62
 DEFAULT_SCENE = ROOT / "dual_gripper_3d/single_gripper_scene.html"
 
 
-def request_json(url: str, method: str = "GET", payload: dict | None = None) -> dict:
+def request_json(
+    url: str,
+    method: str = "GET",
+    payload: dict | None = None,
+    authorization: dict[str, str] | None = None,
+) -> dict:
     body = json.dumps(payload).encode() if payload is not None else None
     headers = {"Content-Type": "application/json"} if body is not None else {}
+    headers.update(authorization or {})
     request = urllib.request.Request(url, data=body, method=method, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
@@ -37,7 +44,12 @@ def request_json(url: str, method: str = "GET", payload: dict | None = None) -> 
         raise RuntimeError(f"{method} {url}: {error.reason}") from error
 
 
-def put_file(url: str, file: Path, content_type: str) -> dict:
+def put_file(
+    url: str,
+    file: Path,
+    content_type: str,
+    authorization: dict[str, str] | None = None,
+) -> dict:
     parsed = urlparse(url)
     connection_type = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
     connection = connection_type(parsed.hostname, parsed.port, timeout=120)
@@ -47,6 +59,8 @@ def put_file(url: str, file: Path, content_type: str) -> dict:
         connection.putrequest("PUT", target)
         connection.putheader("Content-Type", content_type)
         connection.putheader("Content-Length", str(size))
+        for key, value in (authorization or {}).items():
+            connection.putheader(key, value)
         connection.endheaders()
         with file.open("rb") as source:
             while chunk := source.read(1024 * 1024):
@@ -73,6 +87,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scene", type=Path, default=DEFAULT_SCENE, help="Versioned single-gripper renderer")
     parser.add_argument("--name", help="Animation name; defaults to the timeline filename")
     parser.add_argument("--server", default=DEFAULT_SERVER, help=f"Platform base URL (default: {DEFAULT_SERVER})")
+    parser.add_argument(
+        "--write-token-file",
+        type=Path,
+        help=(
+            "private bearer-token file; otherwise use OSMO_PLATFORM_WRITE_TOKEN_FILE "
+            "or ~/.config/osmo360/platform-write-token"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -88,18 +110,24 @@ def main() -> int:
     capabilities = request_json(f"{server}/api/capabilities")
     if capabilities.get("api_version") != "v1":
         raise RuntimeError(f"unsupported platform API: {capabilities.get('api_version')!r}")
+    authorization = platform_authorization_headers(args.write_token_file)
     created = request_json(
         f"{server}/api/projects",
         "POST",
         {"name": args.name or timeline.stem},
+        authorization,
     )["project"]
-    put_file(created["links"]["timeline_upload"], timeline, "application/json")
-    put_file(created["links"]["video_upload"], video, "video/mp4")
+    put_file(
+        created["links"]["timeline_upload"], timeline, "application/json", authorization
+    )
+    put_file(created["links"]["video_upload"], video, "video/mp4", authorization)
     scene_upload = created["links"].get("scene_upload")
     if not scene_upload:
         raise RuntimeError("platform does not support versioned scene uploads")
-    put_file(scene_upload, scene, "text/html; charset=utf-8")
-    published = request_json(created["links"]["publish"], "POST")["project"]
+    put_file(scene_upload, scene, "text/html; charset=utf-8", authorization)
+    published = request_json(
+        created["links"]["publish"], "POST", authorization=authorization
+    )["project"]
     output = {
         "api_version": "v1",
         "project_id": published["id"],

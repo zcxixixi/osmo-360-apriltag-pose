@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .manifest import ManifestError, ROOT
+from .platform_auth import platform_authorization_headers
 
 
 CAMERA_SDK_ROOT = ROOT / "work/insta360-sdk/camera-2.1.1"
@@ -169,14 +170,19 @@ def assign_device(
 def sync_inventory(
     path: Path = DEFAULT_INVENTORY,
     server: str = DEFAULT_SERVER,
+    token_file: Path | None = None,
 ) -> dict[str, Any]:
     inventory = load_inventory(path)
     body = json.dumps(inventory, ensure_ascii=False).encode()
+    try:
+        authorization = platform_authorization_headers(token_file)
+    except RuntimeError as error:
+        raise ManifestError(str(error)) from error
     request = urllib.request.Request(
         server.rstrip("/") + "/api/devices",
         data=body,
         method="PUT",
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **authorization},
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:

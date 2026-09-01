@@ -214,6 +214,8 @@ CameraSDK 批量发现并增量登记序列号。
 页面提供“扫描已连接 X5”“登记全部”“同步到服务器”和“保存分配”按钮，并显示
 serial、固件、物理角色、BaseTag 和设备标签。服务器库存接口是
 `http://192.168.111.62:7865/api/devices`。
+平台 GET 审阅可在局域网读取，所有写入需要 Bearer 令牌；部署、轮换和客户端用法见
+[`docs/VISUALIZATION_PLATFORM_SECURITY.md`](docs/VISUALIZATION_PLATFORM_SECURITY.md)。
 
 
 ```bash
