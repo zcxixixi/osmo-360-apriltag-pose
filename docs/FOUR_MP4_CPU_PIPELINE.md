@@ -1,6 +1,6 @@
-# Four-MP4 CPU pipeline v7
+# Four-MP4 CPU pipeline v8
 
-`dual-x5-four-mp4-cpu-v7` accepts the four independent raw fisheye MP4 streams
+`dual-x5-four-mp4-cpu-v8` accepts the four independent raw fisheye MP4 streams
 produced by two X5 cameras. It does not import INSV and does not invoke the
 Insta360 stitching SDK. The official panorama is therefore no longer a
 localization prerequisite.
@@ -216,7 +216,7 @@ records every flow, redetection, scout, fallback, and rejection count.
 Persistent cache defaults to:
 
 ```text
-dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v7/<pair-id>/
+dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v8/<pair-id>/
 ```
 
 Set `OSMO_PIPELINE_CACHE` to a server-local SSD if the dataset itself is on a
@@ -239,7 +239,7 @@ self-calibration, not external ground truth.
 The principal outputs are:
 
 ```text
-final/dual-x5-four-mp4-cpu-v7/pairs/<pair-id>/tracking/
+final/dual-x5-four-mp4-cpu-v8/pairs/<pair-id>/tracking/
 ├── session_world_map.json
 ├── left_pose.csv
 ├── right_pose.csv
@@ -271,8 +271,15 @@ Sparse planar observations receive an additional confidence-aware temporal
 gate. A pose supported by only two co-planar Tags carried entirely by LK flow
 is rejected when it implies more than 1.5 m/s or 180 deg/s from the previous
 accepted pose. Direct multi-Tag reacquisition is exempt, so this rejects weak
-IPPE branch flips without smoothing or clipping real observed motion. The pose
-CSV records the measured temporal speeds and rejection reason for auditing.
+IPPE branch flips without smoothing or clipping real observed motion.
+
+Each selected inlier also retains its calibrated `lens_stream` provenance. At
+an unambiguous dominant-lens handoff, only the first candidate measurement is
+rejected when it crosses the same 1.5 m/s or 180 deg/s limit; the observed-lens
+state then advances so subsequent same-lens measurements are not rejected in a
+chain. Slow handoffs and fast same-lens direct measurements remain accepted.
+The pose CSV records per-lens inlier counts, dominant lens, measured temporal
+speeds, and the rejection reason for auditing.
 
 Generic four-MP4 input can still provide an external world map and initial
 poses to the existing held-out joint pose-graph optimizer:
@@ -297,7 +304,7 @@ Render the four source views beside the synchronized shared-map 3D tracks:
 ```bash
 .venv/bin/python -m tools.render_joint_four_mp4_trajectory \
   /data/session \
-  /data/session/final/dual-x5-four-mp4-cpu-v7/pairs/<pair-id>/tracking \
+  /data/session/final/dual-x5-four-mp4-cpu-v8/pairs/<pair-id>/tracking \
   /data/session/final/joint_trajectory_comparison.mp4
 ```
 

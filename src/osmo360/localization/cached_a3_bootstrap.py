@@ -42,6 +42,7 @@ class Detection:
     rays: np.ndarray
     area_px2: float
     source: str
+    lens_stream: int | None
 
 
 STREAM0_FROM_HAND_FLU = Rotation.from_matrix(
@@ -182,12 +183,18 @@ def load_cache_frames(path: Path) -> tuple[dict[int, dict[int, Detection]], dict
         rays = np.asarray(cache["rays_camera"], dtype=np.float64)
         areas = np.asarray(cache["area_px2"])
         sources = np.asarray(cache["detection_source"])
+        try:
+            lens_streams = np.asarray(cache["lens_stream"])
+        except KeyError:
+            # Keep older observation caches readable. A missing provenance
+            # field disables the handoff gate instead of guessing a lens.
+            lens_streams = np.full(len(frame_indices), -1, dtype=np.int8)
         timeline_frames = np.asarray(cache["timeline_frame_index"])
         timeline_times = np.asarray(cache["timeline_common_time_s"], dtype=np.float64)
 
     frames: dict[int, dict[int, Detection]] = {}
-    for frame_value, tag_value, ray, area, source in zip(
-        frame_indices, tag_ids, rays, areas, sources, strict=True
+    for frame_value, tag_value, ray, area, source, lens_stream in zip(
+        frame_indices, tag_ids, rays, areas, sources, lens_streams, strict=True
     ):
         frame = int(frame_value)
         tag_id = int(tag_value)
@@ -196,6 +203,7 @@ def load_cache_frames(path: Path) -> tuple[dict[int, dict[int, Detection]], dict
             rays=ray,
             area_px2=float(area),
             source=str(source),
+            lens_stream=(int(lens_stream) if int(lens_stream) >= 0 else None),
         )
         previous = frames.setdefault(frame, {}).get(tag_id)
         if previous is None or detection.area_px2 > previous.area_px2:
@@ -388,19 +396,27 @@ def _temporal_gate(
     *,
     inlier_tag_count: int,
     sources: set[str],
+    dominant_lens_stream: int | None = None,
+    previous_dominant_lens_stream: int | None = None,
 ) -> dict[str, Any]:
     """Reject implausible weak planar-PnP branches without smoothing motion.
 
     Two co-planar Tags carried only by LK optical flow are useful for filling
     ordinary motion, but they do not provide enough independent evidence to
-    accept a sudden IPPE branch change.  Strong direct re-detections remain
-    unrestricted so that fast real motion and reacquisition are preserved.
+    accept a sudden IPPE branch change. A dominant calibrated-lens handoff is
+    also treated as weak evidence for one frame: the two fisheye lenses have
+    distinct optical centres, and a solve change at that exact boundary can
+    otherwise become a false measured jump. Fast same-lens direct
+    re-detections remain unrestricted.
     """
     result: dict[str, Any] = {
         "delta_s": None,
         "speed_m_s": None,
         "angular_speed_deg_s": None,
         "weak_flow_only_measurement": False,
+        "lens_handoff_measurement": False,
+        "dominant_lens_stream": dominant_lens_stream,
+        "previous_dominant_lens_stream": previous_dominant_lens_stream,
         "rejected": False,
         "reason": "not_applicable",
     }
@@ -416,19 +432,47 @@ def _temporal_gate(
     angular_speed = angle / delta_s
     flow_only = bool(sources) and all(source.startswith("lk_") for source in sources)
     weak = inlier_tag_count <= 2 and flow_only
-    rejected = weak and (speed > 1.5 or angular_speed > 180.0)
+    lens_handoff = (
+        dominant_lens_stream is not None
+        and previous_dominant_lens_stream is not None
+        and dominant_lens_stream != previous_dominant_lens_stream
+    )
+    exceeds_motion_limit = speed > 1.5 or angular_speed > 180.0
+    rejected = (weak or lens_handoff) and exceeds_motion_limit
     result.update({
         "delta_s": delta_s,
         "speed_m_s": speed,
         "angular_speed_deg_s": angular_speed,
         "weak_flow_only_measurement": weak,
+        "lens_handoff_measurement": lens_handoff,
         "rejected": rejected,
         "reason": (
-            "sparse_flow_planar_pose_exceeds_temporal_limits"
-            if rejected else "accepted"
+            "lens_handoff_pose_exceeds_temporal_limits"
+            if lens_handoff and exceeds_motion_limit
+            else (
+                "sparse_flow_planar_pose_exceeds_temporal_limits"
+                if weak and exceeds_motion_limit else "accepted"
+            )
         ),
     })
     return result
+
+
+def _inlier_lens_streams(
+    detections: dict[int, Detection],
+    inlier_ids: list[int],
+) -> tuple[int | None, dict[int, int]]:
+    """Return an unambiguous dominant calibrated lens and provenance counts."""
+    counts: dict[int, int] = {}
+    for tag_id in inlier_ids:
+        lens_stream = detections[tag_id].lens_stream
+        if lens_stream is not None:
+            counts[lens_stream] = counts.get(lens_stream, 0) + 1
+    if not counts:
+        return None, counts
+    maximum = max(counts.values())
+    winners = [lens for lens, count in counts.items() if count == maximum]
+    return (winners[0] if len(winners) == 1 else None), counts
 
 
 def track_cache(
@@ -448,6 +492,7 @@ def track_cache(
     })
     rows: list[dict[str, Any]] = []
     previous: tuple[float, Pose] | None = None
+    previous_observed_dominant_lens: int | None = None
     for frame, detections in sorted(frames.items()):
         ids = sorted(set(detections) & set(world_corners))
         if len(ids) < minimum_tags:
@@ -500,16 +545,29 @@ def track_cache(
         errors = angular_errors(inlier_points, inlier_rays, pose)
         rmse = float(np.sqrt(np.mean(errors ** 2)))
         sources = {detections[tag_id].source for tag_id in inlier_ids}
+        dominant_lens, inlier_lens_counts = _inlier_lens_streams(
+            detections, inlier_ids
+        )
         temporal = _temporal_gate(
             pose,
             previous,
             now_s,
             inlier_tag_count=len(inlier_ids),
             sources=sources,
+            dominant_lens_stream=dominant_lens,
+            previous_dominant_lens_stream=previous_observed_dominant_lens,
         )
         quality = "valid" if rmse <= max_angular_rmse_deg else "angular_rmse_rejected"
-        if quality == "valid" and temporal["rejected"]:
+        if quality != "valid":
+            temporal["rejected"] = False
+            temporal["reason"] = "not_applied_angular_rmse_rejected"
+        elif temporal["rejected"]:
             quality = "temporal_outlier_rejected"
+        # Advance the observation-side lens state after a geometrically valid
+        # solve even when its pose is temporally rejected. Otherwise one real
+        # handoff would repeatedly reject every subsequent frame on that lens.
+        if rmse <= max_angular_rmse_deg and dominant_lens is not None:
+            previous_observed_dominant_lens = dominant_lens
         if quality == "valid":
             previous = (now_s, pose)
         output_pose = pose_to_hand_camera_flu(pose)
@@ -541,6 +599,13 @@ def track_cache(
                 if all(not source.startswith("lk_") for source in sources)
                 else "cached_raw_fisheye_bearing_flow_assisted"
             ),
+            "dominant_lens_stream": (
+                "" if dominant_lens is None else str(dominant_lens)
+            ),
+            "inlier_lens_stream_counts": " ".join(
+                f"{lens}:{count}"
+                for lens, count in sorted(inlier_lens_counts.items())
+            ),
             "temporal_delta_s": (
                 "" if temporal["delta_s"] is None
                 else f"{temporal['delta_s']:.9f}"
@@ -571,6 +636,12 @@ def track_cache(
         "temporal_outlier_rejected_frames": sum(
             row["quality_status"] == "temporal_outlier_rejected" for row in rows
         ),
+        "lens_handoff_temporal_outlier_rejected_frames": sum(
+            row["quality_status"] == "temporal_outlier_rejected"
+            and row["temporal_gate_reason"]
+                == "lens_handoff_pose_exceeds_temporal_limits"
+            for row in rows
+        ),
         "angular_rmse_deg": {
             "median": float(np.median(residuals)) if len(residuals) else None,
             "p95": float(np.percentile(residuals, 95)) if len(residuals) else None,
@@ -591,7 +662,8 @@ POSE_FIELDS = [
     "qx", "qy", "qz", "qw", "roll_deg", "pitch_deg", "yaw_deg",
     "parent_frame", "child_frame", "detected_tag_count", "inlier_tag_count",
     "inlier_count", "angular_rmse_deg", "detected_ids", "inlier_ids",
-    "measurement_source", "temporal_delta_s", "temporal_speed_m_s",
+    "measurement_source", "dominant_lens_stream", "inlier_lens_stream_counts",
+    "temporal_delta_s", "temporal_speed_m_s",
     "temporal_angular_speed_deg_s", "temporal_gate_reason", "quality_status",
 ]
 

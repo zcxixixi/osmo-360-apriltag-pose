@@ -555,7 +555,7 @@ def run_tracking(
         signature = {
             "schema_version": "four-mp4-auto-tracking-input/1.0",
             "algorithm_revision": (
-                "cached-a3-shared-map-joint-v8-ffmpeg-gray-calibrated-gyro-bridge-hand-flu-back-x"
+                "cached-a3-shared-map-joint-v9-lens-handoff-gate-ffmpeg-gray-calibrated-gyro-bridge-hand-flu-back-x"
             ),
             "mode": automatic.get("mode"),
             "observation_processing_signature": {
