@@ -32,6 +32,7 @@
 | 回归测试 | 本地和服务器均为 281 passed，7 skipped；新增真实 FFmpeg 全量/隔帧/非零 seek 逐帧一致性和合成 IMU 桥接测试 |
 | IMU 状态 | 当前 `dataset.h5` 共享 IMU 样本数为 0，左右独立流缺失；v7 明确 `UNAVAILABLE_NO_SAMPLES`，32 个长间隔帧回退视觉 `INTERPOLATED_UNTRUSTED`，不伪造 IMU |
 | 最新已发视频 | v7 `processed_joint_trajectory_30hz_tag_map_front_above_v7.mp4`，固定 `tag-map-front-above`，SHA-256 `913acc10...ea311` |
+| 受管服务实际 unit | `osmo-visualization.service`、`osmo-alignment-review.service`（认证网关）、`osmo-alignment-review-backend.service`；三者均为 user unit，active/enabled、`NRestarts=0` |
 
 ## 问题清单
 
@@ -219,6 +220,16 @@
 - 服务器首次 v7 自然无缓存运行成功：13.53 s，平均 826% CPU，峰值 RSS 261,276 KiB、无 swap；同时存在两条真实 ORB-SLAM 任务合计约 303% CPU，本轮未停止。结果 `SELF_CALIBRATED_PASS`，300/300 双侧数值位姿、268 联合可信、266 双侧实测、32 长间隔不可信，所有质量门通过。
 - 服务器输出为 `/home/ps/instaumi-data/instaumi_000001/final/dual-x5-four-mp4-cpu-v7/`。固定 `tag-map-front-above` 录制 1920x1080、30 FPS、299 帧视频 `processed_joint_trajectory_30hz_tag_map_front_above_v7.mp4`，SHA-256 `913acc1039d20ae3c7747a872110b958d55a883adb5747e0fd92084a494ea311`；人工检查封面和 7.1 s，构图保持 19:03 的 `TAG MAP + CAM FLU`、两网格横排、正面斜上固定机位。
 - 飞书进度文字 `om_x100b665a67f944acdeb428b4a762994`、视频 `om_x100b665a67673cb4c2409e79d953731` 发送成功。代码提交为本地 `fcd574b`、服务器等价 `11dfd60`。
+
+### 2026-09-01 / Cycle 009
+
+- 本轮为只读可靠性与产物完整性审计，没有修改算法、坐标、时间线、渲染或审核页面，因此没有重复无缓存处理和视频录制。服务器 CPU 分支工作树干净，HEAD `25bc7d1`；没有运行中的四 MP4 cache/tracking 任务。
+- 正式 v7 产物复核：`SELF_CALIBRATED_PASS`，联合时间线 300 帧、300 帧双侧数值位姿、268 联合可信、266 双侧实测；时间戳中位频率 `29.969730572 Hz`，时长 `9.976634 s`。左右测量 CSV 的唯一 child frame 均为 `hand_camera_flu_back_x`，parent 均为 `session_grid_A`。
+- 四路 observation sidecar 均为 `ffmpeg_rawvideo_pipe` / `gray8_luma`，每路 300 个检索帧；运行时 SHA-256 均为锁定值 `91f3138d...1143`。当前 H5 SHA-256 仍为 `0da72cd9...003`，IMU 状态仍为 `UNAVAILABLE_NO_SAMPLES`，未发生输入替换或误用共享 IMU。
+- 19:03 模板审计仍为 `tag-map-front-above`、`TAG MAP`、`CAMERA FLU`、1920x1080、30 FPS、299 帧；视频实际 SHA-256 与 audit 均为 `913acc1039d20ae3c7747a872110b958d55a883adb5747e0fd92084a494ea311`，无需重复出片。
+- 纠正运维探测口径：旧探测使用了不存在的 `osmo-visualization-platform.service` 和 `osmo-alignment-review-gateway.service`，会产生假 `inactive`。实际 user unit 是 `osmo-visualization.service`、`osmo-alignment-review.service`（认证网关）和 `osmo-alignment-review-backend.service`；三者均 active/enabled、`NRestarts=0`，内存约 20.4/13.1/32.9 MiB。未认证 `:7865 /api/devices` 与 `:7869 /api/items` 仍分别返回 401，网关根页面返回 303 登录跳转。
+- 当前一条独立 ORB-SLAM 任务约占 393% CPU，未停止或调度；磁盘使用 23%，可用约 1.4 TiB。SEC-005 的独立 `:8000` 服务仍从登录 session 监听全 LAN，进程已运行约 4 天 9 小时，`/api/processing/status` 只读请求 5 秒超时；本轮没有越权停止或修改，仍等待业务确认。
+- 飞书整点进度 `om_x100b665b6ae83ca0c2386b49fcc8f52` 发送成功。本轮下一步保持 QUAL-003（等待左右独立 IMU 新数据）和 SEC-005（需业务确认治理）不变。
 
 ## 最近一次流水线版本变更验证
 
