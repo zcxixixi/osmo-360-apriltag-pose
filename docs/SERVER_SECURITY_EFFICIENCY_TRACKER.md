@@ -28,7 +28,7 @@
 | 运行时提交 | 本地 `0e0a2d4`，服务器等价 `45802c5` |
 | 服务器无缓存耗时 | 无竞争 v5 基线 6.49 s；v6 在两条独立 ORB-SLAM 各占约 335% CPU、load 18 时为 12.21 s，峰值 RSS 310,236 KiB |
 | 输出 | 300/300 帧具备双侧数值位姿；268 帧联合可信，266 帧双侧实测，`SELF_CALIBRATED_PASS` |
-| 回归测试 | 本地为 270 passed，7 skipped；服务器待部署本轮兼容入口与默认视角后复测；Bandit 0 high/0 medium |
+| 回归测试 | 本地和服务器均为 270 passed，7 skipped；Bandit 本地 0 high/0 medium |
 | 一致性 | v6/v5 `joint_trajectory.csv` SHA-256 同为 `52c3e192...b82ed`；视角纠正只重新渲染，未改轨迹文件 |
 | 最新已发视频 | v6 `processed_joint_trajectory_30hz_tag_map_front_above_v6.mp4`，固定 `tag-map-front-above`，SHA-256 `ba80d1d7...127238` |
 
@@ -186,6 +186,7 @@
 - 飞书更正文字 `om_x100b6659c54deca0c3e103b57ba0ff7`、视频 `om_x100b6659c5740cacc3e63fcd9fc94b4` 发送成功；21:47 的 `flu-front-above` 视频正式作废。
 - 整点自动任务已同步改为强制 `tag-map-front-above`，并明确禁止 `flu-front-above`；后续算法变更出片必须匹配 19:03 的世界坐标和构图。
 - 渲染器默认预设也由 `legacy-oblique` 改为 `tag-map-front-above`，即使人工漏写参数也不会偏离 19:03 模板；聚焦测试 9 passed、完整测试 270 passed/7 skipped、Bandit 0 high/0 medium。
+- 本轮代码已部署为本地 `73baba3`、服务器等价 `fcaa079`；服务器完整测试同为 270 passed/7 skipped。服务器省略 `--view-preset` 重新出片的 audit 仍为 `tag-map-front-above / TAG MAP / CAMERA FLU`，视频 SHA 与已发更正版同为 `ba80d1d7...127238`，证明新默认值逐字节复现已接受结果；临时校验目录已清理。
 
 ## 最近一次流水线版本变更验证
 
