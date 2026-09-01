@@ -350,6 +350,56 @@ def _candidate_score(
     return score, tag_errors
 
 
+def _temporal_gate(
+    pose: Pose,
+    previous: tuple[float, Pose] | None,
+    now_s: float,
+    *,
+    inlier_tag_count: int,
+    sources: set[str],
+) -> dict[str, Any]:
+    """Reject implausible weak planar-PnP branches without smoothing motion.
+
+    Two co-planar Tags carried only by LK optical flow are useful for filling
+    ordinary motion, but they do not provide enough independent evidence to
+    accept a sudden IPPE branch change.  Strong direct re-detections remain
+    unrestricted so that fast real motion and reacquisition are preserved.
+    """
+    result: dict[str, Any] = {
+        "delta_s": None,
+        "speed_m_s": None,
+        "angular_speed_deg_s": None,
+        "weak_flow_only_measurement": False,
+        "rejected": False,
+        "reason": "not_applicable",
+    }
+    if previous is None:
+        return result
+    previous_time, previous_pose = previous
+    delta_s = max(float(now_s - previous_time), 1e-3)
+    distance = float(np.linalg.norm(pose.position - previous_pose.position))
+    angle = float(np.degrees(
+        (previous_pose.rotation.inv() * pose.rotation).magnitude()
+    ))
+    speed = distance / delta_s
+    angular_speed = angle / delta_s
+    flow_only = bool(sources) and all(source.startswith("lk_") for source in sources)
+    weak = inlier_tag_count <= 2 and flow_only
+    rejected = weak and (speed > 1.5 or angular_speed > 180.0)
+    result.update({
+        "delta_s": delta_s,
+        "speed_m_s": speed,
+        "angular_speed_deg_s": angular_speed,
+        "weak_flow_only_measurement": weak,
+        "rejected": rejected,
+        "reason": (
+            "sparse_flow_planar_pose_exceeds_temporal_limits"
+            if rejected else "accepted"
+        ),
+    })
+    return result
+
+
 def track_cache(
     cache_path: Path,
     panel_a: dict[int, np.ndarray],
@@ -418,12 +468,21 @@ def track_cache(
         pose = refine_pose(inlier_points, inlier_rays, initial)
         errors = angular_errors(inlier_points, inlier_rays, pose)
         rmse = float(np.sqrt(np.mean(errors ** 2)))
+        sources = {detections[tag_id].source for tag_id in inlier_ids}
+        temporal = _temporal_gate(
+            pose,
+            previous,
+            now_s,
+            inlier_tag_count=len(inlier_ids),
+            sources=sources,
+        )
         quality = "valid" if rmse <= max_angular_rmse_deg else "angular_rmse_rejected"
+        if quality == "valid" and temporal["rejected"]:
+            quality = "temporal_outlier_rejected"
         if quality == "valid":
             previous = (now_s, pose)
         quaternion = pose.rotation.as_quat()
         euler = pose.rotation.as_euler("xyz", degrees=True)
-        sources = {detections[tag_id].source for tag_id in inlier_ids}
         rows.append({
             "frame": frame,
             "timestamp": f"{now_s:.9f}",
@@ -450,6 +509,19 @@ def track_cache(
                 if all(not source.startswith("lk_") for source in sources)
                 else "cached_raw_fisheye_bearing_flow_assisted"
             ),
+            "temporal_delta_s": (
+                "" if temporal["delta_s"] is None
+                else f"{temporal['delta_s']:.9f}"
+            ),
+            "temporal_speed_m_s": (
+                "" if temporal["speed_m_s"] is None
+                else f"{temporal['speed_m_s']:.6f}"
+            ),
+            "temporal_angular_speed_deg_s": (
+                "" if temporal["angular_speed_deg_s"] is None
+                else f"{temporal['angular_speed_deg_s']:.6f}"
+            ),
+            "temporal_gate_reason": temporal["reason"],
             "quality_status": quality,
         })
     valid = [row for row in rows if row["quality_status"] == "valid"]
@@ -464,6 +536,9 @@ def track_cache(
         "observed_frames": len(rows),
         "valid_frames": len(valid),
         "valid_ratio": len(valid) / len(rows) if rows else 0.0,
+        "temporal_outlier_rejected_frames": sum(
+            row["quality_status"] == "temporal_outlier_rejected" for row in rows
+        ),
         "angular_rmse_deg": {
             "median": float(np.median(residuals)) if len(residuals) else None,
             "p95": float(np.percentile(residuals, 95)) if len(residuals) else None,
@@ -484,7 +559,8 @@ POSE_FIELDS = [
     "qx", "qy", "qz", "qw", "roll_deg", "pitch_deg", "yaw_deg",
     "parent_frame", "child_frame", "detected_tag_count", "inlier_tag_count",
     "inlier_count", "angular_rmse_deg", "detected_ids", "inlier_ids",
-    "measurement_source", "quality_status",
+    "measurement_source", "temporal_delta_s", "temporal_speed_m_s",
+    "temporal_angular_speed_deg_s", "temporal_gate_reason", "quality_status",
 ]
 
 
