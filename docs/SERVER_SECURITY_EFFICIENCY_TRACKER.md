@@ -22,16 +22,16 @@
 
 | 项目 | 当前证据 |
 |---|---|
-| 流水线 | `dual-x5-four-mp4-cpu-v6`，30 Hz，手部相机 FLU，`back = +X`，每帧数值位姿与可信度解耦，项目 FFmpeg 9.0.1 哈希锁定 |
-| 本地算法提交 | `72203d6` (`fix: retain a pose on every joint frame`) |
-| 服务器等价算法提交 | `b9f7803` |
+| 流水线 | `dual-x5-four-mp4-cpu-v7`，30 Hz，锁定 FFmpeg 9.0.1 `gray8 rawvideo` 管道，手部相机 FLU、`back = +X`，每帧数值位姿与可信度解耦，低置信度段支持严格标定的左右独立陀螺仪桥接 |
+| 本地算法提交 | `fcd574b` (`feat: stream grayscale frames through ffmpeg`) |
+| 服务器等价算法提交 | `11dfd60` |
 | 运行时提交 | 本地 `0e0a2d4`，服务器等价 `45802c5` |
 | 审核网关提交 | 本地安全代码 `3e5a0b3`、unit `2fd08c3`；服务器等价 `a6f22f2`、`f0ffecd` |
-| 服务器无缓存耗时 | 无竞争 v5 基线 6.49 s；v6 在两条独立 ORB-SLAM 各占约 335% CPU、load 18 时为 12.21 s，峰值 RSS 310,236 KiB |
+| 服务器无缓存耗时 | 无竞争 v5 基线 6.49 s；v7 在两条独立 ORB-SLAM 合计约 303% CPU 时为 13.53 s，平均 826% CPU，峰值 RSS 261,276 KiB、无 swap |
 | 输出 | 300/300 帧具备双侧数值位姿；268 帧联合可信，266 帧双侧实测，`SELF_CALIBRATED_PASS` |
-| 回归测试 | 本地和服务器均为 278 passed，7 skipped；Ruff 通过；Bandit 本地 0 high/0 medium |
-| 一致性 | v6/v5 `joint_trajectory.csv` SHA-256 同为 `52c3e192...b82ed`；视角纠正只重新渲染，未改轨迹文件 |
-| 最新已发视频 | v6 `processed_joint_trajectory_30hz_tag_map_front_above_v6.mp4`，固定 `tag-map-front-above`，SHA-256 `ba80d1d7...127238` |
+| 回归测试 | 本地和服务器均为 281 passed，7 skipped；新增真实 FFmpeg 全量/隔帧/非零 seek 逐帧一致性和合成 IMU 桥接测试 |
+| IMU 状态 | 当前 `dataset.h5` 共享 IMU 样本数为 0，左右独立流缺失；v7 明确 `UNAVAILABLE_NO_SAMPLES`，32 个长间隔帧回退视觉 `INTERPOLATED_UNTRUSTED`，不伪造 IMU |
+| 最新已发视频 | v7 `processed_joint_trajectory_30hz_tag_map_front_above_v7.mp4`，固定 `tag-map-front-above`，SHA-256 `913acc10...ea311` |
 
 ## 问题清单
 
@@ -42,6 +42,7 @@
 | SEC-001 | 高 | RESOLVED | H5 `dataset_id` 和 JSON `pair_id` 未验证即参与缓存/最终目录拼接；worker 发布阶段对计算出的目标目录执行 `shutil.rmtree`。恶意 `../` 可造成路径穿越和越界删除。涉及 `instaumi.py`、`four_mp4.py`、`four_mp4_worker.py`、`dataset_worker.py`。 | 已实现标识白名单、发现/worker 双重验证、修订锁检查、解析后包含性检查与逐级符号链接拒绝；13 个恶意输入/发布场景、真实 dry-run、服务器完整发布均通过。提交 `80e0f7f`，服务器 `3f09e68`。 |
 | QUAL-001 | 高 | RESOLVED | `write_joint_pose_csv` 对所有处于首尾测量之间的缺失帧插值，不限制相邻测量间隔。当前左轨迹报告最大插值间隔约 0.634 s，违反 v50 最大可信间隔 0.25 s 约束。 | v4 长间隔输出 `INTERPOLATED_UNTRUSTED`、空位姿、联合无效；渲染隐藏相机并断开轨迹/趋势线。服务器无缓存结果：可信最大 0.0667 s，拒绝最大 0.6340 s，32 帧不可信，联合有效率 89.33%，全部门通过；7.1 秒视频人工检查通过。 |
 | QUAL-002 | 高 | RESOLVED | v4 将长间隔的 XYZ/四元数置空，导致 32/300 帧不具备数值位姿，不符合当前“每帧都有位姿”的产品需求。 | v5 每帧保留位姿：长段插值为 `INTERPOLATED_UNTRUSTED`，首尾为 `HELD_UNTRUSTED`，`joint_has_pose` 与 `joint_valid` 解耦。服务器逐行审计 300/300 非空且有限，四元数归一，v3/v5 数值差为 0；视频中 7.1 s 位姿持续显示。 |
+| QUAL-003 | 中 | IN_PROGRESS | v7 已实现低置信度内部间隔的陀螺仪姿态桥接，但当前样例 H5 只有空的共享 `/sensor/imu`，没有可安全绑定到两只独立手部相机的样本。 | 新数据集提供左右独立 IMU 时间戳/角速度/valid、`T_rig_imu_left/right`、`T_rig_camera_left/right` 和明确 `T_target_source` 语义后，无缓存复跑并检查样本覆盖、最大间隔、端点闭合量及视频；位置继续使用视觉端点插值，不做未经验证的加速度二次积分。 |
 | REL-001 | 高 | RESOLVED | 结果发布采用“先删最终目录，再 copytree”。处理中断会丢失上一版已完成输出，且放大 SEC-001 的破坏面。 | 已改为同级临时目录完整复制后切换，旧目录先重命名为可恢复备份，切换成功后才删除；服务器真实发布成功且不存在 `.publish-*`/`.backup-*` 残留。 |
 | SEC-002 | 中 | OPEN | 服务器流水线以高权限 `ps` 用户运行；该用户属于 `sudo`、`docker`、`lxd`、`k3s-admin` 等组，项目代码的进程被攻破后影响面很大。 | 设计最小权限服务账户、只读代码/输入和独立可写缓存/输出；迁移前需用户授权，不能擅自改变现有组。 |
 | SEC-003 | 中 | IN_PROGRESS | 服务器有 `0.0.0.0:8000`、`:7864`、`:7865`、`:7869` 等项目相关服务监听局域网。`:7865`、`:7869` 已认证；其余服务的归属与接口已完成只读审计并拆为 SEC-005/007。 | 当前最高风险为独立项目的 SEC-005；`:7864` 按 SEC-007 决定停用或迁移。 |
@@ -59,7 +60,7 @@
 | SEC-011 | 高 | RESOLVED | CPython `urllib` 的默认 302 处理会把原请求的 `Authorization` 原样转发到跨域 Location；本地双 HTTP 服务已复现 Bearer 到达第二个域。设备同步和可视化 JSON API 使用默认 `urlopen`，上传客户端还信任创建响应中的绝对 `links`，错误配置或被攻破的平台可窃取写令牌。 | 所有带认证的 urllib API 请求使用拒绝重定向 opener，302 直接报错且第二服务未收到请求；上传 URL 不再读取响应中的绝对 links，而是校验 `[a-z0-9-]{1,64}` 项目 ID 后从用户配置的 server 本地构造四个端点。新增真实双服务泄露回归、恶意 links 和路径 ID 测试；本地 `5ae4c84`、服务器 `2c7f2d7`。 |
 | SEC-012 | 中 | OPEN | `:7865` 和新 `:7869` 仍通过局域网明文 HTTP 提供认证；这能阻止未授权客户端直接读写，但不能抵御同网段被动嗅探令牌、登录表单或会话 Cookie。`SameSite`/CSRF 不等于传输加密。 | 优先复用受管 TLS 反向代理或内部 CA，为两个服务提供 HTTPS 后将 Cookie 标为 `Secure`；部署前盘点现有 `:443` 所属，不能抢占 Kubernetes/其他业务端口。短期只在可信 LAN 使用，令牌不发飞书、不进 URL/日志。 |
 | EFF-001 | 高 | RESOLVED | 压缩 NPZ 的每个数组被重复打开和解压。缓存读取改为一次加载所有成员。 | 服务器无缓存耗时 14.26 s → 6.10 s；输出逐字节一致；提交 `293df8b`。 |
-| EFF-002 | 中 | DEFERRED | FFmpeg 管道软件解码约 2.04 s，OpenCV 包装约 2.70 s；VAAPI 四路约 7.43 s。主路径 OpenCV 4.14 已内置 FFmpeg 8.1.2。外部 FFprobe 9.0.1 的 800 次探测由 23.44 s 降至 4.34 s，但每任务仅探测四个文件，端到端收益很小。 | 若后续解码占比重新升高，建立完整像素/Tag/轨迹回归门后再调整主 `cv2.VideoCapture`；当前继续使用已验证的软件解码和线程上限。 |
+| EFF-002 | 中 | RESOLVED | v7 主观察路径不再使用 `cv2.VideoCapture`：锁定 FFmpeg 9.0.1 精确 seek、按 cadence 选帧、提取 `gray8` luma 并经 bounded `rawvideo` stdout 传给 Python；逐帧验证固定字节数、期望帧数、退出码和运行时哈希。真实视频第 120 帧 seek 的 20 个输出与同一 FFmpeg 全量解码对应帧完全一致；合成视频全量/隔帧/seek 回归通过。 | 保持软件解码和每 worker 线程上限；当前共享负载 v7 为 13.53 s，不能与无竞争 6.49 s 直接比较。服务器空闲时补同条件无竞争基准，若仍未达到目标再基于阶段计时优化检测而非放宽轨迹质量门。 |
 | EFF-003 | 中 | RESOLVED | 观察缓存已有 4×4 预算，但备用联合 pose-graph 的 8 个 Python worker 未限制 BLAS/OpenMP，存在 8×32 嵌套线程放大；不同任务之间也没有主机级并发门。 | 每任务最多 16 逻辑线程，小主机自动降配；OpenCV/FFmpeg/BLAS/OpenMP/BLIS/vecLib 全部继承限额，pose-graph 每 worker 1 个数学线程。默认同用户整机 1 个任务槽，可在总量不超过逻辑核时显式增加。双任务并发实测串行、无发布竞态；轨迹 SHA 不变。提交本地 `5dad620`/`e2400fb`，服务器 `5d550f6`/`449fde0`。 |
 | EFF-004 | 低 | RESOLVED | `:7869` 审核服务主要待机，却因 OpenCV/数学库默认线程池保持 63 个线程、RSS 103,004 KiB。 | systemd 环境将所有原生线程池限制为 1；重启后接口仍为 200、32 条记录可读，线程 63→1、RSS 103,004→68,804 KiB，systemd `MemoryCurrent` 约 62.2→33.8 MiB。 |
 | EFF-005 | 低 | IN_PROGRESS | `:7869 /api/items` 仍同步调用旧源码的 `store.scan()`；新后端冷启动（含 Python/OpenCV 与首次扫描）约 8 s。生产热态 48 条记录连续 5 次为 11.7–28.4 ms，网关 12.8 MiB/1 task、后端 32.7 MiB/1 task，较先前一次 3.06 s 热请求明显改善但尚未证明持久。 | 保持认证/线程边界，下一轮跨小时采样冷/热分位；将无 Git 旧源码迁入受管分支后再实现带输入指纹失效的缓存，不能用永久缓存隐藏新数据。 |
@@ -207,12 +208,25 @@
 - 新增 SEC-012：当前仍是明文 LAN HTTP，认证不等于 TLS，后续先盘点现有 `:443` 再部署 HTTPS；不把令牌发送飞书。访问令牌只能由授权管理员在服务器终端读取 `/home/ps/.config/osmo360/alignment-review-token`。
 - 22:00 飞书进度消息 `om_x100b6659e68b04a0c34bcecf0e9669d`、生产落地补充 `om_x100b6659915830a0ddc1a23043e0b58` 均发送成功。本轮只改安全边界和服务编排，没有改四 MP4、轨迹、坐标、时间线或渲染算法，因此未重跑 `instaumi_000001`、未生成重复视频；最近有效视频仍为 Cycle 006 的 `ba80d1d7...127238`。
 
+### 2026-09-01 / Cycle 008
+
+- 用户明确要求主解码改成 FFmpeg + Python 管道，并在 AprilTag 低置信度段结合 IMU；同时要求不再修改审核页面。本轮未修改审核网关、审核 UI、v50 受保护算法或既有 v6 输出。
+- 新增锁定 FFmpeg 9.0.1 的 `gray8 rawvideo` 管道：无 shell、输入固定本地视频、chunk 起点精确 seek、FFmpeg 内按 cadence 选帧并提取 luma、Python 对每帧字节数/总帧数/额外尾字节/退出码 fail-closed，stderr 使用临时文件避免 pipe 死锁。sidecar 记录 FFmpeg/FFprobe 哈希、版本、seek 区间和传输格式。
+- 真实 `Left_back.mp4` 从第 120 帧 seek 后输出的 20 帧与同一 FFmpeg 全量输出对应帧逐字节一致；新增合成视频全量、隔帧、非零 seek 回归。主观察路径已从 OpenCV `VideoCapture` 切到 FFmpeg stdout，渲染/录制方式保持原样。
+- 新增左右独立 IMU loader 与低置信度姿态桥接：只接受 per-side 流、严格递增有限时间戳、valid mask、最长 50 ms 样本间隔、明确 `T_target_source` 以及完整 `T_rig_camera_*`/`T_rig_imu_*` 链。角速度先扣 bias/乘 scale，再转到 `hand_camera_flu_back_x`；陀螺仪短时积分由两端可信视觉姿态锚定并分布闭合误差。位置仍由视觉端点插值，不做加速度二次积分；输出状态保持 `IMU_ASSISTED_UNTRUSTED`、`joint_valid=false`，避免把估计冒充实测。
+- 当前本地和服务器 `dataset.h5` 的 `/sensor/imu/angular_velocity`、线加速度、时间戳和 valid 均为 0 样本，且不存在左右独立流，因此报告为 `UNAVAILABLE_NO_SAMPLES`、`shared_stream_used=false`；32 个左侧长间隔帧均明确视觉回退，没有伪造 IMU。合成 per-side IMU 测试验证恒定角速度 + 视觉端点闭合后中点角为预期 40 deg，位置仍为视觉中点。
+- 本地与服务器完整测试均为 `281 passed, 7 skipped`。`./umi verify` 仍只因已知外部冻结文件 `/home/cenxi/.../dual_gripper_claw_to_claw_action_v50_fixed_timeline.json` 缺失而失败；本轮未绕过、改写或触碰 v50 gate。
+- 服务器首次 v7 自然无缓存运行成功：13.53 s，平均 826% CPU，峰值 RSS 261,276 KiB、无 swap；同时存在两条真实 ORB-SLAM 任务合计约 303% CPU，本轮未停止。结果 `SELF_CALIBRATED_PASS`，300/300 双侧数值位姿、268 联合可信、266 双侧实测、32 长间隔不可信，所有质量门通过。
+- 服务器输出为 `/home/ps/instaumi-data/instaumi_000001/final/dual-x5-four-mp4-cpu-v7/`。固定 `tag-map-front-above` 录制 1920x1080、30 FPS、299 帧视频 `processed_joint_trajectory_30hz_tag_map_front_above_v7.mp4`，SHA-256 `913acc1039d20ae3c7747a872110b958d55a883adb5747e0fd92084a494ea311`；人工检查封面和 7.1 s，构图保持 19:03 的 `TAG MAP + CAM FLU`、两网格横排、正面斜上固定机位。
+- 飞书进度文字 `om_x100b665a67f944acdeb428b4a762994`、视频 `om_x100b665a67673cb4c2409e79d953731` 发送成功。代码提交为本地 `fcd574b`、服务器等价 `11dfd60`。
+
 ## 最近一次流水线版本变更验证
 
-- 改动：v6 将外部探测/音频/审阅编码切到哈希锁定的项目 FFmpeg 9.0.1；轨迹算法仍是 v5 的每帧数值位姿 + 独立可信度。
-- 提交：本地 `0e0a2d4`，服务器等价 `45802c5`；算法提交仍为本地 `72203d6`、服务器 `b9f7803`。
-- 服务器输出：`/home/ps/instaumi-data/instaumi_000001/final/dual-x5-four-mp4-cpu-v6/`。
+- 改动：v7 将四路主观察解码切到锁定 FFmpeg `gray8 rawvideo` 管道，并加入严格标定的左右独立陀螺仪低置信度姿态桥接；渲染方式和 19:03 固定视角不变。
+- 提交：本地 `fcd574b`，服务器等价 `11dfd60`。
+- 服务器输出：`/home/ps/instaumi-data/instaumi_000001/final/dual-x5-four-mp4-cpu-v7/`。
 - 服务器报告：300/300 帧具备数值位姿；联合可信 268（89.33%）；联合实测 266（88.67%）；长间隔不可信 32 帧；全部门通过。
-- 服务器运行：竞争负载下 12.21 s；`time -v` 平均 CPU 921%；峰值 RSS 310,236 KiB；无 swap。无竞争基线仍采用 v5 的 6.49 s，待服务器空闲时再做同条件 v6 测量。
-- 最终审阅视频：`reviews/processed_joint_trajectory_30hz_tag_map_front_above_v6.mp4`，SHA-256 `ba80d1d7...127238`，固定 `tag-map-front-above`；21:47 的 `flu-front-above` 文件仅保留作拒绝样本。
-- 飞书：更正文字和视频均发送成功，消息 ID 见 Cycle 006 日志。
+- 服务器运行：共享负载下 13.53 s；`time -v` 平均 CPU 826%；峰值 RSS 261,276 KiB；无 swap。无竞争基线仍采用 v5 的 6.49 s，待服务器空闲时再做同条件 v7 测量。
+- IMU：当前 H5 为 0 样本，`UNAVAILABLE_NO_SAMPLES`，32 帧使用视觉低置信度回退；能力已由合成 per-side IMU 测试覆盖，待新数据集实测。
+- 最终审阅视频：`reviews/processed_joint_trajectory_30hz_tag_map_front_above_v7.mp4`，SHA-256 `913acc10...ea311`，固定 `tag-map-front-above`。
+- 飞书：进度文字和视频均发送成功，消息 ID 见 Cycle 008 日志。
