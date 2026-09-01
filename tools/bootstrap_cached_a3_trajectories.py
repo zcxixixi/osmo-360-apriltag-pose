@@ -104,6 +104,9 @@ def main() -> int:
         "joint_valid_ratio_at_least_0_85": (
             trajectories["joint"]["joint_valid_ratio"] >= 0.85
         ),
+        "joint_pose_ratio_is_one": (
+            trajectories["joint"]["joint_pose_ratio"] == 1.0
+        ),
         "maximum_trusted_interpolation_gap_s_at_most_0_25": all(
             value <= 0.25
             for value in trajectories["joint"]["maximum_interpolation_gap_s"].values()
@@ -119,7 +122,7 @@ def main() -> int:
     }
     passed = all(gates.values())
     report = {
-        "schema_version": "cached-a3-self-calibrated-trajectories/1.1",
+        "schema_version": "cached-a3-self-calibrated-trajectories/1.2",
         "pair_id": args.pair_id,
         "status": "SELF_CALIBRATED_PASS" if passed else "SELF_CALIBRATED_GATE_FAILED",
         "claims": {
@@ -131,7 +134,7 @@ def main() -> int:
             "joint_timeline_interpolation_used": True,
             "maximum_trusted_interpolation_gap_s": args.maximum_interpolation_gap_s,
             "long_gap_policy": (
-                "INTERPOLATED_UNTRUSTED; pose hidden and trajectory trail segmented"
+                "INTERPOLATED_UNTRUSTED; numeric pose retained with explicit confidence"
             ),
         },
         "calibration": calibration,

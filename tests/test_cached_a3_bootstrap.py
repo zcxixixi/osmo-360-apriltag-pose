@@ -100,7 +100,9 @@ def test_joint_csv_interpolates_both_tracks_in_one_map(tmp_path: Path):
     assert rows[1]["right_pose_state"] == "MEASURED"
 
 
-def test_joint_csv_rejects_interpolation_longer_than_quarter_second(tmp_path: Path):
+def test_joint_csv_retains_untrusted_pose_for_interpolation_longer_than_quarter_second(
+    tmp_path: Path,
+):
     left = [_row(0, 0.0, 0.0), _row(6, 0.2, None), _row(12, 0.4, 2.0)]
     right = [_row(0, 0.0, 5.0), _row(6, 0.2, 6.0), _row(12, 0.4, 7.0)]
     output = tmp_path / "joint.csv"
@@ -110,16 +112,46 @@ def test_joint_csv_rejects_interpolation_longer_than_quarter_second(tmp_path: Pa
 
     assert summary["joint_valid_frames"] == 2
     assert summary["joint_valid_ratio"] == 2 / 3
+    assert summary["joint_pose_frames"] == 3
+    assert summary["joint_pose_ratio"] == 1.0
     assert summary["maximum_allowed_interpolation_gap_s"] == 0.25
     assert summary["maximum_interpolation_gap_s"]["left"] == 0.0
     assert summary["maximum_rejected_interpolation_gap_s"]["left"] == 0.4
     assert summary["untrusted_long_gap_frames"] == 1
     assert summary["untrusted_long_gap_side_frames"] == {"left": 1, "right": 0}
     assert rows[1]["joint_valid"] == "false"
+    assert rows[1]["joint_has_pose"] == "true"
     assert rows[1]["left_quality_status"] == "interpolation_untrusted"
     assert rows[1]["left_pose_state"] == "INTERPOLATED_UNTRUSTED"
-    assert rows[1]["left_camera_x_m"] == ""
+    assert float(rows[1]["left_camera_x_m"]) == pytest.approx(1.0)
     assert rows[1]["right_pose_state"] == "MEASURED"
+
+
+def test_joint_csv_holds_nearest_pose_outside_measurement_span(tmp_path: Path):
+    left = [_row(0, 0.0, None), _row(1, 0.1, 1.0), _row(2, 0.2, None)]
+    right = [_row(0, 0.0, 5.0), _row(1, 0.1, 6.0), _row(2, 0.2, 7.0)]
+    output = tmp_path / "joint.csv"
+
+    summary = write_joint_pose_csv(output, left, right, map_id="shared-map")
+    rows = list(csv.DictReader(output.open(newline="", encoding="utf-8")))
+
+    assert summary["joint_pose_frames"] == 3
+    assert summary["joint_pose_ratio"] == 1.0
+    assert summary["held_untrusted_side_frames"] == {"left": 2, "right": 0}
+    assert [row["left_pose_state"] for row in rows] == [
+        "HELD_UNTRUSTED", "MEASURED", "HELD_UNTRUSTED"
+    ]
+    assert [float(row["left_camera_x_m"]) for row in rows] == [1.0, 1.0, 1.0]
+
+
+def test_joint_csv_fails_instead_of_fabricating_when_a_side_has_no_pose(
+    tmp_path: Path,
+):
+    missing = [_row(0, 0.0, None), _row(1, 0.1, None)]
+    right = [_row(0, 0.0, 5.0), _row(1, 0.1, 6.0)]
+
+    with pytest.raises(ValueError, match="left trajectory has no accepted pose"):
+        write_joint_pose_csv(tmp_path / "joint.csv", missing, right, map_id="shared-map")
 
 
 @pytest.mark.parametrize("gap", [0.0, -0.1, 0.251, float("inf")])

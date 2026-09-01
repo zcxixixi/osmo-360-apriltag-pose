@@ -1,6 +1,6 @@
-# Four-MP4 CPU pipeline v4
+# Four-MP4 CPU pipeline v5
 
-`dual-x5-four-mp4-cpu-v4` accepts the four independent raw fisheye MP4 streams
+`dual-x5-four-mp4-cpu-v5` accepts the four independent raw fisheye MP4 streams
 produced by two X5 cameras. It does not import INSV and does not invoke the
 Insta360 stitching SDK. The official panorama is therefore no longer a
 localization prerequisite.
@@ -167,7 +167,7 @@ records every flow, redetection, scout, fallback, and rejection count.
 Persistent cache defaults to:
 
 ```text
-dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v4/<pair-id>/
+dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v5/<pair-id>/
 ```
 
 Set `OSMO_PIPELINE_CACHE` to a server-local SSD if the dataset itself is on a
@@ -190,7 +190,7 @@ self-calibration, not external ground truth.
 The principal outputs are:
 
 ```text
-final/dual-x5-four-mp4-cpu-v4/pairs/<pair-id>/tracking/
+final/dual-x5-four-mp4-cpu-v5/pairs/<pair-id>/tracking/
 ├── session_world_map.json
 ├── left_pose.csv
 ├── right_pose.csv
@@ -200,12 +200,15 @@ final/dual-x5-four-mp4-cpu-v4/pairs/<pair-id>/tracking/
 
 `joint_trajectory.csv` has one shared H5 timestamp and one shared map ID per
 row, followed by both left and right 6DoF poses. Direct bearing measurements
-are marked `MEASURED`; gaps bounded by measurements are filled only when the
-two bracketing measurements are at most 0.25 seconds apart and are marked
-`INTERPOLATED`. Longer gaps are serialized as `INTERPOLATED_UNTRUSTED` without
-a pose, invalidate that joint row, hide the camera in the audit video, and
-break the trajectory trail. The report separately records measured coverage,
-trusted/rejected maximum gaps, and untrusted long-gap frame counts.
+are marked `MEASURED`; gaps bounded by measurements are filled and retain a
+numeric pose on every common-timeline frame. Gaps up to 0.25 seconds are marked
+`INTERPOLATED`; longer gaps are marked `INTERPOLATED_UNTRUSTED`. Leading or
+trailing gaps use the nearest accepted pose and are marked `HELD_UNTRUSTED`.
+`joint_has_pose` therefore describes numeric availability independently from
+`joint_valid`, which remains false whenever either side is untrusted. The audit
+video shows every pose and its confidence state instead of hiding it. The
+report separately records numeric-pose, trusted, measured, long-gap, and held
+coverage.
 
 Published camera poses use child frame `hand_camera_flu_back_x`. Its `+X` is
 the optical direction of the `back`/stream-0 video, `+Y` points left, and `+Z`
@@ -243,7 +246,7 @@ Render the four source views beside the synchronized shared-map 3D tracks:
 ```bash
 .venv/bin/python -m tools.render_joint_four_mp4_trajectory \
   /data/session \
-  /data/session/final/dual-x5-four-mp4-cpu-v4/pairs/<pair-id>/tracking \
+  /data/session/final/dual-x5-four-mp4-cpu-v5/pairs/<pair-id>/tracking \
   /data/session/final/joint_trajectory_comparison.mp4
 ```
 

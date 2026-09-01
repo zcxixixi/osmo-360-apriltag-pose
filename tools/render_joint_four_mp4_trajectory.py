@@ -93,8 +93,7 @@ class Track:
             raise ValueError("maximum_gap_s must be positive and no greater than 0.25")
         valid = [
             row for row in rows
-            if row.get(f"{prefix}_quality_status") in {"valid", "interpolated"}
-            and row.get(f"{prefix}_camera_x_m")
+            if row.get(f"{prefix}_camera_x_m")
         ]
         self.times = np.asarray([float(row["timestamp_s"]) for row in valid])
         self.positions = np.asarray([
@@ -577,7 +576,7 @@ def draw_telemetry_card(
     text(canvas, f"{label} CAMERA", (x + 30, y + 25), 0.50, WHITE, 2)
     state = "UNTRUSTED" if sample is None else sample.state
     state_color = color if state == "MEASURED" else WARNING
-    state_width = 92 if state == "MEASURED" else 116
+    state_width = min(210, max(92, 18 + len(state) * 8))
     cv2.rectangle(canvas, (x + width - state_width - 10, y + 8),
                   (x + width - 10, y + 31), _dim(state_color, 0.40), -1)
     text(canvas, state, (x + width - state_width + 1, y + 24),
@@ -800,7 +799,7 @@ def main() -> int:
             )
             text(canvas, f"t = {now:6.3f} s", (1003, 1038), 0.62, WHITE, 2)
             text(canvas, "MEASURED = PnP observation", (1240, 1036), 0.38, MUTED)
-            text(canvas, "UNTRUSTED >0.25s = hidden / trail break", (1482, 1036),
+            text(canvas, "UNTRUSTED = pose shown, not a trusted measurement", (1482, 1036),
                  0.36, WARNING)
             text(canvas, provenance_first, (22, 1015), 0.43, MUTED)
             text(canvas, provenance_second, (22, 1045), 0.40, WARNING)
@@ -825,7 +824,7 @@ def main() -> int:
     _extract_frame(args.output, duration * 0.5, cover)
     _extract_frame(args.output, min(max(7.1 - start, 0.0), duration), jump_check)
     audit = {
-        "schema_version": "joint-four-mp4-trajectory-comparison/2.1",
+        "schema_version": "joint-four-mp4-trajectory-comparison/2.2",
         "output": str(args.output.resolve()),
         "cover": str(cover.resolve()),
         "jump_check_frame": str(jump_check.resolve()),
@@ -838,6 +837,7 @@ def main() -> int:
         "map_id": world_map["map_id"],
         "tracking_status": report["status"],
         "joint_valid_ratio": report["trajectories"]["joint"]["joint_valid_ratio"],
+        "joint_pose_ratio": report["trajectories"]["joint"]["joint_pose_ratio"],
         "untrusted_long_gap_frames": report["trajectories"]["joint"].get(
             "untrusted_long_gap_frames", 0
         ),
