@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -9,7 +11,12 @@ import pytest
 from scipy.io import wavfile
 
 from osmo360.pipeline import dataset
-from osmo360.pipeline.dataset_worker import estimate_audio_offset
+from osmo360.pipeline.dataset_worker import (
+    cache_signature_matches,
+    estimate_audio_offset,
+    trajectory_sample_stride,
+)
+from osmo360.pipeline.instaumi_format import common_window, write_dataset_h5
 from osmo360.pipeline.manifest import ManifestError
 
 
@@ -41,6 +48,7 @@ def test_dataset_path_discovers_registered_left_right_pair(monkeypatch, tmp_path
 
     assert lock["pair_count"] == 1
     assert lock["pairs"][0]["pair_id"] == "pair-01-120002"
+    assert lock["pairs"][0]["dataset_id"] == "instaumi_000001"
     assert lock["pairs"][0]["left"]["serial"] == LEFT_SERIAL
     assert lock["pairs"][0]["right"]["serial"] == RIGHT_SERIAL
     assert lock["pairs"][0]["left"]["path"].startswith("raw/left/")
@@ -85,6 +93,103 @@ def test_audio_sync_reports_right_time_from_left_offset(tmp_path: Path):
 
     assert result["mapping"] == "right_time_s = left_time_s + offset_s"
     assert result["offset_s"] == pytest.approx(0.020, abs=0.001)
+
+
+def test_common_window_trims_the_leading_side() -> None:
+    assert common_window(10.0, 12.0, 0.25) == pytest.approx((0.0, 0.25, 10.0))
+    assert common_window(10.0, 12.0, -0.25) == pytest.approx((0.25, 0.0, 9.75))
+
+
+def test_trajectory_sampling_targets_thirty_hz_without_upsampling() -> None:
+    assert trajectory_sample_stride(60.0, 59.94) == 2
+    assert trajectory_sample_stride(30.0, 29.97) == 1
+    assert trajectory_sample_stride(15.0, 15.0) == 1
+
+
+def test_fisheye_cache_reuse_requires_complete_matching_signature(tmp_path: Path) -> None:
+    video = tmp_path / "Left_back.mp4"
+    video.write_bytes(b"aligned-hevc")
+    cache = tmp_path / "lens-0-corners.npz"
+    cache.write_bytes(b"cache")
+    record = {
+        "serial": LEFT_SERIAL,
+        "fps": 30.0,
+        "x5_offset": OFFSET,
+    }
+    metadata = {
+        "schema_version": "fisheye-apriltag-observation-cache/1.0",
+        "producer_revision": "raw-fisheye-cache-v2",
+        "video": str(video.resolve()),
+        "video_sha256": hashlib.sha256(video.read_bytes()).hexdigest(),
+        "camera_serial": LEFT_SERIAL,
+        "stream": 0,
+        "source_size": [1920, 1920],
+        "x5_offset": OFFSET,
+        "rectified_detection": True,
+        "rectified_view_size": 720,
+        "frame_stride": 1,
+        "clock_mapping": {"intercept_s": 0.0, "slope": 1.0},
+    }
+    cache.with_suffix(".json").write_text(json.dumps(metadata))
+
+    assert cache_signature_matches(video, record, 0, 0.0, cache)
+
+    metadata["rectified_view_size"] = 960
+    cache.with_suffix(".json").write_text(json.dumps(metadata))
+    assert not cache_signature_matches(video, record, 0, 0.0, cache)
+
+
+def test_instaumi_h5_references_aligned_mp4(monkeypatch, tmp_path: Path) -> None:
+    import h5py
+    import osmo360.pipeline.instaumi_format as fmt
+
+    video = tmp_path / "video"; video.mkdir()
+    left = video / "Left.mp4"; right = video / "Right.mp4"
+    left.write_bytes(b"left"); right.write_bytes(b"right")
+    monkeypatch.setattr(fmt, "probe_mp4", lambda _ffprobe, path: {
+        "width": 1024, "height": 1024, "frame_rate_num": 30,
+        "frame_rate_den": 1, "time_base_num": 1, "time_base_den": 90000,
+        "frame_count": 2, "duration_ns": 66_666_667, "codec": "h264",
+        "pixel_format": "yuv420p", "bitrate_bps": 1000,
+        "sha256": path.name,
+    })
+    monkeypatch.setattr(fmt, "packet_timeline", lambda *_args: {
+        "frame_index": np.asarray([0, 1], dtype=np.uint64),
+        "timestamp_ns": np.asarray([0, 33_333_333], dtype=np.int64),
+        "source_timestamp_ns": np.asarray([0, 33_333_333], dtype=np.int64),
+        "pts": np.asarray([0, 3000], dtype=np.int64),
+        "keyframe": np.asarray([1, 0], dtype=np.uint8),
+        "valid": np.asarray([1, 1], dtype=np.uint8),
+    })
+    source = {
+        "serial": LEFT_SERIAL,
+        "lens_size": [1920, 1920],
+        "x5_offset": (
+            "n2_2663.778_2695.450_2691.260_-0.331_0.192_89.482_"
+            "2653.083_8069.790_2689.460_0.386_0.193_90.228_10752_5376_11378"
+        ),
+    }
+    output = tmp_path / "dataset.h5"
+    write_dataset_h5(
+        output, dataset_id="instaumi_000001", left_video=left, right_video=right,
+        left_source=tmp_path / "left.insv", right_source=tmp_path / "right.insv",
+        left_start_s=0, right_start_s=.02,
+        sync={"offset_s": .02, "uncertainty_s": .0005}, ffprobe=Path("ffprobe"),
+        source_records={"left": source, "right": {**source, "serial": RIGHT_SERIAL}},
+    )
+    with h5py.File(output) as handle:
+        assert handle.attrs["schema_name"] == "instaumi"
+        assert handle["sensor/camera/left/video_path"][()].decode() == "video/Left.mp4"
+        assert handle["sensor/camera/right/frame_index"].shape == (2,)
+        assert handle["sensor/imu/angular_velocity"].shape == (0, 3)
+        calibration = json.loads(handle["calib/calibration_full.json"][()].decode())
+        intrinsics = calibration["cameras"]["left"]["intrinsics"]
+        assert intrinsics["fx"] == pytest.approx(328.3, abs=0.2)
+        assert intrinsics["fy"] == intrinsics["fx"]
+        assert intrinsics["cx"] == pytest.approx(507.4, abs=0.1)
+        assert intrinsics["cy"] == pytest.approx(513.4, abs=0.1)
+        assert calibration["cameras"]["left"]["distortion"]["coefficients"] == [0.0] * 4
+        assert calibration["extrinsics"]["T_rig_camera_left"] != np.eye(4).tolist()
 
 
 def test_run_pipeline_shell_requires_only_dataset_path(tmp_path: Path):

@@ -20,7 +20,6 @@ from scipy.spatial.transform import Rotation
 
 from osmo360.calibration.calibrate_basetag_reciprocal import Transform, interpolate_pose, load_pose, rotation_distance_deg
 from osmo360.calibration.estimate_gripper_extrinsic import solve_bearing_ippe
-from tools.joint_camera_correction_cached import own_tag_transform
 
 
 @dataclass
@@ -160,6 +159,46 @@ def raw_fisheye_cache_audit(path: Path) -> dict[str, Any]:
 def unit(value: np.ndarray) -> np.ndarray:
     value = np.asarray(value, dtype=float)
     return value / np.linalg.norm(value, axis=-1, keepdims=True)
+
+
+def own_tag_transform(
+    cache: np.lib.npyio.NpzFile, tag_id: int, tag_points: np.ndarray,
+    quarter_turns: int,
+) -> tuple[Transform, dict[str, Any]]:
+    indices = np.flatnonzero(cache["tag_id"] == tag_id)
+    if len(indices) < 3:
+        raise RuntimeError(f"own Tag {tag_id} has only {len(indices)} cached observations")
+    areas = np.asarray(cache["area_px2"][indices], dtype=float)
+    area_gate = float(np.percentile(areas, 75.0))
+    selected = indices[areas >= area_gate]
+    if len(selected) < 3:
+        selected = indices[np.argsort(areas)[-min(len(indices), 3):]]
+    rays = np.asarray(cache["rays_camera"][selected], dtype=float)
+    median_rays = unit(np.median(rays, axis=0))
+    median_rays = np.roll(median_rays, -quarter_turns, axis=0)
+    candidates = solve_bearing_ippe(tag_points, median_rays)
+    valid = []
+    for candidate in candidates:
+        transform = Transform(
+            np.asarray(candidate["translation_tag_origin_in_panorama_m"]),
+            Rotation.from_matrix(candidate["rotation_tag_to_panorama"]),
+        )
+        camera_in_tag = transform.inverse().p
+        if camera_in_tag[0] <= 0 and -0.100 <= camera_in_tag[2] <= -0.040:
+            valid.append((candidate, transform, camera_in_tag))
+    if not valid:
+        raise RuntimeError(f"own Tag {tag_id} has no hardware-valid IPPE branch")
+    candidate, transform, camera_in_tag = min(
+        valid, key=lambda item: item[0]["angular_rmse_deg"],
+    )
+    return transform, {
+        "observation_count": int(len(indices)),
+        "selected_observation_count": int(len(selected)),
+        "area_gate_px2": area_gate,
+        "selected_branch": int(candidate["branch"]),
+        "angular_rmse_deg": float(candidate["angular_rmse_deg"]),
+        "camera_origin_in_tag_m": camera_in_tag.tolist(),
+    }
 
 
 def direct_map(path: Path) -> dict[int, np.ndarray]:

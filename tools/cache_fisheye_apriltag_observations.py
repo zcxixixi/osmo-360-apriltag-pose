@@ -20,6 +20,8 @@ from osmo360.localization.raw_fisheye_world_pose import (
     make_x5_rectified_maps,
 )
 
+CACHE_PRODUCER_REVISION = "raw-fisheye-cache-v2"
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -204,6 +206,7 @@ def main() -> int:
     temporary.replace(args.output)
     metadata = {
         "schema_version": "fisheye-apriltag-observation-cache/1.0",
+        "producer_revision": CACHE_PRODUCER_REVISION,
         "video": str(video),
         "video_sha256": sha256(video),
         "calibration": calibration_source,
