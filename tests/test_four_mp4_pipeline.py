@@ -131,7 +131,7 @@ def test_four_mp4_discovery_and_dataset_dry_run(monkeypatch, tmp_path: Path):
     lock = four_mp4.discover_four_mp4_dataset(root)
     result = dataset.process_dataset(root, dry_run=True)
 
-    assert lock["pipeline_revision"] == "dual-x5-four-mp4-cpu-v2"
+    assert lock["pipeline_revision"] == "dual-x5-four-mp4-cpu-v3"
     assert lock["pairs"][0]["left"]["lenses"][0]["stream"] == 0
     assert lock["pairs"][0]["right"]["base_tag_id"] == 3
     assert lock["pairs"][0]["sync"]["offset_s"] == 0.0125
@@ -157,7 +157,8 @@ def test_instaumi_h5_is_native_four_mp4_input(monkeypatch, tmp_path: Path):
     assert pair["sync"]["offset_s"] == 0
     assert pair["sync"]["source_right_left_offset_s"] == pytest.approx(2.617875)
     assert lock["resource_budget"]["profile"] == "fast-cpu"
-    assert lock["resource_budget"]["trajectory_observation_fps"] == 15
+    assert lock["resource_budget"]["trajectory_observation_fps"] == 30
+    assert lock["resource_budget"]["decode_fps"] == 30
     assert lock["resource_budget"]["maximum_active_cpu_threads"] == 16
     assert lock["instaumi"]["calibration_intrinsics_complete"] is False
     assert lock["instaumi"]["extrinsics_status"] == "placeholder_identity"
@@ -174,7 +175,8 @@ def test_instaumi_h5_is_native_four_mp4_input(monkeypatch, tmp_path: Path):
     assert all("--timeline-h5" in task.command for task in tasks)
     assert all("--native-grayscale-decode" in task.command for task in tasks)
     assert all("--optical-flow-window-size" in task.command for task in tasks)
-    assert all(task.expected["decode_stride"] == 2 for task in tasks)
+    assert all(task.expected["frame_stride"] == 1 for task in tasks)
+    assert all(task.expected["decode_stride"] == 1 for task in tasks)
     assert all(task.expected["timestamp_source"].startswith("instaumi_h5:") for task in tasks)
 
 

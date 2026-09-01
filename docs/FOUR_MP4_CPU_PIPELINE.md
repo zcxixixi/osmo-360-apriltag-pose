@@ -1,6 +1,6 @@
-# Four-MP4 CPU pipeline v2
+# Four-MP4 CPU pipeline v3
 
-`dual-x5-four-mp4-cpu-v2` accepts the four independent raw fisheye MP4 streams
+`dual-x5-four-mp4-cpu-v3` accepts the four independent raw fisheye MP4 streams
 produced by two X5 cameras. It does not import INSV and does not invoke the
 Insta360 stitching SDK. The official panorama is therefore no longer a
 localization prerequisite.
@@ -118,8 +118,8 @@ Deployment overrides:
 ```bash
 OSMO_CPU_WORKERS=4 \
 OSMO_THREADS_PER_WORKER=2 \
-OSMO_TRAJECTORY_FPS=15 \
-OSMO_DECODE_FPS=15 \
+OSMO_TRAJECTORY_FPS=30 \
+OSMO_DECODE_FPS=30 \
 OSMO_CACHE_CHUNK_SECONDS=120 \
 OSMO_PIPELINE_CACHE=/fast-local-disk/osmo-cache \
 ./run_pipeline.sh /data/session
@@ -129,15 +129,15 @@ OSMO_PIPELINE_CACHE=/fast-local-disk/osmo-cache \
 shared CPU server, `1 x 2` is the conservative setting; the tested 9950X speed
 setting is `4 x 4`. `OSMO_TRAJECTORY_FPS` controls measured corner samples
 written to the cache. H5 timestamps remain 59.94 Hz even though images are
-retrieved for detection/tracking at 15 Hz.
+retrieved for detection/tracking at 30 Hz.
 
-On the supplied four-stream, 1920×1920, 59.94 FPS, 10-second dataset, the first
-uncached observation pass measured 4.75 seconds on a Ryzen 9 9950X with the
-`4 x 4` fast profile. Four-stream decode alone measured 2.89 seconds, so this
-is close to the software HEVC decode floor. A cached repeat is about one second.
-These measurements cover H5 ingest, hashing, four-stream Tag observation
-caches, and merging. Shared-map self-calibration and synchronized trajectory
-export are a separate, cached CPU stage.
+On the supplied four-stream, 1920×1920, 59.94 FPS, 10-second dataset, the v3
+30 Hz pipeline measured 21.77 seconds uncached and 1.27 seconds fully cached on
+an Intel i7-14790F with the `4 x 4` fast profile. The uncached measurement covers
+H5 ingest, hashing, four-stream Tag observation caches, shared-map
+self-calibration, and synchronized trajectory export. The earlier 4.75-second
+Ryzen 9 9950X observation-cache result belonged to the v2 15 Hz cadence and is
+not a v3 end-to-end benchmark.
 
 ## Resume and cache identity
 
@@ -157,7 +157,7 @@ killed process leaves the last incomplete chunk invalid and reruns only that
 chunk.
 
 The InstaUMI fast detector obtains the HEVC luma plane directly without an RGB
-conversion. Half-resolution pyramidal LK updates known corners at 15 Hz;
+conversion. Half-resolution pyramidal LK updates known corners at 30 Hz;
 forward/backward validation and merged local ROI decoding run at 5 Hz and 2 Hz
 respectively. A 0.35-scale grayscale frame is searched globally at 2 Hz to
 discover new Tags. The 11 tangent-view rectifications run at most 0.5 Hz and
@@ -167,7 +167,7 @@ records every flow, redetection, scout, fallback, and rejection count.
 Persistent cache defaults to:
 
 ```text
-dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v2/<pair-id>/
+dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v3/<pair-id>/
 ```
 
 Set `OSMO_PIPELINE_CACHE` to a server-local SSD if the dataset itself is on a
@@ -190,7 +190,7 @@ self-calibration, not external ground truth.
 The principal outputs are:
 
 ```text
-final/dual-x5-four-mp4-cpu-v2/pairs/<pair-id>/tracking/
+final/dual-x5-four-mp4-cpu-v3/pairs/<pair-id>/tracking/
 ├── session_world_map.json
 ├── left_pose.csv
 ├── right_pose.csv
@@ -240,7 +240,7 @@ Render the four source views beside the synchronized shared-map 3D tracks:
 ```bash
 .venv/bin/python -m tools.render_joint_four_mp4_trajectory \
   /data/session \
-  /data/session/final/dual-x5-four-mp4-cpu-v2/pairs/<pair-id>/tracking \
+  /data/session/final/dual-x5-four-mp4-cpu-v3/pairs/<pair-id>/tracking \
   /data/session/final/joint_trajectory_comparison.mp4
 ```
 
