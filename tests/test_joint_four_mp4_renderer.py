@@ -20,13 +20,18 @@ def _track_row(time_s: float, x: float, *, state: str = "MEASURED") -> dict[str,
     }
 
 
-def test_track_hides_and_segments_interpolation_gap_over_quarter_second():
-    track = Track([_track_row(0.0, 0.0), _track_row(0.4, 0.4)], "left")
+def test_track_shows_explicit_untrusted_pose_in_long_measurement_gap():
+    track = Track([
+        _track_row(0.0, 0.0),
+        _track_row(0.2, 0.2, state="INTERPOLATED_UNTRUSTED"),
+        _track_row(0.4, 0.4),
+    ], "left")
 
     assert track.sample(0.0) is not None
-    assert track.sample(0.2) is None
+    assert track.sample(0.2) is not None
+    assert track.sample(0.2).state == "INTERPOLATED_UNTRUSTED"
     assert track.sample(0.4) is not None
-    assert track.segment_slices() == [slice(0, 1), slice(1, 2)]
+    assert track.segment_slices() == [slice(0, 3)]
 
 
 def test_track_samples_bounded_interpolation():

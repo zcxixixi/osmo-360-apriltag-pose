@@ -627,7 +627,7 @@ def write_joint_pose_csv(
     )
     fields = [
         "frame", "timestamp_s", "world_frame", "map_id",
-        "joint_valid", "joint_measured",
+        "joint_has_pose", "joint_valid", "joint_measured",
     ]
     for side in ("left", "right"):
         fields.extend(f"{side}_{key}" for key in pose_keys)
@@ -640,6 +640,7 @@ def write_joint_pose_csv(
             f"{side}_measurement_source",
         ))
     output_rows = []
+    joint_pose_count = 0
     joint_valid_count = 0
     joint_measured_count = 0
     trusted_interpolation_gaps: dict[str, list[float]] = {
@@ -650,6 +651,7 @@ def write_joint_pose_csv(
     }
     untrusted_side_frames = {"left": 0, "right": 0}
     untrusted_joint_frames = 0
+    held_untrusted_side_frames = {"left": 0, "right": 0}
 
     valid_series = {}
     for side in ("left", "right"):
@@ -658,6 +660,8 @@ def write_joint_pose_csv(
             if row["quality_status"] == "valid" and row["camera_x_m"]
         ]
         valid.sort(key=lambda row: float(row["timestamp"]))
+        if not valid:
+            raise ValueError(f"{side} trajectory has no accepted pose to recover from")
         series_times = np.asarray([float(row["timestamp"]) for row in valid])
         series_positions = np.asarray([
             [float(row[key]) for key in ("camera_x_m", "camera_y_m", "camera_z_m")]
@@ -702,6 +706,25 @@ def write_joint_pose_csv(
                 resolved[side] = source
             series_times, series_positions, _, slerp = valid_series[side]
             if len(series_times) < 2 or not series_times[0] < now_s < series_times[-1]:
+                nearest = int(np.argmin(np.abs(series_times - now_s)))
+                position = series_positions[nearest]
+                quaternion = valid_series[side][2][nearest].as_quat()
+                held_untrusted_side_frames[side] += 1
+                resolved[side] = {
+                    "camera_x_m": f"{position[0]:.9f}",
+                    "camera_y_m": f"{position[1]:.9f}",
+                    "camera_z_m": f"{position[2]:.9f}",
+                    "qx": f"{quaternion[0]:.12f}",
+                    "qy": f"{quaternion[1]:.12f}",
+                    "qz": f"{quaternion[2]:.12f}",
+                    "qw": f"{quaternion[3]:.12f}",
+                    "quality_status": "pose_untrusted",
+                    "pose_state": "HELD_UNTRUSTED",
+                    "angular_rmse_deg": "",
+                    "detected_tag_count": "",
+                    "inlier_tag_count": "",
+                    "measurement_source": "nearest_accepted_pose_hold_outside_measurement_span",
+                }
                 continue
             upper = int(np.searchsorted(series_times, now_s, side="right"))
             lower = upper - 1
@@ -714,8 +737,19 @@ def write_joint_pose_csv(
                 source_status = (
                     "missing" if source is None else str(source.get("quality_status", "rejected"))
                 )
+                position = np.asarray([
+                    np.interp(now_s, series_times, series_positions[:, axis])
+                    for axis in range(3)
+                ])
+                quaternion = slerp([now_s]).as_quat()[0]
                 resolved[side] = {
-                    **{key: "" for key in pose_keys},
+                    "camera_x_m": f"{position[0]:.9f}",
+                    "camera_y_m": f"{position[1]:.9f}",
+                    "camera_z_m": f"{position[2]:.9f}",
+                    "qx": f"{quaternion[0]:.12f}",
+                    "qy": f"{quaternion[1]:.12f}",
+                    "qz": f"{quaternion[2]:.12f}",
+                    "qw": f"{quaternion[3]:.12f}",
                     "quality_status": "interpolation_untrusted",
                     "pose_state": "INTERPOLATED_UNTRUSTED",
                     "angular_rmse_deg": "",
@@ -753,6 +787,12 @@ def write_joint_pose_csv(
             and source.get("pose_state") == "INTERPOLATED_UNTRUSTED"
             for source in resolved.values()
         ))
+        joint_has_pose = all(
+            resolved[side] is not None
+            and all(str(resolved[side].get(key, "")) for key in pose_keys)
+            for side in ("left", "right")
+        )
+        joint_pose_count += int(joint_has_pose)
         joint_valid = all(
             resolved[side] is not None
             and resolved[side].get("quality_status") in {"valid", "interpolated"}
@@ -765,6 +805,7 @@ def write_joint_pose_csv(
             "timestamp_s": f"{timestamps[0]:.9f}",
             "world_frame": "session_grid_A",
             "map_id": map_id,
+            "joint_has_pose": str(joint_has_pose).lower(),
             "joint_valid": str(joint_valid).lower(),
             "joint_measured": str(joint_measured).lower(),
         }
@@ -784,6 +825,10 @@ def write_joint_pose_csv(
         writer.writerows(output_rows)
     return {
         "common_timeline_frames": len(output_rows),
+        "joint_pose_frames": joint_pose_count,
+        "joint_pose_ratio": (
+            joint_pose_count / len(output_rows) if output_rows else 0.0
+        ),
         "joint_valid_frames": joint_valid_count,
         "joint_valid_ratio": (
             joint_valid_count / len(output_rows) if output_rows else 0.0
@@ -803,6 +848,7 @@ def write_joint_pose_csv(
         },
         "untrusted_long_gap_frames": untrusted_joint_frames,
         "untrusted_long_gap_side_frames": untrusted_side_frames,
+        "held_untrusted_side_frames": held_untrusted_side_frames,
         "world_frame": "session_grid_A",
         "map_id": map_id,
     }
