@@ -32,6 +32,15 @@ node-gpu = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
+addopts = [
+  "-p", "no:launch_testing",
+  "-p", "no:launch_ros",
+  "-p", "no:ament_lint",
+  "-p", "no:ament_xmllint",
+  "-p", "no:ament_flake8",
+  "-p", "no:ament_pep257",
+  "-p", "no:ament_copyright",
+]
 
 [build-system]
 requires = ["setuptools>=75"]
