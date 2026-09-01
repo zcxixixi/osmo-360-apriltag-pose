@@ -231,6 +231,15 @@
 - 当前一条独立 ORB-SLAM 任务约占 393% CPU，未停止或调度；磁盘使用 23%，可用约 1.4 TiB。SEC-005 的独立 `:8000` 服务仍从登录 session 监听全 LAN，进程已运行约 4 天 9 小时，`/api/processing/status` 只读请求 5 秒超时；本轮没有越权停止或修改，仍等待业务确认。
 - 飞书整点进度 `om_x100b665b6ae83ca0c2386b49fcc8f52` 发送成功。本轮下一步保持 QUAL-003（等待左右独立 IMU 新数据）和 SEC-005（需业务确认治理）不变。
 
+### 2026-09-02 / Cycle 010
+
+- 本轮完成只读“输入—缓存—正式产物”完整性链审计，没有修改算法、坐标、时间线、渲染或审核页面，不重复处理数据和出片。服务器分支干净，HEAD `f20b39d`，没有四 MP4 pipeline 进程。
+- 四个源 MP4 的实际 size、mtime 与 SHA-256 均同时匹配 `source-index.json` 和正式 `cache-index.json`；`dataset.h5` 实际 SHA-256 `0da72cd9...003` 与 v7 manifest 匹配。锁定 FFmpeg/FFprobe 实际 SHA-256 分别为 `91f3138d...1143`、`cc11804f...15c`，与 manifest 完全一致。
+- 精确限定检查 v7 final 与 cache：正式目录 14 文件/8,434,294 字节，缓存 39 文件/2,370,873 字节；未发现符号链接、错属主、全局可写条目或 `.tmp`/`.publish-*`/`.backup-*` 残留。正式轨迹仍为 `SELF_CALIBRATED_PASS`、300/300 位姿、268 联合可信、266 双侧实测、`29.969730572 Hz`、`hand_camera_flu_back_x`；19:03 模板视频实际 SHA 与 audit 仍同为 `913acc10...ea311`。
+- `osmo-visualization.service`、`osmo-alignment-review.service` 和 `osmo-alignment-review-backend.service` 均 active、`NRestarts=0`，近一小时 warning 级日志为空；内存约 20.6/13.2/32.9 MiB。磁盘仍为 23% 使用、约 1.4 TiB 可用。
+- 服务器当时三条独立 ORB-SLAM/标定任务合计约占 16 个逻辑核，本轮未停止、调度或做受竞争污染的 v7 性能复测。SEC-005 的 `:8000` 仍监听全 LAN且状态接口 5 秒超时，继续等待业务确认；QUAL-003 仍等待含左右独立 IMU 样本与完整外参的新数据。
+- 飞书整点进度 `om_x100b664454c14ca4c44d9b21d5d0083` 发送成功。
+
 ## 最近一次流水线版本变更验证
 
 - 改动：v7 将四路主观察解码切到锁定 FFmpeg `gray8 rawvideo` 管道，并加入严格标定的左右独立陀螺仪低置信度姿态桥接；渲染方式和 19:03 固定视角不变。
