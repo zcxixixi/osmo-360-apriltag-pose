@@ -9,7 +9,11 @@ from scipy.spatial.transform import Rotation
 from osmo360.localization.cached_a3_bootstrap import (
     Pose,
     _temporal_gate,
+    pose_to_hand_camera_flu,
     write_joint_pose_csv,
+)
+from osmo360.localization.coordinate_frames import (
+    X5_STREAM0_OPENCV_FROM_HAND_CAMERA_FLU,
 )
 from osmo360.localization.raw_fisheye_world_pose import (
     make_kannala_brandt_ray_converter,
@@ -111,3 +115,16 @@ def test_sparse_flow_planar_jump_is_rejected_but_direct_reacquisition_is_not():
     assert weak["rejected"] is True
     assert weak["reason"] == "sparse_flow_planar_pose_exceeds_temporal_limits"
     assert direct["rejected"] is False
+
+
+def test_hand_camera_flu_positive_x_is_back_stream_optical_axis():
+    bridge = X5_STREAM0_OPENCV_FROM_HAND_CAMERA_FLU
+    assert np.allclose(bridge @ [1, 0, 0], [0, 0, 1])
+    assert np.allclose(bridge @ [0, 1, 0], [-1, 0, 0])
+    assert np.allclose(bridge @ [0, 0, 1], [0, -1, 0])
+    assert np.isclose(np.linalg.det(bridge), 1.0)
+
+    internal = Pose(np.asarray([1.0, 2.0, 3.0]), Rotation.identity())
+    hand = pose_to_hand_camera_flu(internal)
+    assert np.allclose(hand.position, internal.position)
+    assert np.allclose(hand.rotation.as_matrix(), bridge)

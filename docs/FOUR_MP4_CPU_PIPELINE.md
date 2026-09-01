@@ -204,6 +204,12 @@ are marked `MEASURED`; gaps bounded by measurements are filled for the joint
 timeline and marked `INTERPOLATED`. The report separately records measured
 joint coverage and the maximum interpolation gap.
 
+Published camera poses use child frame `hand_camera_flu_back_x`. Its `+X` is
+the optical direction of the `back`/stream-0 video, `+Y` points left, and `+Z`
+points up. PnP continues to operate in its internal stream-0 OpenCV frame; only
+the serialized child basis is re-expressed, so the world-frame camera origin
+is unchanged.
+
 Sparse planar observations receive an additional confidence-aware temporal
 gate. A pose supported by only two co-planar Tags carried entirely by LK flow
 is rejected when it implies more than 1.5 m/s or 180 deg/s from the previous

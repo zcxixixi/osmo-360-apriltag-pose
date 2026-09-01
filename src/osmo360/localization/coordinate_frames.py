@@ -30,6 +30,19 @@ DJI_BODY_TO_PANORAMA_OPENCV = np.array(
     dtype=np.float64,
 )
 
+# The four-MP4 tracker solves poses in a stream-0-centred OpenCV frame:
+# x=image-right, y=image-down, z=the back-lens optical direction.  Published
+# hand-camera poses use FLU, with +X deliberately bound to that back direction.
+# Columns are the hand-FLU basis vectors expressed in the internal source frame.
+X5_STREAM0_OPENCV_FROM_HAND_CAMERA_FLU = np.array(
+    [
+        [0.0, -1.0, 0.0],
+        [0.0, 0.0, -1.0],
+        [1.0, 0.0, 0.0],
+    ],
+    dtype=np.float64,
+)
+
 
 def validate_coordinate_bridges() -> None:
     """Fail fast if the canonical bridge is edited into a reflection."""
@@ -38,6 +51,11 @@ def validate_coordinate_bridges() -> None:
         raise RuntimeError("DJI body to panorama bridge is not orthonormal")
     if not np.isclose(np.linalg.det(bridge), 1.0, atol=1e-12):
         raise RuntimeError("DJI body to panorama bridge must be a proper rotation")
+    hand_bridge = X5_STREAM0_OPENCV_FROM_HAND_CAMERA_FLU
+    if not np.allclose(hand_bridge.T @ hand_bridge, np.eye(3), atol=1e-12):
+        raise RuntimeError("X5 stream-0 to hand-FLU bridge is not orthonormal")
+    if not np.isclose(np.linalg.det(hand_bridge), 1.0, atol=1e-12):
+        raise RuntimeError("X5 stream-0 to hand-FLU bridge must be a proper rotation")
 
 
 validate_coordinate_bridges()

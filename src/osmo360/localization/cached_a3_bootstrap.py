@@ -18,6 +18,9 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
+from osmo360.localization.coordinate_frames import (
+    X5_STREAM0_OPENCV_FROM_HAND_CAMERA_FLU,
+)
 from tools.calibrate_wall_pair_transform import PoseSample, robust_panel_transform
 
 
@@ -35,6 +38,16 @@ class Detection:
     rays: np.ndarray
     area_px2: float
     source: str
+
+
+STREAM0_FROM_HAND_FLU = Rotation.from_matrix(
+    X5_STREAM0_OPENCV_FROM_HAND_CAMERA_FLU
+)
+
+
+def pose_to_hand_camera_flu(pose: Pose) -> Pose:
+    """Re-express only the child axes; the world frame and origin stay fixed."""
+    return Pose(pose.position.copy(), pose.rotation * STREAM0_FROM_HAND_FLU)
 
 
 def load_direct_tag_map(path: Path) -> tuple[dict[str, Any], dict[int, np.ndarray]]:
@@ -481,8 +494,9 @@ def track_cache(
             quality = "temporal_outlier_rejected"
         if quality == "valid":
             previous = (now_s, pose)
-        quaternion = pose.rotation.as_quat()
-        euler = pose.rotation.as_euler("xyz", degrees=True)
+        output_pose = pose_to_hand_camera_flu(pose)
+        quaternion = output_pose.rotation.as_quat()
+        euler = output_pose.rotation.as_euler("xyz", degrees=True)
         rows.append({
             "frame": frame,
             "timestamp": f"{now_s:.9f}",
@@ -497,7 +511,7 @@ def track_cache(
             "pitch_deg": f"{euler[1]:.9f}" if quality == "valid" else "",
             "yaw_deg": f"{euler[2]:.9f}" if quality == "valid" else "",
             "parent_frame": "session_grid_A",
-            "child_frame": "x5_dual_fisheye_rig_stream0",
+            "child_frame": "hand_camera_flu_back_x",
             "detected_tag_count": len(ids),
             "inlier_tag_count": len(inlier_ids),
             "inlier_count": len(inlier_points),
