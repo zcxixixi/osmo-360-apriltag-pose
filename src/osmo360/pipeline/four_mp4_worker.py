@@ -224,11 +224,16 @@ def _worker_environment(threads: int) -> dict[str, str]:
     environment = os.environ.copy()
     for name in (
         "OMP_NUM_THREADS",
+        "OMP_THREAD_LIMIT",
         "OPENBLAS_NUM_THREADS",
         "MKL_NUM_THREADS",
         "NUMEXPR_NUM_THREADS",
+        "BLIS_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
     ):
         environment[name] = str(threads)
+    environment["OMP_DYNAMIC"] = "FALSE"
+    environment["MKL_DYNAMIC"] = "FALSE"
     environment["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = f"threads;{threads}"
     return environment
 
@@ -612,6 +617,7 @@ def run_tracking(
             ),
         ),
     ))
+    pose_workers = min(int(budget["maximum_active_cpu_threads"]), 8)
     command = [
         str(PYTHON), "-m", "tools.joint_dual_camera_pose_graph_cached",
         "--left-cache", str(dual["left"]), "--right-cache", str(dual["right"]),
@@ -625,7 +631,7 @@ def run_tracking(
         "--end-common-s", str(float(tracking.get("end_common_s", pair["common_duration_upper_bound_s"]))),
         "--sample-stride", str(sample_stride),
         "--alternations", str(int(tracking.get("alternations", 4))),
-        "--workers", str(min(int(budget["maximum_active_cpu_threads"]), 8)),
+        "--workers", str(pose_workers),
         "--anchored-two-pass", "--output-dir", str(output),
     ]
     report = output / "report.json"
@@ -646,7 +652,8 @@ def run_tracking(
         },
         "tracking": tracking,
         "sample_stride": sample_stride,
-        "workers": min(int(budget["maximum_active_cpu_threads"]), 8),
+        "workers": pose_workers,
+        "math_threads_per_worker": 1,
     }
     cached_signature = None
     if signature_path.is_file():
@@ -655,7 +662,12 @@ def run_tracking(
         except json.JSONDecodeError:
             pass
     if not report.is_file() or cached_signature != signature:
-        run(command, logs / "joint-tracking.log", gate=True)
+        run(
+            command,
+            logs / "joint-tracking.log",
+            environment=_worker_environment(1),
+            gate=True,
+        )
         if not report.is_file():
             raise RuntimeError(f"joint tracking did not produce {report}")
         atomic_json(signature_path, signature)
