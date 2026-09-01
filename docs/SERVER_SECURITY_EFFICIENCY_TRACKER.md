@@ -27,7 +27,7 @@
 | 服务器等价算法提交 | `b9f7803` |
 | 服务器无缓存耗时 | 6.49 s 处理 10 s 四路视频；`time -v` 平均 CPU 1164%，峰值 RSS 311,272 KiB |
 | 输出 | 300/300 帧具备双侧数值位姿；268 帧联合可信，266 帧双侧实测，`SELF_CALIBRATED_PASS` |
-| 回归测试 | 本地和服务器均为 260 passed，7 skipped |
+| 回归测试 | 本地和服务器均为 262 passed，7 skipped |
 | 一致性 | v5 全部 300 帧数值位姿与撤回前 v3 逐项最大差值为 0；只额外保留长间隔不可信标记 |
 | 最新已发视频 | v5 `processed_joint_trajectory_30hz_front_above_v5.mp4`，SHA-256 `fef54acf...c9a7f7` |
 
@@ -52,6 +52,8 @@
 | SEC-006 | 高 | IN_PROGRESS | 同项目旧 checkout 的审核 UI 在 `0.0.0.0:7869`，无认证 POST 可写审核、分段和人工时间对齐；公开 GET 返回 32 条记录、绝对源路径及审核字段。原 user unit 无任何沙箱，空闲 63 线程。 | unit 已先做无接口变化的硬化：只写状态目录、`NoNewPrivileges`/`PrivateTmp`/只读 home/system、线程池固定 1；状态目录/SQLite `0700/0600`。仍需给网页写接口增加认证与 CSRF，按需收窄公开 GET。 |
 | SEC-007 | 低 | OPEN | `:7864` 是 4 天前从登录 session 启动的旧静态审核页面，只提供 GET，但绑定全 LAN、公开时间线/视频/网格，且仍运行 EOL 的系统 Node 20。 | 确认是否仍被使用；若已由 `:7865` 取代则停止，若保留则迁移受管 unit、项目 Node 24，并按数据敏感度限制访问。 |
 | SEC-008 | 中 | RESOLVED | Bandit 首轮扫描 32,217 行代码为 0 high/8 medium；实际输入面包括任意 urllib 协议、Node 下载来源/大小、XML 实体、PyTorch pickle checkpoint 和旧 INSV 共享临时目录。四 MP4 任务槽的 `/tmp` 告警已有同用户属主、`0700/0600`、拒绝符号链接和 `O_NOFOLLOW` 防护，属于已验证误报。 | HTTP 客户端现只接受无凭据/片段/反斜线的明确 HTTP(S)；Node 只接受 `nodejs.org` HTTPS、重定向同源、128 MiB 上限且继续校验 SHA；checkpoint 使用 `weights_only=True`；URDF 使用 `defusedxml`；旧 INSV 默认 scratch 进入各节点 checkout 的 `work/` 并校验属主/符号链接。复扫 32,308 行为 0 high/0 medium，提交本地 `bbfe7ac`、服务器 `8aa6fba`。 |
+| SEC-009 | 高 | RESOLVED | `:7865` 虽已保护写接口，但设备库存 GET 仍向任意 LAN 客户端公开 20 台相机的序列号、固件和左右/Tag 分配；上传 scene/video 会在内容验证前替换正式文件，无效上传可破坏仍标为 ready 的已发布项目。服务也缺少 CSP/`nosniff`，历史 50 个项目目录和 167 个资产为 `0775/0644` 或 `0664`。 | 设备库存读写均要求 Bearer；scene 与 MP4（ISO BMFF `ftyp`）在唯一 `0600` 临时文件中验证后才原子替换，元数据同样原子发布；拒绝数据根/项目/资产符号链接和非服务属主；返回 CSP、`nosniff`、拒绝嵌入/权限策略。生产启动将 50 个目录、168 个文件收紧到 `0700/0600`，无符号链接/错属主；本地 `bdacd36`、服务器 `fa1d4a2`。 |
+| SEC-010 | 中 | OPEN | `:7865` 仍允许任意 LAN 客户端列出 50 个可视化项目，并直接读取每个 ready 项目的 scene、完整轨迹 timeline 和相机视频。这是当前“点击链接直接审阅”的既有设计，但视频/轨迹可能属于敏感采集数据，不能因为写接口已认证就视为完整访问控制。 | 需要明确产品策略：若只供王浩/授权人员查看，增加独立读会话或短期签名 capability，避免令牌进入 URL/日志；若确认局域网公开是需求，则记录数据分级、网络边界和接受风险。未经选择不擅自让现有 50 个审阅链接失效。 |
 | EFF-001 | 高 | RESOLVED | 压缩 NPZ 的每个数组被重复打开和解压。缓存读取改为一次加载所有成员。 | 服务器无缓存耗时 14.26 s → 6.10 s；输出逐字节一致；提交 `293df8b`。 |
 | EFF-002 | 中 | DEFERRED | FFmpeg 管道软件解码约 2.04 s，OpenCV 包装约 2.70 s；VAAPI 四路约 7.43 s。FFmpeg 像素输出与当前路径不完全一致，且缓存修复后解码已非主要瓶颈。 | 若后续解码占比重新升高，建立像素/检测回归门后再切换；当前不以小收益换算法输入变化。 |
 | EFF-003 | 中 | RESOLVED | 观察缓存已有 4×4 预算，但备用联合 pose-graph 的 8 个 Python worker 未限制 BLAS/OpenMP，存在 8×32 嵌套线程放大；不同任务之间也没有主机级并发门。 | 每任务最多 16 逻辑线程，小主机自动降配；OpenCV/FFmpeg/BLAS/OpenMP/BLIS/vecLib 全部继承限额，pose-graph 每 worker 1 个数学线程。默认同用户整机 1 个任务槽，可在总量不超过逻辑核时显式增加。双任务并发实测串行、无发布竞态；轨迹 SHA 不变。提交本地 `5dad620`/`e2400fb`，服务器 `5d550f6`/`449fde0`。 |
@@ -137,6 +139,20 @@
 - 安全补丁未修改四 MP4 检测、位姿、时间线或审阅渲染语义；服务器 `joint_trajectory.csv` SHA-256 仍为 `52c3e192...b82ed`，v5 视频仍为 `fef54acf...c9a7f7`，因此没有重复处理数据或发送旧视频。
 - `:7865`、`:7869` unit 均保持 active，`:7865 /healthz` 正常。`:7869 /api/items` 冷探测出现一次 5 s 超时，复测 3.06 s 返回 200，新增 EFF-005 跟踪，未擅自改变独立审核服务业务代码。
 - 21:00 飞书文字进度发送成功，消息 ID `om_x100b66588b3788a0dfed92c99568203`；本轮无新视频。
+
+### 2026-09-01 / Cycle 004
+
+- 深审 `:7865` 生产平台的读边界、上传原子性、路径和浏览器响应头。修复前未认证 GET 可读取 20 台 X5 的序列号、固件及角色/Tag 分配；同时公开 50 个项目。
+- 发现已发布项目的 scene 上传先覆盖正式文件、后检查两个关键字符串；无效但已认证的上传会留下坏 scene，同时旧元数据仍可能保持 `ready`。video 也只检查非空，任意内容可作为 `video/mp4` 发布。
+- 本地提交 `bdacd36`、服务器等价提交 `fa1d4a2`：设备库存 GET 改为 Bearer；scene/MP4 先在随机唯一临时文件验证再原子替换；MP4 至少验证 ISO BMFF `ftyp`；项目元数据和设备库存改为 `0600` 临时文件原子发布。
+- 服务启动与读取现在拒绝数据根、项目目录、元数据、库存和资产符号链接/错属主；忽略请求的 Host/X-Forwarded-Proto，未配置公开 origin 时从实际 socket 派生链接；`--public-base-url` 只允许无凭据、路径、查询和片段的 HTTP(S) origin。
+- 所有响应增加 `nosniff`、no-referrer、DENY frame、same-origin resource policy；HTML 额外使用 CSP，限制脚本/媒体/连接为同源并禁止 object/base/form/frame。现有版本化 scene 只使用同源 Three.js、timeline 和视频，生产复测正常。
+- 新增伪造 Host、无认证库存、危险 public origin、符号链接数据根、无效 scene/MP4 保留旧 ready 项目、临时文件清理和权限回归；本地/服务器完整测试均为 `262 passed, 7 skipped`。Bandit 仍为 0 high/0 medium，锁定 Node 依赖 `npm audit` 仍为 0。
+- 生产源码切换前确认与上一提交逐字节一致，备份为 `/home/ps/osmo-360-visualization/platform_server.mjs.pre-bundle-hardening-20260901-2119.bak`；切换后源码 SHA-256 与 CPU 仓库同为 `3baa7bde...fe2e9`，unit active、0 次重启。
+- 生产动态验证：未认证 `/api/devices` 为 401 且带 Bearer challenge，认证读取仍为 200/20 台；现有项目 scene 为 200 且有 CSP，真实 MP4 `bytes=0-11` 为 206、`ftyp` 正常且有 `nosniff`。
+- 历史数据修复前 50 个项目目录和 167 个子文件中共有 217 个条目对组/其他用户开放写权限；启动自愈后 50 个目录、168 个文件均无组/其他权限，符号链接、错属主、组/其他可写计数均为 0。
+- 仍有 50 个项目的 timeline/视频/scene 对 LAN 公开读取，拆为 SEC-010，等待明确“公开审阅”还是“读认证/签名链接”策略；没有在本轮让已有链接失效。
+- 本轮只改变平台安全/发布边界，不改变四 MP4 检测、位姿、坐标、时间线内容或录制渲染。v5 轨迹 SHA 仍为 `52c3e192...b82ed`，视频 SHA 仍为 `fef54acf...c9a7f7`，因此不重跑数据集、不生成或发送重复视频。
 
 ## 最近一次算法改动验证
 
