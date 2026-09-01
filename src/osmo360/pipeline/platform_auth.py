@@ -2,11 +2,25 @@ from __future__ import annotations
 
 import os
 import re
+import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
 DEFAULT_WRITE_TOKEN_FILE = Path.home() / ".config/osmo360/platform-write-token"
 TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9._~-]{43,256}$")
+
+
+class _RejectRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        return None
+
+
+_NO_REDIRECT_OPENER = urllib.request.build_opener(_RejectRedirectHandler())
+
+
+def open_http_no_redirect(request: urllib.request.Request, *, timeout: float):
+    """Open one API request without forwarding credentials through redirects."""
+    return _NO_REDIRECT_OPENER.open(request, timeout=timeout)
 
 
 def validate_http_url(url: str, *, expected_host: str | None = None) -> str:

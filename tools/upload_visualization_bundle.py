@@ -7,6 +7,7 @@ import argparse
 import http.client
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -14,6 +15,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from osmo360.pipeline.platform_auth import (
+    open_http_no_redirect,
     platform_authorization_headers,
     validate_http_url,
 )
@@ -21,6 +23,7 @@ from tools._root import ROOT
 
 DEFAULT_SERVER = os.environ.get("OSMO_VISUALIZATION_URL", "http://192.168.111.62:7865")
 DEFAULT_SCENE = ROOT / "dual_gripper_3d/single_gripper_scene.html"
+PROJECT_ID_PATTERN = re.compile(r"^[a-z0-9-]{1,64}$")
 
 
 def request_json(
@@ -35,8 +38,7 @@ def request_json(
     headers.update(authorization or {})
     request = urllib.request.Request(url, data=body, method=method, headers=headers)
     try:
-        # validate_http_url limits urllib to unambiguous HTTP(S) targets.
-        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
+        with open_http_no_redirect(request, timeout=30) as response:
             return json.load(response)
     except urllib.error.HTTPError as error:
         try:
@@ -83,6 +85,21 @@ def put_file(
         connection.close()
 
 
+def project_upload_urls(server: str, project: dict) -> dict[str, str]:
+    """Build upload URLs locally instead of trusting absolute links in a response."""
+    validate_http_url(server)
+    project_id = str(project.get("id", ""))
+    if not PROJECT_ID_PATTERN.fullmatch(project_id):
+        raise RuntimeError("platform returned an invalid project id")
+    base = f"{server.rstrip('/')}/api/projects/{project_id}"
+    return {
+        "timeline": f"{base}/timeline",
+        "video": f"{base}/video",
+        "scene": f"{base}/scene",
+        "publish": f"{base}/publish",
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Upload timeline.json, front-video.mp4, and a versioned scene to OSMO Motion Studio."
@@ -122,16 +139,14 @@ def main() -> int:
         {"name": args.name or timeline.stem},
         authorization,
     )["project"]
+    upload_urls = project_upload_urls(server, created)
     put_file(
-        created["links"]["timeline_upload"], timeline, "application/json", authorization
+        upload_urls["timeline"], timeline, "application/json", authorization
     )
-    put_file(created["links"]["video_upload"], video, "video/mp4", authorization)
-    scene_upload = created["links"].get("scene_upload")
-    if not scene_upload:
-        raise RuntimeError("platform does not support versioned scene uploads")
-    put_file(scene_upload, scene, "text/html; charset=utf-8", authorization)
+    put_file(upload_urls["video"], video, "video/mp4", authorization)
+    put_file(upload_urls["scene"], scene, "text/html; charset=utf-8", authorization)
     published = request_json(
-        created["links"]["publish"], "POST", authorization=authorization
+        upload_urls["publish"], "POST", authorization=authorization
     )["project"]
     output = {
         "api_version": "v1",
