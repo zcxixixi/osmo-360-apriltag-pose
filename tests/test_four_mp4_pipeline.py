@@ -142,6 +142,7 @@ def test_four_mp4_discovery_and_dataset_dry_run(monkeypatch, tmp_path: Path):
     assert lock["resource_budget"]["maximum_active_cpu_threads"] == 2
     assert result["status"] == "DRY_RUN"
     assert "osmo360.pipeline.four_mp4_worker" in result["command"]
+    assert not (root / "final").exists()
 
 
 def test_instaumi_h5_is_native_four_mp4_input(monkeypatch, tmp_path: Path):

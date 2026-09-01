@@ -627,7 +627,6 @@ def process_four_mp4_dataset(dataset_root: Path, *, dry_run: bool = False) -> di
     lock = discover_four_mp4_dataset(root)
     final_root = confined_path(root, "final", PIPELINE_REVISION, field="final output root")
     lock_path = final_root / "manifest.lock.json"
-    _atomic_json(lock_path, lock)
     cache_base = Path(
         os.environ.get("OSMO_PIPELINE_CACHE", str(root / ".osmo-cache"))
     ).expanduser().resolve()
@@ -662,33 +661,36 @@ def process_four_mp4_dataset(dataset_root: Path, *, dry_run: bool = False) -> di
         int(lock["resource_budget"]["maximum_concurrent_jobs"]),
         timeout_s=float(lock["resource_budget"]["job_slot_timeout_s"]),
     ) as job_slot:
+        _atomic_json(lock_path, lock)
         process = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
-    result = {
-        "command": command,
-        "returncode": process.returncode,
-        "stdout": process.stdout,
-        "stderr": process.stderr,
-        "job_slot": job_slot,
-    }
-    pair_status_path = confined_path(
-        final_root, "pairs", pair["pair_id"], "status.json", field="pair status path"
-    )
-    pair_status = (
-        json.loads(pair_status_path.read_text(encoding="utf-8"))
-        if pair_status_path.is_file()
-        else None
-    )
-    status = {
-        "schema_version": "dual-x5-four-mp4-pipeline-status/1.0",
-        "status": "FAILED" if process.returncode else (
-            pair_status.get("status", "COMPLETE") if pair_status else "COMPLETE"
-        ),
-        "pipeline_revision": PIPELINE_REVISION,
-        "manifest_lock": str(lock_path.relative_to(root)),
-        "resource_budget": lock["resource_budget"],
-        "result": result,
-    }
-    _atomic_json(final_root / "status.json", status)
-    if process.returncode:
-        raise ManifestError(f"four-MP4 worker failed; see {final_root / 'status.json'}")
-    return status
+        result = {
+            "command": command,
+            "returncode": process.returncode,
+            "stdout": process.stdout,
+            "stderr": process.stderr,
+            "job_slot": job_slot,
+        }
+        pair_status_path = confined_path(
+            final_root, "pairs", pair["pair_id"], "status.json", field="pair status path"
+        )
+        pair_status = (
+            json.loads(pair_status_path.read_text(encoding="utf-8"))
+            if pair_status_path.is_file()
+            else None
+        )
+        status = {
+            "schema_version": "dual-x5-four-mp4-pipeline-status/1.0",
+            "status": "FAILED" if process.returncode else (
+                pair_status.get("status", "COMPLETE") if pair_status else "COMPLETE"
+            ),
+            "pipeline_revision": PIPELINE_REVISION,
+            "manifest_lock": str(lock_path.relative_to(root)),
+            "resource_budget": lock["resource_budget"],
+            "result": result,
+        }
+        _atomic_json(final_root / "status.json", status)
+        if process.returncode:
+            raise ManifestError(
+                f"four-MP4 worker failed; see {final_root / 'status.json'}"
+            )
+        return status
