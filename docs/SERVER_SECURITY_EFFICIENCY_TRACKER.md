@@ -27,7 +27,7 @@
 | 服务器等价算法提交 | `b9f7803` |
 | 服务器无缓存耗时 | 6.49 s 处理 10 s 四路视频；`time -v` 平均 CPU 1164%，峰值 RSS 311,272 KiB |
 | 输出 | 300/300 帧具备双侧数值位姿；268 帧联合可信，266 帧双侧实测，`SELF_CALIBRATED_PASS` |
-| 回归测试 | 本地和服务器均为 262 passed，7 skipped |
+| 回归测试 | 本地和服务器均为 265 passed，7 skipped |
 | 一致性 | v5 全部 300 帧数值位姿与撤回前 v3 逐项最大差值为 0；只额外保留长间隔不可信标记 |
 | 最新已发视频 | v5 `processed_joint_trajectory_30hz_front_above_v5.mp4`，SHA-256 `fef54acf...c9a7f7` |
 
@@ -52,13 +52,15 @@
 | SEC-006 | 高 | IN_PROGRESS | 同项目旧 checkout 的审核 UI 在 `0.0.0.0:7869`，无认证 POST 可写审核、分段和人工时间对齐；公开 GET 返回 32 条记录、绝对源路径及审核字段。原 user unit 无任何沙箱，空闲 63 线程。 | unit 已先做无接口变化的硬化：只写状态目录、`NoNewPrivileges`/`PrivateTmp`/只读 home/system、线程池固定 1；状态目录/SQLite `0700/0600`。仍需给网页写接口增加认证与 CSRF，按需收窄公开 GET。 |
 | SEC-007 | 低 | OPEN | `:7864` 是 4 天前从登录 session 启动的旧静态审核页面，只提供 GET，但绑定全 LAN、公开时间线/视频/网格，且仍运行 EOL 的系统 Node 20。 | 确认是否仍被使用；若已由 `:7865` 取代则停止，若保留则迁移受管 unit、项目 Node 24，并按数据敏感度限制访问。 |
 | SEC-008 | 中 | RESOLVED | Bandit 首轮扫描 32,217 行代码为 0 high/8 medium；实际输入面包括任意 urllib 协议、Node 下载来源/大小、XML 实体、PyTorch pickle checkpoint 和旧 INSV 共享临时目录。四 MP4 任务槽的 `/tmp` 告警已有同用户属主、`0700/0600`、拒绝符号链接和 `O_NOFOLLOW` 防护，属于已验证误报。 | HTTP 客户端现只接受无凭据/片段/反斜线的明确 HTTP(S)；Node 只接受 `nodejs.org` HTTPS、重定向同源、128 MiB 上限且继续校验 SHA；checkpoint 使用 `weights_only=True`；URDF 使用 `defusedxml`；旧 INSV 默认 scratch 进入各节点 checkout 的 `work/` 并校验属主/符号链接。复扫 32,308 行为 0 high/0 medium，提交本地 `bbfe7ac`、服务器 `8aa6fba`。 |
-| SEC-009 | 高 | RESOLVED | `:7865` 虽已保护写接口，但设备库存 GET 仍向任意 LAN 客户端公开 20 台相机的序列号、固件和左右/Tag 分配；上传 scene/video 会在内容验证前替换正式文件，无效上传可破坏仍标为 ready 的已发布项目。服务也缺少 CSP/`nosniff`，历史 50 个项目目录和 167 个资产为 `0775/0644` 或 `0664`。 | 设备库存读写均要求 Bearer；scene 与 MP4（ISO BMFF `ftyp`）在唯一 `0600` 临时文件中验证后才原子替换，元数据同样原子发布；拒绝数据根/项目/资产符号链接和非服务属主；返回 CSP、`nosniff`、拒绝嵌入/权限策略。生产启动将 50 个目录、168 个文件收紧到 `0700/0600`，无符号链接/错属主；本地 `bdacd36`、服务器 `fa1d4a2`。 |
+| SEC-009 | 高 | RESOLVED | `:7865` 虽已保护写接口，但设备库存 GET 仍向任意 LAN 客户端公开 20 台相机的序列号、固件和左右/Tag 分配；上传 scene/video 会在内容验证前替换正式文件，无效上传可破坏仍标为 ready 的已发布项目。服务也缺少 CSP/`nosniff`，历史 50 个项目目录和 167 个资产为 `0775/0644` 或 `0664`。Node 对 `Expect: 100-continue` 默认先放行正文，未认证客户端可在 401 前开始发送超大请求。 | 设备库存读写均要求 Bearer；scene 与 MP4（ISO BMFF `ftyp`）在唯一 `0600` 临时文件中验证后才原子替换，元数据同样原子发布；拒绝数据根/项目/资产符号链接和非服务属主；返回 CSP、`nosniff`、拒绝嵌入/权限策略。生产启动将 50 个目录、168 个文件收紧到 `0700/0600`；`checkContinue` 在 100 前鉴权，畸形 URL 返回 400 且不刷内部错误。提交本地 `bdacd36`/`86714b1`、服务器 `fa1d4a2`/`554eeae`。 |
 | SEC-010 | 中 | OPEN | `:7865` 仍允许任意 LAN 客户端列出 50 个可视化项目，并直接读取每个 ready 项目的 scene、完整轨迹 timeline 和相机视频。这是当前“点击链接直接审阅”的既有设计，但视频/轨迹可能属于敏感采集数据，不能因为写接口已认证就视为完整访问控制。 | 需要明确产品策略：若只供王浩/授权人员查看，增加独立读会话或短期签名 capability，避免令牌进入 URL/日志；若确认局域网公开是需求，则记录数据分级、网络边界和接受风险。未经选择不擅自让现有 50 个审阅链接失效。 |
+| SEC-011 | 高 | RESOLVED | CPython `urllib` 的默认 302 处理会把原请求的 `Authorization` 原样转发到跨域 Location；本地双 HTTP 服务已复现 Bearer 到达第二个域。设备同步和可视化 JSON API 使用默认 `urlopen`，上传客户端还信任创建响应中的绝对 `links`，错误配置或被攻破的平台可窃取写令牌。 | 所有带认证的 urllib API 请求使用拒绝重定向 opener，302 直接报错且第二服务未收到请求；上传 URL 不再读取响应中的绝对 links，而是校验 `[a-z0-9-]{1,64}` 项目 ID 后从用户配置的 server 本地构造四个端点。新增真实双服务泄露回归、恶意 links 和路径 ID 测试；本地 `5ae4c84`、服务器 `2c7f2d7`。 |
 | EFF-001 | 高 | RESOLVED | 压缩 NPZ 的每个数组被重复打开和解压。缓存读取改为一次加载所有成员。 | 服务器无缓存耗时 14.26 s → 6.10 s；输出逐字节一致；提交 `293df8b`。 |
 | EFF-002 | 中 | DEFERRED | FFmpeg 管道软件解码约 2.04 s，OpenCV 包装约 2.70 s；VAAPI 四路约 7.43 s。FFmpeg 像素输出与当前路径不完全一致，且缓存修复后解码已非主要瓶颈。 | 若后续解码占比重新升高，建立像素/检测回归门后再切换；当前不以小收益换算法输入变化。 |
 | EFF-003 | 中 | RESOLVED | 观察缓存已有 4×4 预算，但备用联合 pose-graph 的 8 个 Python worker 未限制 BLAS/OpenMP，存在 8×32 嵌套线程放大；不同任务之间也没有主机级并发门。 | 每任务最多 16 逻辑线程，小主机自动降配；OpenCV/FFmpeg/BLAS/OpenMP/BLIS/vecLib 全部继承限额，pose-graph 每 worker 1 个数学线程。默认同用户整机 1 个任务槽，可在总量不超过逻辑核时显式增加。双任务并发实测串行、无发布竞态；轨迹 SHA 不变。提交本地 `5dad620`/`e2400fb`，服务器 `5d550f6`/`449fde0`。 |
 | EFF-004 | 低 | RESOLVED | `:7869` 审核服务主要待机，却因 OpenCV/数学库默认线程池保持 63 个线程、RSS 103,004 KiB。 | systemd 环境将所有原生线程池限制为 1；重启后接口仍为 200、32 条记录可读，线程 63→1、RSS 103,004→68,804 KiB，systemd `MemoryCurrent` 约 62.2→33.8 MiB。 |
 | EFF-005 | 低 | OPEN | `:7869 /api/items` 会在读取 32 条记录时同步扫描/汇总数据；本轮冷探测 5 s 超时，随后稳定返回 200 但耗时 3.06 s。请求期间进程为 2 线程、RSS 80,092 KiB，`MemoryCurrent` 约 123 MiB，明显高于空闲基线；根页面仅 0.0006 s。 | 先在其可维护源码迁移后做端点分段计时、结果缓存和失效策略；不得为了提速放宽已设置的原生线程池或认证边界。与 SEC-006 一起处理。 |
+| EFF-006 | 低 | OPEN | `:7865` 目前保存 50 个项目、总计 4.2 GiB（文件字节 4,486,238,512），单项目中位约 69.6 MiB、最大约 447.5 MiB；没有保留期限、容量配额或清理工作流。当前磁盘仍有 1.4 TiB，项目列表 50 次实测中位 3.55 ms、p95 8.87 ms，暂非实时瓶颈。 | 在不自动删除正式审阅数据的前提下增加只读容量告警和按项目创建时间/最后访问时间的清理候选报告；真正删除必须经用户确认并提供可恢复窗口。 |
 | REL-002 | 低 | RESOLVED | 本机不带隔离环境变量运行 pytest 时会自动加载 ROS Humble 的 `launch_testing` 插件，并因跨 Python 环境缺少 `yaml` 在收集前失败。 | `pyproject.toml` 明确屏蔽 7 个宿主 ROS/ament pytest entry point；本地和服务器均以普通 `pytest -q` 得到 `247 passed, 7 skipped`。提交本地 `598175b`、服务器 `61c1d02`。 |
 | REL-003 | 低 | DEFERRED | CPU 服务器未安装 Chrome/Chromium，因此可选的服务器端 WebGL 离线渲染不可用；四 MP4 轨迹审阅使用 Python/OpenCV，不受影响，`:7865` 也只在客户端浏览器渲染。原实现硬编码 `/usr/bin/google-chrome`。 | 已支持 `--chrome`/`OSMO_CHROME_BINARY` 与常见路径探测，缺失时启动前明确失败；本地前后视频 SHA 完全相同。仅在确需服务器 WebGL 时再固定、校验并安装项目级 Chromium，避免当前无收益地增加体积和攻击面。提交本地 `29f91f4`、服务器 `78c734c`。 |
 
@@ -152,6 +154,13 @@
 - 生产动态验证：未认证 `/api/devices` 为 401 且带 Bearer challenge，认证读取仍为 200/20 台；现有项目 scene 为 200 且有 CSP，真实 MP4 `bytes=0-11` 为 206、`ftyp` 正常且有 `nosniff`。
 - 历史数据修复前 50 个项目目录和 167 个子文件中共有 217 个条目对组/其他用户开放写权限；启动自愈后 50 个目录、168 个文件均无组/其他权限，符号链接、错属主、组/其他可写计数均为 0。
 - 仍有 50 个项目的 timeline/视频/scene 对 LAN 公开读取，拆为 SEC-010，等待明确“公开审阅”还是“读认证/签名链接”策略；没有在本轮让已有链接失效。
+- 继续审计 HTTP 协议边界发现 Node 默认的 `Expect: 100-continue` 会在处理 request 回调前先发 100；新增本地 `86714b1`、服务器 `554eeae`，写请求在 100 前验证 Bearer，其他 Expect 返回 417，非法 percent-encoding URL 明确返回 400且不记录内部错误栈。
+- 生产第二阶段备份为 `/home/ps/osmo-360-visualization/platform_server.mjs.pre-expect-auth-20260901-2123.bak`；当前生产/CPU 仓库源码 SHA-256 同为 `0b0502f5...8c5b`，unit active、0 重启、`MemoryCurrent` 约 19.1 MiB。
+- 生产原始 socket 验证：伪造 1,000,000,000 字节 Content-Length 且带 `Expect: 100-continue` 的未认证 POST 直接返回 `HTTP/1.1 401`，响应中没有 `100 Continue`；畸形 URL 为 400，库存 GET 仍为 401。
+- `:7865` 容量/列表效率基线：50 项共 4.2 GiB，项目中位约 69.6 MiB、最大约 447.5 MiB；磁盘可用 1.4 TiB。`/api/projects` 50 次本机请求中位 3.55 ms、p95 8.87 ms，CPU 当前无优化必要；无保留策略的长期增长拆为 EFF-006。
+- 客户端认证流深审复现 CPython `urllib` 会将 Bearer 随跨域 302 转发。修复提交本地 `5ae4c84`、服务器 `2c7f2d7`：设备同步和 JSON API 禁止重定向；bundle 上传忽略服务端绝对 links，仅接受安全项目 ID 并从已验证 server 构造同源端点。
+- 新增两个真实本地 HTTP 服务的回归：修复前第二服务收到 `Authorization`，修复后首个 302 直接作为错误、第二服务请求数为 0；恶意 `https://attacker.invalid/steal-token` links 不会被使用，`../escape` 项目 ID 被拒绝。完整测试本地/服务器均为 `265 passed, 7 skipped`，Bandit 仍为 0 high/0 medium。
+- 服务器真实 `umi devices sync` 成功；写前/写后文件 SHA 不同，因此不能宣称字节不变，且没有保留写前语义快照。写后库存为 20 台，与 CPU 仓库 JSON 语义逐项相等、规范化 SHA-256 同为 `5cc0fb49...25d30`，文件 SHA-256 同为 `8f3cf1e6...7b557`，权限 `0600`，服务 active。差异最可能来自此前序列化/字段顺序，但不把该推断当成已证明事实。
 - 本轮只改变平台安全/发布边界，不改变四 MP4 检测、位姿、坐标、时间线内容或录制渲染。v5 轨迹 SHA 仍为 `52c3e192...b82ed`，视频 SHA 仍为 `fef54acf...c9a7f7`，因此不重跑数据集、不生成或发送重复视频。
 
 ## 最近一次算法改动验证
