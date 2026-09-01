@@ -15,16 +15,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from osmo360.ffmpeg_runtime import project_ffmpeg_runtime
+
 from .devices import load_device_pairs
 from .manifest import ManifestError, ROOT, confined_path, validate_path_component
 
 
-PIPELINE_REVISION = "dual-x5-four-mp4-cpu-v5"
+PIPELINE_REVISION = "dual-x5-four-mp4-cpu-v6"
 INPUT_SCHEMA = "dual-x5-four-mp4-input/1.0"
 LOCK_SCHEMA = "dual-x5-four-mp4-dataset-lock/1.0"
-FFPROBE = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffprobe"
-if not FFPROBE.is_file():
-    FFPROBE = Path("/usr/bin/ffprobe")
 
 SERIAL_PATTERN = re.compile(rb"IAHE[A-Z0-9]{10}")
 OFFSET_PATTERN = re.compile(rb"[mn]2(?:_-?\d+(?:\.\d+)?){15}")
@@ -124,11 +123,10 @@ def _fraction(value: str) -> float:
 
 
 def _probe_mp4(path: Path) -> dict[str, Any]:
-    if not FFPROBE.is_file():
-        raise ManifestError(f"ffprobe is missing: {FFPROBE}")
+    runtime = project_ffmpeg_runtime()
     process = subprocess.run(
         [
-            str(FFPROBE), "-v", "error", "-show_entries",
+            str(runtime.ffprobe), "-v", "error", "-show_entries",
             "stream=codec_type,width,height,r_frame_rate,avg_frame_rate,duration,nb_frames:format=duration",
             "-of", "json", str(path),
         ],
@@ -161,6 +159,7 @@ def _probe_mp4(path: Path) -> dict[str, Any]:
         "has_audio": any(
             item.get("codec_type") == "audio" for item in payload.get("streams", [])
         ),
+        "probe_runtime": runtime.provenance(),
     }
 
 
@@ -241,12 +240,19 @@ def _camera_record(
         "fps": first["fps"],
         "duration_s": min(value["duration_s"] for value in probes.values()),
         "frame_count": min(value["frame_count"] for value in probes.values()),
+        **(
+            {"probe_runtime": first["probe_runtime"]}
+            if first.get("probe_runtime") else {}
+        ),
         "lenses": [
             {
                 "stream": stream,
                 "path": paths[stream].relative_to(root).as_posix(),
                 "size_bytes": paths[stream].stat().st_size,
-                **probes[stream],
+                **{
+                    key: value for key, value in probes[stream].items()
+                    if key != "probe_runtime"
+                },
             }
             for stream in (0, 1)
         ],
@@ -601,6 +607,7 @@ def discover_four_mp4_dataset(dataset_root: Path) -> dict[str, Any]:
         config["pair_id"] if "pair_id" in config else f"pair-01-{recorded_at:%H%M%S}",
         field="pair_id",
     )
+    probe_runtime = left.get("probe_runtime") or right.get("probe_runtime")
     return {
         "schema_version": LOCK_SCHEMA,
         "pipeline_revision": PIPELINE_REVISION,
@@ -620,6 +627,7 @@ def discover_four_mp4_dataset(dataset_root: Path) -> dict[str, Any]:
             }
         ],
         "resource_budget": resource_budget(config),
+        **({"ffmpeg_runtime": probe_runtime} if probe_runtime else {}),
         **({"instaumi": config["instaumi"]} if config.get("instaumi") else {}),
     }
 

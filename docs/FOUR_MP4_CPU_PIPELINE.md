@@ -1,6 +1,6 @@
-# Four-MP4 CPU pipeline v5
+# Four-MP4 CPU pipeline v6
 
-`dual-x5-four-mp4-cpu-v5` accepts the four independent raw fisheye MP4 streams
+`dual-x5-four-mp4-cpu-v6` accepts the four independent raw fisheye MP4 streams
 produced by two X5 cameras. It does not import INSV and does not invoke the
 Insta360 stitching SDK. The official panorama is therefore no longer a
 localization prerequisite.
@@ -100,6 +100,26 @@ of lens-0 audio. If lens-0 has no audio, an explicit offset is required.
 This descriptor remains available for four-MP4 exports that do not use the
 InstaUMI HDF5 schema.
 
+## Verified FFmpeg runtime
+
+The v6 discovery/audio path and the joint review-video encoder require the
+project runtime `ffmpeg-linux-x64-9.0.1-osmo1`. Both executables are checked
+against the hashes in
+`config/runtime_revisions/ffmpeg_linux_x64_9_0_1.json`; legacy FFmpeg versions
+fail closed instead of silently taking part in a run. Install the offline,
+prebuilt archive once per checkout:
+
+```bash
+.venv/bin/python -m tools.install_ffmpeg_runtime \
+  --archive /path/to/ffmpeg-9.0.1-linux-x86_64.tar.xz
+```
+
+The revision also records the signed upstream source hash, signing-key
+fingerprint, license, compiler, configure flags, and the fact that network
+protocols were disabled. The runtime lives under gitignored `work/tools/`, so
+it does not alter the host FFmpeg package. `OSMO_FFMPEG_BIN` may override it
+only with a complete `ffmpeg`/`ffprobe` pair at version 9.0.1 or newer.
+
 ## Execution and resource limits
 
 Run the same one-argument entry point:
@@ -176,7 +196,7 @@ records every flow, redetection, scout, fallback, and rejection count.
 Persistent cache defaults to:
 
 ```text
-dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v5/<pair-id>/
+dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v6/<pair-id>/
 ```
 
 Set `OSMO_PIPELINE_CACHE` to a server-local SSD if the dataset itself is on a
@@ -199,7 +219,7 @@ self-calibration, not external ground truth.
 The principal outputs are:
 
 ```text
-final/dual-x5-four-mp4-cpu-v5/pairs/<pair-id>/tracking/
+final/dual-x5-four-mp4-cpu-v6/pairs/<pair-id>/tracking/
 ├── session_world_map.json
 ├── left_pose.csv
 ├── right_pose.csv
@@ -255,7 +275,7 @@ Render the four source views beside the synchronized shared-map 3D tracks:
 ```bash
 .venv/bin/python -m tools.render_joint_four_mp4_trajectory \
   /data/session \
-  /data/session/final/dual-x5-four-mp4-cpu-v5/pairs/<pair-id>/tracking \
+  /data/session/final/dual-x5-four-mp4-cpu-v6/pairs/<pair-id>/tracking \
   /data/session/final/joint_trajectory_comparison.mp4
 ```
 

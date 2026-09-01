@@ -15,15 +15,11 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
+from osmo360.ffmpeg_runtime import project_ffmpeg_runtime
 from osmo360.localization.cached_a3_bootstrap import (
     MAXIMUM_TRUSTED_INTERPOLATION_GAP_S,
 )
-from tools._root import ROOT
 
-
-FFMPEG = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg"
-if not FFMPEG.is_file():
-    FFMPEG = Path("/usr/bin/ffmpeg")
 
 BG = (13, 17, 23)
 PANEL = (24, 31, 41)
@@ -59,7 +55,10 @@ def parse_args() -> argparse.Namespace:
             "while flu-front-above expects a FLU world"
         ),
     )
-    parser.add_argument("--ffmpeg", type=Path, default=FFMPEG)
+    parser.add_argument(
+        "--ffmpeg", type=Path,
+        help="override the verified project FFmpeg runtime",
+    )
     return parser.parse_args()
 
 
@@ -809,7 +808,11 @@ def main() -> int:
         for sampler in samplers.values():
             sampler.release()
 
-    ffmpeg = args.ffmpeg.resolve(strict=True)
+    ffmpeg = (
+        args.ffmpeg.resolve(strict=True)
+        if args.ffmpeg is not None
+        else project_ffmpeg_runtime().ffmpeg
+    )
     subprocess.run([
         str(ffmpeg), "-y", "-hide_banner", "-loglevel", "error",
         "-i", str(intermediate), "-i", str(video_paths["LEFT BACK / H5 KB"]),
@@ -834,6 +837,7 @@ def main() -> int:
         "fps": args.fps,
         "duration_s": duration,
         "frame_count": total,
+        "ffmpeg_sha256": _sha256(ffmpeg),
         "map_id": world_map["map_id"],
         "tracking_status": report["status"],
         "joint_valid_ratio": report["trajectories"]["joint"]["joint_valid_ratio"],
