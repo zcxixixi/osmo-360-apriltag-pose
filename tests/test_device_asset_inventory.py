@@ -1,6 +1,11 @@
 import json
 from pathlib import Path
 
+import pytest
+
+from osmo360.pipeline.devices import load_device_pairs, resolve_device_pair
+from osmo360.pipeline.manifest import ManifestError
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -49,3 +54,33 @@ def test_left1_camera_and_sd_are_bound_by_capture_evidence():
     assert asset["sd_card"]["evidence_capture_sha256"] == (
         "c42d4caf09d06af0820bc4af4a088f555c9775a7693ed1248801da5ae442376d"
     )
+
+
+def test_dual_gripper_pair_is_serial_bound_and_resolvable():
+    pairs = load_device_pairs()
+    pair = pairs["pairs"]["dual-x5-gripper-pair-01"]
+    assert pair["left"]["serial"] == "IAHEA2606M5WSK"
+    assert pair["left"]["role"] == "physical_left"
+    assert pair["left"]["base_tag_id"] == 2
+    assert pair["right"]["serial"] == "IAHEA2606KKUKF"
+    assert pair["right"]["role"] == "physical_right"
+    assert pair["right"]["base_tag_id"] == 3
+    assert pair["future_capture_profile"] == {
+        "camera_model": "insta360-x5",
+        "mode": "4K30",
+        "nominal_width": 3840,
+        "nominal_height": 1920,
+        "nominal_fps": 30.0,
+        "required_lens_tracks": 2,
+        "stitching": "official full-panorama",
+    }
+    pair_id, resolved = resolve_device_pair(
+        {"IAHEA2606KKUKF", "IAHEA2606M5WSK"}
+    )
+    assert pair_id == "dual-x5-gripper-pair-01"
+    assert resolved == pair
+
+
+def test_unknown_serial_combination_is_rejected():
+    with pytest.raises(ManifestError, match="exactly one device pair"):
+        resolve_device_pair({"IAHEA2606M5WSK", "UNKNOWN"})

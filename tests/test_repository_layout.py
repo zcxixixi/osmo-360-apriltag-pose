@@ -9,6 +9,7 @@ ALLOWED_ROOT_FILES = {
     "README.md",
     "pyproject.toml",
     "requirements-train-cu130.txt",
+    "run_pipeline.sh",
     "umi",
     "uv.lock",
 }

@@ -104,6 +104,135 @@ def metric_radial_model(lens: dict[str, Any]):
     return model
 
 
+def make_x5_offset_ray_converter(
+    offset: str,
+    *,
+    stream: int,
+    source_width: int,
+    source_height: int,
+):
+    """Convert X5 raw pixels to unit rays from its embedded lens-offset record."""
+    fields = offset.strip().split("_")
+    if len(fields) != 16 or fields[0] not in {"m2", "n2"}:
+        raise ValueError("invalid Insta360 X5 dual-lens offset record")
+    values = np.asarray([float(value) for value in fields[1:]], dtype=float)
+    if stream not in (0, 1):
+        raise ValueError("X5 stream must be 0 or 1")
+    stacked_height, calibration_width = values[12:14]
+    if not math.isclose(stacked_height, 2 * calibration_width, rel_tol=0.01):
+        raise ValueError("X5 offset record is not a stacked dual-fisheye calibration")
+    start = stream * 6
+    centre_x, stacked_centre_y, radius, tilt_x, tilt_y, half_fov_deg = (
+        values[start:start + 6]
+    )
+    centre_y = stacked_centre_y - stream * calibration_width
+    scale_x = source_width / calibration_width
+    scale_y = source_height / calibration_width
+    centre = np.asarray([centre_x * scale_x, centre_y * scale_y], dtype=float)
+    scaled_radius = radius * math.sqrt(scale_x * scale_y)
+    lens_to_rig = Rotation.from_euler("xy", [tilt_x, tilt_y], degrees=True)
+    if stream == 1:
+        lens_to_rig = Rotation.from_euler("y", 180.0, degrees=True) * lens_to_rig
+    half_fov = math.radians(half_fov_deg)
+
+    def convert(pixels: np.ndarray) -> np.ndarray:
+        pixels = np.asarray(pixels, dtype=float).reshape(-1, 2)
+        delta = pixels - centre
+        radius_px = np.linalg.norm(delta, axis=1)
+        theta = radius_px / scaled_radius * half_fov
+        planar = np.divide(
+            delta,
+            radius_px[:, None],
+            out=np.zeros_like(delta),
+            where=radius_px[:, None] > 1e-9,
+        )
+        rays_lens = np.column_stack(
+            (
+                np.sin(theta) * planar[:, 0],
+                np.sin(theta) * planar[:, 1],
+                np.cos(theta),
+            )
+        )
+        rays = lens_to_rig.apply(rays_lens)
+        return rays / np.linalg.norm(rays, axis=1, keepdims=True)
+
+    metadata = {
+        "camera_model": "insta360-x5",
+        "offset": offset,
+        "stream": stream,
+        "source_size": [source_width, source_height],
+        "centre_px": centre.tolist(),
+        "radius_px": scaled_radius,
+        "half_fov_deg": half_fov_deg,
+        "tilt_deg": [tilt_x, tilt_y],
+        "ray_frame": "x5_dual_fisheye_rig_stream0",
+    }
+    return convert, metadata
+
+
+def make_x5_rectified_maps(
+    offset: str,
+    *,
+    stream: int,
+    source_width: int,
+    source_height: int,
+    view_size: int = 960,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Map overlapping tangent views into one X5 raw fisheye lens image."""
+    _, metadata = make_x5_offset_ray_converter(
+        offset,
+        stream=stream,
+        source_width=source_width,
+        source_height=source_height,
+    )
+    centre = np.asarray(metadata["centre_px"], dtype=float)
+    radius_px = float(metadata["radius_px"])
+    half_fov = math.radians(float(metadata["half_fov_deg"]))
+    fov = math.radians(85.0)
+    coordinate = (
+        (np.arange(view_size) + 0.5 - view_size / 2.0)
+        / (view_size / 2.0)
+        * np.tan(fov / 2.0)
+    )
+    xx, yy = np.meshgrid(coordinate, coordinate)
+    base = np.stack([xx, yy, np.ones_like(xx)], axis=-1)
+    base /= np.linalg.norm(base, axis=-1, keepdims=True)
+    centres = [
+        (0, 0),
+        (-55, 0),
+        (55, 0),
+        (0, -55),
+        (0, 55),
+        (-45, -45),
+        (-45, 45),
+        (45, -45),
+        (45, 45),
+        (-80, 0),
+        (80, 0),
+    ]
+    maps = []
+    for yaw, pitch in centres:
+        rays = Rotation.from_euler("yx", [yaw, pitch], degrees=True).apply(
+            base.reshape(-1, 3)
+        ).reshape(base.shape)
+        theta = np.arccos(np.clip(rays[..., 2], -1.0, 1.0))
+        planar_radius = np.linalg.norm(rays[..., :2], axis=-1)
+        image_radius = theta / half_fov * radius_px
+        valid = theta <= half_fov
+        xmap = (
+            centre[0]
+            + image_radius * rays[..., 0] / np.maximum(planar_radius, 1e-9)
+        ).astype(np.float32)
+        ymap = (
+            centre[1]
+            + image_radius * rays[..., 1] / np.maximum(planar_radius, 1e-9)
+        ).astype(np.float32)
+        xmap[~valid] = -1
+        ymap[~valid] = -1
+        maps.append((xmap, ymap))
+    return maps
+
+
 def make_ray_converter(args: argparse.Namespace):
     sys.path.insert(0, str(args.panoforge_root.resolve()))
     from app.core.maps import _quat_to_rot, _radial_model, scale_calibration_to_source

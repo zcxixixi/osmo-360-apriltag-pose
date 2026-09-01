@@ -17,6 +17,7 @@ from .devices import (
     scan_devices,
     sync_inventory,
 )
+from .dataset import process_dataset
 from .device_ui import serve_device_ui
 from .process import process_capture
 from .review import review_capture
@@ -124,6 +125,11 @@ def parse_args() -> argparse.Namespace:
     )
     list_parser.add_argument("--inventory", type=Path, default=DEFAULT_INVENTORY)
     process_parser.add_argument("--dry-run", action="store_true")
+    dataset_parser = subparsers.add_parser(
+        "dataset", help="process a dual-X5 dataset root without a user manifest"
+    )
+    dataset_parser.add_argument("dataset_root", type=Path)
+    dataset_parser.add_argument("--dry-run", action="store_true")
     review_parser = subparsers.add_parser("review", help="build an immutable review bundle")
     review_parser.add_argument("manifest", type=Path)
     review_parser.add_argument("--publish", action="store_true")
@@ -138,6 +144,13 @@ def parse_args() -> argparse.Namespace:
     progress_parser.add_argument("--host", default="127.0.0.1")
     progress_parser.add_argument("--port", type=int, default=7868)
     progress_parser.add_argument("--no-browser", action="store_true")
+    review_ui_parser = subparsers.add_parser(
+        "review-ui", help="serve the simple human data-quality review platform"
+    )
+    review_ui_parser.add_argument("dataset_root", type=Path)
+    review_ui_parser.add_argument("--host", default="127.0.0.1")
+    review_ui_parser.add_argument("--port", type=int, default=7869)
+    review_ui_parser.add_argument("--no-browser", action="store_true")
     return parser.parse_args()
 
 
@@ -150,6 +163,8 @@ def main() -> int:
             result = process_capture(
                 load_manifest(args.manifest), dry_run=args.dry_run
             )
+        elif args.command == "dataset":
+            result = process_dataset(args.dataset_root, dry_run=args.dry_run)
         elif args.command == "review":
             result = review_capture(
                 load_manifest(args.manifest),
@@ -161,6 +176,15 @@ def main() -> int:
         elif args.command == "progress":
             serve_progress(
                 args.status,
+                host=args.host,
+                port=args.port,
+                open_browser=not args.no_browser,
+            )
+            return 0
+        elif args.command == "review-ui":
+            from .review_ui import serve_review_ui
+            serve_review_ui(
+                args.dataset_root,
                 host=args.host,
                 port=args.port,
                 open_browser=not args.no_browser,

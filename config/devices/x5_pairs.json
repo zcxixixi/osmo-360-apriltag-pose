@@ -1,0 +1,44 @@
+{
+  "schema_version": "x5-device-pairs/1.0",
+  "pairs": {
+    "dual-x5-gripper-pair-01": {
+      "status": "SERIAL_AND_BASETAG_VERIFIED",
+      "label": "dual X5 gripper pair 01",
+      "left": {
+        "serial": "IAHEA2606M5WSK",
+        "role": "physical_left",
+        "base_tag_id": 2,
+        "asset_label": "left-1",
+        "camera_identity_revision": "x5-left1-camera-identity-20260831-r1",
+        "mount_revision": "X5-ID2-20260831-left1-r1-reused-block-sorting"
+      },
+      "right": {
+        "serial": "IAHEA2606KKUKF",
+        "role": "physical_right",
+        "base_tag_id": 3,
+        "asset_label": "dual-x5-pair-01-right",
+        "camera_identity_revision": "block-sorting-right-identity-20260831-v1",
+        "mount_revision": "X5-ID3-20260828-r1-reused-block-sorting"
+      },
+      "future_capture_profile": {
+        "camera_model": "insta360-x5",
+        "mode": "4K30",
+        "nominal_width": 3840,
+        "nominal_height": 1920,
+        "nominal_fps": 30.0,
+        "required_lens_tracks": 2,
+        "stitching": "official full-panorama"
+      },
+      "pairing_policy": {
+        "identity_source": "INSV embedded serial; never removable-volume label or insertion order",
+        "sync_source": "audio cross-correlation with start/end drift audit",
+        "world_map_policy": "estimate and freeze one static A3 A/B panel transform per synchronized capture pair",
+        "cross_observations": {
+          "left_camera_observes": "right BaseTag3",
+          "right_camera_observes": "left BaseTag2"
+        },
+        "video_tracks": "both X5 fisheye tracks must be decoded and unified"
+      }
+    }
+  }
+}

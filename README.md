@@ -48,83 +48,66 @@
 ./run_pipeline.sh /absolute/path/to/dataset-root
 ```
 
-调用者只提供数据集根目录。Pipeline 递归扫描其中的 `.insv` 原片，从 INSV
-内嵌元数据识别序列号和录制时间，再按设备注册表自动确定物理左右手、BaseTag
-与同步采集对。调用者不创建 JSON、不重命名厂商文件、不逐个执行 `tools/`
-内部步骤，也不在命令行填写左右序列号或 Tag ID。
+调用者只提供数据集根目录；不创建 JSON，不修改厂商文件名，也不执行 `tools/`
+内部步骤。输入格式固定为：
 
-### 双 X5 数据集目录契约
+```text
+dataset-root/
+└── raw/
+    ├── left/
+    │   └── *.insv
+    └── right/
+        └── *.insv
+```
 
-唯一必需输入是只读的 `raw/`。文件可保留相机原名，也可分子目录存放；逻辑身份
-不能依赖文件名、SD 卡卷标、插入顺序或目录顺序：
+`left`、`right` 始终表示物理左右手。Pipeline 仍会读取 INSV 内嵌序列号并与设备
+注册表交叉验证，不能用目录名掩盖放反的相机。当前固定配对为左
+`IAHEA2606M5WSK`/BaseTag2、右 `IAHEA2606KKUKF`/BaseTag3。短于 30 秒的误触
+录制自动列入忽略清单；其余左右原片按录制时间一一配对，再用音频相关求精确同步。
+
+默认由当前工作站和 `current@192.168.109.124` 并行处理。协调器按采集对轮询分配，
+两台主机从同一个 NAS 数据集路径读取只读原片；缓存、双镜头 remux、拼接和优化
+只写各自主机的 `/tmp/osmo-pipeline/`。节点或 scratch 可在机器部署时通过
+`OSMO_PIPELINE_NODES`、`OSMO_PIPELINE_SCRATCH`、`OSMO_REMOTE_REPO` 配置，
+日常运行命令不增加参数。
+
+NAS 数据集始终只保留 `raw/` 和 `final/`：
 
 ```text
 dataset-root/
 ├── raw/
-│   ├── VID_....insv
-│   ├── VID_....insv
-│   └── ...                         # 可包含多个同步采集对
-└── pipeline/                       # 全部由 Pipeline 创建
-    ├── manifest.lock.json          # 自动生成；用户不编辑
-    ├── status.json
-    └── pairs/
-        └── pair-<NN>-<HHMMSS>/
-            ├── cache/
-            │   ├── left/
-            │   │   ├── lens-0-corners.npz
-            │   │   ├── lens-1-corners.npz
-            │   │   └── dual-lens-corners.npz
-            │   └── right/
-            │       ├── lens-0-corners.npz
-            │       ├── lens-1-corners.npz
-            │       └── dual-lens-corners.npz
-            ├── calibration/
-            │   ├── session_world_map.json
-            │   ├── session_world_map_audit.json
-            │   ├── left_camera_to_tcp.json
-            │   └── right_camera_to_tcp.json
-            ├── trajectory/
-            │   ├── left_camera_world.csv
-            │   ├── right_camera_world.csv
-            │   ├── left_tcp_world.csv
-            │   └── right_tcp_world.csv
-            ├── gates/report.json
-            ├── review/
-            └── export/
+│   ├── left/*.insv
+│   └── right/*.insv
+└── final/
+    └── dual-x5-raw-v1/
+        ├── manifest.lock.json
+        ├── status.json
+        └── pairs/
+            └── pair-<NN>-<HHMMSS>/
+                ├── calibration/
+                ├── trajectories/
+                ├── gates/
+                ├── review/
+                └── export/
 ```
 
-`pipeline/manifest.lock.json` 是运行时自动生成的审计锁，不是用户输入。它记录：
-原片相对路径与哈希、内嵌序列号、左右角色、BaseTag、实际分辨率/FPS、音频同步
-仿射模型、代码 revision、设备 revision 和各 stage 输入输出哈希。删除
-`pipeline/` 后可只凭 `raw/` 重新生成；任何主机绝对路径都不能成为数据集身份。
+`manifest.lock.json` 由 Pipeline 自动生成，不是用户输入。它记录原片相对路径、
+内嵌序列号、实际分辨率/FPS、录制配对、设备 revision 和各 stage 身份。失败任务
+只向 `final/` 写状态、同步和门禁小报告，不上传大缓存；通过任务保留训练数据、
+相机/TCP 轨迹、每视频 A3 地图、完整门禁、审核项目和可复现锁。
 
-路径优先使用相对 `dataset-root` 的相对路径，禁止把某台工作站的绝对挂载路径写成
-可移植数据集身份。`left`、`right` 始终表示物理左右手，不表示 SD 卡插入顺序、
-卷标或画面位置。设备身份只认 INSV 内嵌序列号；当前固定配对为左
-`IAHEA2606M5WSK`/BaseTag2、右 `IAHEA2606KKUKF`/BaseTag3。
-
-本批 `20260831` 试验数据保留实际的 2880×2880 双鱼眼、59.94 FPS 元数据；
-`4K30` 是后续新采集 profile，不能回写或重解释已有视频。Pipeline 以每个 INSV
-探测到的真实分辨率/FPS 为准，并把期望 profile 与实测值同时写入门禁报告。
-
-命名规则：
+命名与坐标规则：
 
 - 数据集根目录：`<task>-<YYYYMMDD>-v<revision>`；
-- 采集对 ID：`pair-<两位序号>-<HHMMSS>`；
-- 原片保留厂商文件名；Pipeline 依据内嵌序列号和录制时间生成逻辑 `left`/`right`
-  绑定，不要求用户改名；
-- 双镜头固定为 `lens-0`、`lens-1`，必须同时缓存和审计，禁止默认单镜头；
-- 所有时间戳以同步后的公共时钟秒表示；原始本地时钟和仿射映射必须保留在审计中；
-- 位置单位为米，角度报告为度，四元数顺序为 `xyzw`；
-- 位姿统一为 `T_parent_child`，即把 child 坐标中的点映射到 parent；
-- 每个采集对独立估计并冻结 `T_session_grid_A_grid_B`，禁止跨视频复用 A/B 摆位；
-- 左相机必须观测墙 Tag 和右 BaseTag3，右相机必须观测墙 Tag 和左 BaseTag2；
-- 官方 2:1 全景仅用于 RGB/人工审核；近距离 BaseTag 与世界位姿的度量输入必须来自
-  X5 两路原始鱼眼四角和内嵌镜头标定。
+- 采集对：`pair-<两位序号>-<HHMMSS>`；双镜头：`lens-0`、`lens-1`；
+- 当前 `20260831` 数据保留实际 2880×2880 双鱼眼、59.94 FPS；`4K30` 只约束后续新采集；
+- 时间戳为同步公共时钟秒；位置单位米；四元数顺序 `xyzw`；
+- 位姿统一为 `T_parent_child`，把 child 坐标中的点映射到 parent；
+- 每个视频独立估计并冻结 `T_session_grid_A_grid_B`，禁止跨视频复用 A/B 摆位；
+- 左相机观测墙 Tag 与右 BaseTag3；右相机观测墙 Tag 与左 BaseTag2；
+- 官方 2:1 全景仅用于 RGB/审核；BaseTag/TCP 度量必须使用两路原始鱼眼四角。
 
-`pipeline/status.json` 记录每个 stage 的状态、输入哈希、代码 revision、执行节点、
-开始/结束时间、输出路径和错误。相同输入哈希与 revision 必须复用；任一身份、
-同步、A3 双板、BaseTag 闭环或 TCP 门禁失败时，`export/` 不得生成训练就绪标记。
+任一身份、同步、A3 双板、BaseTag 闭环或 TCP 门禁失败时，不生成训练就绪标记。
 
 仓库根目录只保留项目配置和 `umi` 主入口。正式产品代码统一放在
 `src/osmo360/`，离线实验工具放在 `tools/`，兼容命令放在 `bin/`，专项说明

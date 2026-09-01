@@ -83,22 +83,18 @@ def parse_args() -> argparse.Namespace:
 
 
 def raw_fisheye_cache_audit(path: Path) -> dict[str, Any]:
-    """Fail closed unless a bearing cache is traceable to raw fisheye stream 1.
-
-    Tangent rectification is allowed only as a detector frontend: cached
-    measurements must still be factory-calibrated rays from the square source
-    fisheye. A stitched 2:1 panorama or a synthetic/rendered frame therefore
-    cannot enter the metric pose graph accidentally.
-    """
+    """Fail closed unless cached rays come from traceable raw fisheye pixels."""
     sidecar = path.with_suffix(".json") if path.suffix else Path(f"{path}.json")
     if not sidecar.is_file():
         raise ValueError(f"raw-fisheye cache sidecar is missing: {sidecar}")
     metadata = json.loads(sidecar.read_text(encoding="utf-8"))
     schema = metadata.get("schema_version")
-    if schema not in {
+    supported = {
         "fisheye-apriltag-observation-cache/1.0",
         "fisheye-apriltag-observation-cache/1.1-lk",
-    }:
+        "fisheye-apriltag-observation-cache/1.2-dual-lens",
+    }
+    if schema not in supported:
         raise ValueError(f"unsupported/non-fisheye cache schema: {sidecar}")
     tracking = metadata.get("tracking") if schema.endswith("-lk") else None
     if tracking is not None:
@@ -110,27 +106,51 @@ def raw_fisheye_cache_audit(path: Path) -> dict[str, Any]:
         if not parent.is_file():
             raise ValueError(f"optical-flow parent cache is missing: {parent}")
     source_size = metadata.get("source_size")
-    if not (isinstance(source_size, list) and len(source_size) == 2
-            and int(source_size[0]) == int(source_size[1])):
+    if not (
+        isinstance(source_size, list)
+        and len(source_size) == 2
+        and int(source_size[0]) == int(source_size[1])
+    ):
         raise ValueError(f"metric input is not a square raw fisheye image: {source_size}")
-    if int(metadata.get("stream", -1)) != 1:
-        raise ValueError(f"metric input must be raw fisheye stream 1: {sidecar}")
-    source_video = Path(str(metadata.get("video", "")))
-    calibration = Path(str(metadata.get("calibration", "")))
-    if not source_video.is_file():
-        raise ValueError(f"raw fisheye source video is missing: {source_video}")
-    if not calibration.is_file():
-        raise ValueError(f"factory calibration is missing: {calibration}")
+    if schema.endswith("-dual-lens"):
+        streams = sorted(map(int, metadata.get("streams", [])))
+        if streams != [0, 1]:
+            raise ValueError(f"X5 metric input requires both raw lens streams: {sidecar}")
+        source_videos = [Path(value) for value in metadata.get("source_videos", [])]
+        if len(source_videos) != 2 or any(not source.is_file() for source in source_videos):
+            raise ValueError(f"dual-fisheye source videos are missing: {source_videos}")
+        if metadata.get("calibration") != "embedded_x5_offset":
+            raise ValueError(f"X5 embedded offset calibration is missing: {sidecar}")
+        if not metadata.get("x5_offset") or not metadata.get("calibration_sha256"):
+            raise ValueError(f"X5 offset audit fields are missing: {sidecar}")
+        stream_audit: int | list[int] = streams
+        source_audit = [str(source.resolve()) for source in source_videos]
+        calibration_audit = "embedded_x5_offset"
+    else:
+        if int(metadata.get("stream", -1)) != 1:
+            raise ValueError(f"legacy metric input must be raw fisheye stream 1: {sidecar}")
+        source_video = Path(str(metadata.get("video", "")))
+        calibration = Path(str(metadata.get("calibration", "")))
+        if not source_video.is_file():
+            raise ValueError(f"raw fisheye source video is missing: {source_video}")
+        if not calibration.is_file():
+            raise ValueError(f"factory calibration is missing: {calibration}")
+        stream_audit = 1
+        source_audit = str(source_video.resolve())
+        calibration_audit = str(calibration.resolve())
     return {
         "measurement_input": "raw_fisheye",
-        "stream": 1,
-        "source_video": str(source_video.resolve()),
+        "stream": stream_audit,
+        "source_video": source_audit,
         "source_size": [int(source_size[0]), int(source_size[1])],
         "camera_serial": metadata.get("camera_serial"),
-        "factory_calibration": str(calibration.resolve()),
+        "factory_calibration": calibration_audit,
         "radial_model": metadata.get("radial_model"),
         "rectified_detection_frontend": bool(metadata.get("rectified_detection", False)),
-        "cached_measurement": "factory-calibrated unit rays in the raw fisheye optical frame",
+        "cached_measurement": metadata.get(
+            "cached_measurement",
+            "factory-calibrated unit rays in the raw fisheye optical frame",
+        ),
         "stitching_used": False,
         "synthetic_frames_used": False,
         "optical_flow_measurements": tracking,
@@ -144,9 +164,16 @@ def unit(value: np.ndarray) -> np.ndarray:
 
 def direct_map(path: Path) -> dict[int, np.ndarray]:
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if abs(float(payload["tag_outer_size_m"]) - 0.2) > 1e-12:
-        raise ValueError(f"wall map {path} is not 200 mm")
-    return {int(tag["id"]): np.asarray(tag["corners_m"], dtype=float) for tag in payload["tags"]}
+    tag_size = float(payload["tag_outer_size_m"])
+    if not math.isfinite(tag_size) or tag_size <= 0:
+        raise ValueError(f"wall map {path} has an invalid Tag size")
+    result = {
+        int(tag["id"]): np.asarray(tag["corners_m"], dtype=float)
+        for tag in payload["tags"]
+    }
+    if any(corners.shape != (4, 3) for corners in result.values()):
+        raise ValueError(f"wall map {path} must contain four 3D corners per Tag")
+    return result
 
 
 def cache_index(cache: np.lib.npyio.NpzFile) -> dict[int, list[int]]:
@@ -281,9 +308,17 @@ def basetag_pose_matches_expected(
 
 def load_initial_wall_transform(path: Path) -> Transform:
     payload = json.loads(path.read_text(encoding="utf-8"))
-    panel = next(item for item in payload["panels"] if 128 in item["expected_ids"])
-    transform = panel["T_world_map"]
-    return Transform(np.asarray(transform["translation_m"]), Rotation.from_quat(transform["quaternion_xyzw"]))
+    if "panel_transform" in payload:
+        transform = payload["panel_transform"]
+    else:
+        panel = next(
+            item for item in payload["panels"] if 128 in item["expected_ids"]
+        )
+        transform = panel["T_world_map"]
+    return Transform(
+        np.asarray(transform["translation_m"]),
+        Rotation.from_quat(transform["quaternion_xyzw"]),
+    )
 
 
 def encode_transform(transform: Transform) -> np.ndarray:
