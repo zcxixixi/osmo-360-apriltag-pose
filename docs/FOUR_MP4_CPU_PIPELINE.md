@@ -241,3 +241,11 @@ Render the four source views beside the synchronized shared-map 3D tracks:
 The comparison view includes a metric world grid and XYZ axes, camera
 frustums, measured/interpolated state, live XYZ and RPY values, linear and
 angular speeds, and full-clip XYZ/RPY trend plots for both cameras.
+
+For data explicitly re-expressed in a right-handed FLU world and camera frame
+(`X` forward from the Tag wall, `Y` left, `Z` up), use
+`--view-preset flu-front-above`. This fixes a perspective camera in front of
+and above both AprilGrids, draws the vertical Tag plane, labels the world and
+camera FLU axes, and adds dashed camera-to-wall `X` depth guides. The pose
+conversion must be performed and audited before rendering; the view preset is
+display-only and does not silently reinterpret input coordinates.

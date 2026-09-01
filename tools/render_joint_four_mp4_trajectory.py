@@ -47,6 +47,12 @@ def parse_args() -> argparse.Namespace:
         "--duration", type=float, default=0.0,
         help="seconds; zero uses the complete common timeline",
     )
+    parser.add_argument(
+        "--view-preset",
+        choices=("legacy-oblique", "flu-front-above"),
+        default="legacy-oblique",
+        help="fixed 3D view; flu-front-above expects X-forward/Y-left/Z-up input",
+    )
     parser.add_argument("--ffmpeg", type=Path, default=FFMPEG)
     return parser.parse_args()
 
@@ -199,19 +205,50 @@ def load_map(path: Path) -> tuple[dict, list[dict[str, object]]]:
 
 class Projector:
     def __init__(
-        self, points: np.ndarray, origin: tuple[int, int], size: tuple[int, int]
+        self,
+        points: np.ndarray,
+        origin: tuple[int, int],
+        size: tuple[int, int],
+        *,
+        preset: str = "legacy-oblique",
+        focus: np.ndarray | None = None,
     ):
-        # Orthographic engineering view: fixed scale makes spatial change legible.
-        self.view = Rotation.from_euler("xz", [62.0, -38.0], degrees=True)
-        transformed = self.view.apply(points)[:, :2]
+        self.preset = preset
+        self.origin = np.asarray(origin, dtype=float)
+        self.size = np.asarray(size, dtype=float)
+        self.eye: np.ndarray | None = None
+        self.target: np.ndarray | None = None
+        if preset == "legacy-oblique":
+            self.view = Rotation.from_euler("xz", [62.0, -38.0], degrees=True)
+            transformed = self.view.apply(points)[:, :2]
+        elif preset == "flu-front-above":
+            # FLU: +X leaves the Tag wall, +Y is left, +Z is physical up.
+            # The virtual camera is fixed in front of and above both panels.
+            self.view = None
+            panel_focus = (
+                np.asarray(focus, dtype=float)
+                if focus is not None
+                else np.asarray(points, dtype=float).mean(axis=0)
+            )
+            self.eye = panel_focus + np.asarray([1.55, 0.0, 0.85])
+            self.target = panel_focus + np.asarray([0.28, 0.0, 0.0])
+            forward = self.target - self.eye
+            self.forward = forward / np.linalg.norm(forward)
+            world_up = np.asarray([0.0, 0.0, 1.0])
+            right = np.cross(self.forward, world_up)
+            self.right = right / np.linalg.norm(right)
+            self.camera_up = np.cross(self.right, self.forward)
+            transformed = np.asarray([
+                self._perspective_value(point) for point in points
+            ])
+        else:
+            raise ValueError(f"unknown view preset: {preset}")
         low = transformed.min(axis=0)
         high = transformed.max(axis=0)
         span = np.maximum(high - low, 0.1)
         padding = span * 0.10 + 0.015
         low -= padding
         high += padding
-        self.origin = np.asarray(origin, dtype=float)
-        self.size = np.asarray(size, dtype=float)
         scale = min(self.size[0] / (high[0] - low[0]),
                     self.size[1] / (high[1] - low[1]))
         content = (high - low) * scale
@@ -219,8 +256,22 @@ class Projector:
         self.low = low
         self.scale = scale
 
+    def _perspective_value(self, point: np.ndarray) -> np.ndarray:
+        relative = np.asarray(point, dtype=float) - self.eye
+        depth = float(np.dot(relative, self.forward))
+        if depth <= 1e-3:
+            raise ValueError("3D point lies behind the fixed front-above camera")
+        return np.asarray([
+            np.dot(relative, self.right) / depth,
+            np.dot(relative, self.camera_up) / depth,
+        ])
+
     def __call__(self, point: np.ndarray) -> tuple[int, int]:
-        value = self.view.apply(np.asarray(point, dtype=float))[:2]
+        value = (
+            self.view.apply(np.asarray(point, dtype=float))[:2]
+            if self.preset == "legacy-oblique"
+            else self._perspective_value(point)
+        )
         pixel = self.offset + (value - self.low) * self.scale
         return int(round(pixel[0])), int(round(
             self.origin[1] + self.size[1] - (pixel[1] - self.origin[1])
@@ -247,31 +298,54 @@ def draw_grid_and_axes(
     point_bounds: tuple[np.ndarray, np.ndarray],
 ) -> None:
     low, high = point_bounds
-    x0 = np.floor((low[0] - 0.05) / 0.1) * 0.1
-    x1 = np.ceil((high[0] + 0.05) / 0.1) * 0.1
-    y0 = np.floor((low[1] - 0.05) / 0.1) * 0.1
-    y1 = np.ceil((high[1] + 0.05) / 0.1) * 0.1
-    for x in np.arange(x0, x1 + 0.001, 0.1):
-        major = abs((x * 10) % 2) < 0.01
-        draw_polyline(
-            canvas, projector, np.asarray([[x, y0, 0], [x, y1, 0]]),
-            GRID if major else _dim(GRID, 0.65), 1,
-        )
-    for y in np.arange(y0, y1 + 0.001, 0.1):
-        major = abs((y * 10) % 2) < 0.01
-        draw_polyline(
-            canvas, projector, np.asarray([[x0, y, 0], [x1, y, 0]]),
-            GRID if major else _dim(GRID, 0.65), 1,
-        )
+    if projector.preset == "flu-front-above":
+        y0 = np.floor((low[1] - 0.05) / 0.1) * 0.1
+        y1 = np.ceil((high[1] + 0.05) / 0.1) * 0.1
+        z0 = np.floor((low[2] - 0.05) / 0.1) * 0.1
+        z1 = np.ceil((high[2] + 0.05) / 0.1) * 0.1
+        for y in np.arange(y0, y1 + 0.001, 0.1):
+            major = abs((y * 10) % 2) < 0.01
+            draw_polyline(
+                canvas, projector, np.asarray([[0, y, z0], [0, y, z1]]),
+                GRID if major else _dim(GRID, 0.65), 1,
+            )
+        for z in np.arange(z0, z1 + 0.001, 0.1):
+            major = abs((z * 10) % 2) < 0.01
+            draw_polyline(
+                canvas, projector, np.asarray([[0, y0, z], [0, y1, z]]),
+                GRID if major else _dim(GRID, 0.65), 1,
+            )
+    else:
+        x0 = np.floor((low[0] - 0.05) / 0.1) * 0.1
+        x1 = np.ceil((high[0] + 0.05) / 0.1) * 0.1
+        y0 = np.floor((low[1] - 0.05) / 0.1) * 0.1
+        y1 = np.ceil((high[1] + 0.05) / 0.1) * 0.1
+        for x in np.arange(x0, x1 + 0.001, 0.1):
+            major = abs((x * 10) % 2) < 0.01
+            draw_polyline(
+                canvas, projector, np.asarray([[x, y0, 0], [x, y1, 0]]),
+                GRID if major else _dim(GRID, 0.65), 1,
+            )
+        for y in np.arange(y0, y1 + 0.001, 0.1):
+            major = abs((y * 10) % 2) < 0.01
+            draw_polyline(
+                canvas, projector, np.asarray([[x0, y, 0], [x1, y, 0]]),
+                GRID if major else _dim(GRID, 0.65), 1,
+            )
     origin = np.zeros(3)
-    for endpoint, color, label in (
-        (np.asarray([0.22, 0, 0]), AXIS_X, "X"),
-        (np.asarray([0, 0.22, 0]), AXIS_Y, "Y"),
-        (np.asarray([0, 0, 0.22]), AXIS_Z, "Z"),
+    labels = (
+        ("X FWD", "Y LEFT", "Z UP")
+        if projector.preset == "flu-front-above" else ("X", "Y", "Z")
+    )
+    for endpoint, color, label in zip(
+        (np.asarray([0.22, 0, 0]), np.asarray([0, 0.22, 0]),
+         np.asarray([0, 0, 0.22])),
+        (AXIS_X, AXIS_Y, AXIS_Z),
+        labels,
     ):
         p0, p1 = projector(origin), projector(endpoint)
         cv2.arrowedLine(canvas, p0, p1, color, 3, cv2.LINE_AA, tipLength=0.14)
-        text(canvas, f"{label}+", (p1[0] + 5, p1[1] - 5), 0.46, color, 2)
+        text(canvas, label, (p1[0] + 5, p1[1] - 5), 0.40, color, 2)
     center = projector(origin)
     cv2.circle(canvas, center, 5, WHITE, -1, cv2.LINE_AA)
     text(canvas, "WORLD / GRID A", (center[0] + 9, center[1] + 18), 0.38, MUTED)
@@ -334,23 +408,57 @@ def draw_camera(
 ) -> None:
     position = sample.position
     center = projector(position)
-    local_frustum = np.asarray([
-        [-0.045, -0.032, 0.12], [0.045, -0.032, 0.12],
-        [0.045, 0.032, 0.12], [-0.045, 0.032, 0.12],
-    ])
+    local_frustum = (
+        np.asarray([
+            [0.12, -0.045, -0.032], [0.12, 0.045, -0.032],
+            [0.12, 0.045, 0.032], [0.12, -0.045, 0.032],
+        ])
+        if projector.preset == "flu-front-above"
+        else np.asarray([
+            [-0.045, -0.032, 0.12], [0.045, -0.032, 0.12],
+            [0.045, 0.032, 0.12], [-0.045, 0.032, 0.12],
+        ])
+    )
     frustum = sample.rotation.apply(local_frustum) + position
     pixels = [projector(point) for point in frustum]
     cv2.polylines(canvas, [np.asarray(pixels, dtype=np.int32)], True,
                   _dim(color, 0.8), 2, cv2.LINE_AA)
     for point in pixels:
         cv2.line(canvas, center, point, _dim(color, 0.8), 1, cv2.LINE_AA)
-    for axis, axis_color in zip(np.eye(3), (AXIS_X, AXIS_Y, AXIS_Z)):
+    for axis_index, (axis, axis_color) in enumerate(
+        zip(np.eye(3), (AXIS_X, AXIS_Y, AXIS_Z))
+    ):
         endpoint = projector(position + sample.rotation.apply(axis * 0.09))
         cv2.arrowedLine(canvas, center, endpoint, axis_color, 2, cv2.LINE_AA,
                         tipLength=0.16)
+        if projector.preset == "flu-front-above":
+            text(canvas, f"{('Xc', 'Yc', 'Zc')[axis_index]}",
+                 (endpoint[0] + 3, endpoint[1] - 3), 0.28, axis_color, 1)
     cv2.circle(canvas, center, 9, color, -1, cv2.LINE_AA)
     cv2.circle(canvas, center, 4, WHITE, -1, cv2.LINE_AA)
     text(canvas, label, (center[0] + 12, center[1] - 9), 0.52, color, 2)
+
+
+def draw_depth_to_reference_plane(
+    canvas: np.ndarray,
+    projector: Projector,
+    position: np.ndarray,
+    color: tuple[int, int, int],
+) -> None:
+    if projector.preset != "flu-front-above":
+        return
+    foot = np.asarray([0.0, position[1], position[2]])
+    samples = np.linspace(position, foot, 17)
+    for index in range(0, len(samples) - 1, 2):
+        cv2.line(
+            canvas, projector(samples[index]), projector(samples[index + 1]),
+            _dim(color, 0.72), 2, cv2.LINE_AA,
+        )
+    foot_pixel = projector(foot)
+    cv2.circle(canvas, foot_pixel, 4, _dim(color, 0.8), 1, cv2.LINE_AA)
+    middle = projector((position + foot) * 0.5)
+    text(canvas, f"X depth {position[0]:.2f} m", (middle[0] + 5, middle[1] - 5),
+         0.30, color, 1)
 
 
 def draw_sparkline(
@@ -401,6 +509,7 @@ def draw_telemetry_card(
     track: Track,
     sample: TrackSample,
     now: float,
+    coordinate_frame: str,
 ) -> None:
     x, y, width, height = rect
     translucent_box(canvas, (x, y), (x + width, y + height), CARD, 0.94)
@@ -414,11 +523,16 @@ def draw_telemetry_card(
     text(canvas, sample.state, (x + width - state_width + 1, y + 24),
          0.33, state_color, 1)
 
-    text(canvas, "POSITION XYZ  [m]", (x + 12, y + 51), 0.35, MUTED)
+    text(canvas, f"POSITION XYZ  [m] / {coordinate_frame}",
+         (x + 12, y + 51), 0.35, MUTED)
     text(canvas, "  ".join(
         f"{axis} {value:+.3f}" for axis, value in zip("XYZ", sample.position)
     ), (x + 12, y + 72), 0.43, WHITE, 1)
-    text(canvas, "ORIENTATION RPY  [deg, xyz]", (x + 12, y + 96), 0.35, MUTED)
+    camera_label = (
+        "CAMERA FLU RPY" if coordinate_frame == "WORLD FLU" else "CAM RPY"
+    )
+    text(canvas, f"{camera_label}  [deg, xyz] / {coordinate_frame}",
+         (x + 12, y + 96), 0.35, MUTED)
     text(canvas, "  ".join(
         f"{axis} {value:+.1f}" for axis, value in zip("RPY", sample.rpy_deg)
     ), (x + 12, y + 117), 0.43, WHITE, 1)
@@ -448,6 +562,26 @@ def render_gradient_panel(canvas: np.ndarray) -> None:
         mix = (y - y0) / max(y1 - y0 - 1, 1)
         canvas[y, x0:x1] = np.round(top * (1 - mix) + bottom * mix).astype(np.uint8)
     cv2.rectangle(canvas, (x0, y0), (x1, y1), (70, 82, 98), 1)
+
+
+def provenance_lines(report: dict, world_map: dict) -> tuple[str, str]:
+    claims = report.get("claims", {})
+    if claims.get("trajectory_source") == "user_provided_csv":
+        reexpressed = claims.get("coordinate_reexpressed", False)
+        first = (
+            "USER-PROVIDED CSV / RE-EXPRESSED IN WORLD FLU / PHYSICAL POSE UNCHANGED"
+            if reexpressed else "USER-PROVIDED CSV / POSES UNCHANGED"
+        )
+        second = (
+            "DISPLAY MAP BINDING UNVERIFIED - CSV CONTAINS NO MAP HASH"
+            if not claims.get("display_map_binding_verified", False)
+            else f"Map: {world_map['map_id']}"
+        )
+        return first, second
+    return (
+        "Capture-local self-calibration; not external ground truth",
+        f"Map: {world_map['map_id']}",
+    )
 
 
 def _extract_frame(video: Path, timestamp_s: float, output: Path) -> None:
@@ -488,16 +622,32 @@ def main() -> int:
     tag_points = np.vstack([np.asarray(tag["corners"]) for tag in tags])
     all_world_points = np.vstack((left.positions, right.positions, tag_points))
     low, high = all_world_points.min(axis=0), all_world_points.max(axis=0)
-    grid_corners = np.asarray([
-        [low[0] - 0.08, low[1] - 0.08, 0.0],
-        [high[0] + 0.08, low[1] - 0.08, 0.0],
-        [low[0] - 0.08, high[1] + 0.08, 0.0],
-        [high[0] + 0.08, high[1] + 0.08, 0.0],
-        [0.22, 0, 0], [0, 0.22, 0], [0, 0, 0.22],
-    ])
+    if args.view_preset == "flu-front-above":
+        grid_corners = np.asarray([
+            [0, low[1] - 0.08, low[2] - 0.08],
+            [0, high[1] + 0.08, low[2] - 0.08],
+            [0, low[1] - 0.08, high[2] + 0.08],
+            [0, high[1] + 0.08, high[2] + 0.08],
+            [0.22, 0, 0], [0, 0.22, 0], [0, 0, 0.22],
+        ])
+    else:
+        grid_corners = np.asarray([
+            [low[0] - 0.08, low[1] - 0.08, 0.0],
+            [high[0] + 0.08, low[1] - 0.08, 0.0],
+            [low[0] - 0.08, high[1] + 0.08, 0.0],
+            [high[0] + 0.08, high[1] + 0.08, 0.0],
+            [0.22, 0, 0], [0, 0.22, 0], [0, 0, 0.22],
+        ])
     projector = Projector(
-        np.vstack((all_world_points, grid_corners)), (1000, 72), (880, 565)
+        np.vstack((all_world_points, grid_corners)), (1000, 72), (880, 565),
+        preset=args.view_preset,
+        focus=tag_points.mean(axis=0),
     )
+    coordinate_frame = (
+        "WORLD FLU" if args.view_preset == "flu-front-above"
+        else world_map.get("world_frame", "WORLD")
+    )
+    provenance_first, provenance_second = provenance_lines(report, world_map)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     intermediate = args.output.with_name(args.output.stem + ".mp4v.mp4")
     writer = cv2.VideoWriter(
@@ -513,7 +663,12 @@ def main() -> int:
             now = start + index / args.fps
             canvas = np.full((1080, 1920, 3), BG, dtype=np.uint8)
             text(canvas, "4x FISHEYE VIDEO", (24, 37), 0.72, WHITE, 2)
-            text(canvas, "JOINT 6DoF / ONE SHARED APRILGRID MAP", (985, 37), 0.72, WHITE, 2)
+            title = (
+                "JOINT 6DoF / FIXED FRONT-ABOVE / WORLD FLU"
+                if args.view_preset == "flu-front-above"
+                else "JOINT 6DoF / ONE SHARED APRILGRID MAP"
+            )
+            text(canvas, title, (985, 37), 0.68, WHITE, 2)
             for tile, name in enumerate(names):
                 x = 20 + (tile % 2) * 475
                 y = 55 + (tile // 2) * 475
@@ -533,25 +688,34 @@ def main() -> int:
             right_sample = right.sample(now)
             draw_track(canvas, projector, left, now, LEFT)
             draw_track(canvas, projector, right, now, RIGHT)
+            draw_depth_to_reference_plane(
+                canvas, projector, left_sample.position, LEFT
+            )
+            draw_depth_to_reference_plane(
+                canvas, projector, right_sample.position, RIGHT
+            )
             draw_camera(canvas, projector, left_sample, LEFT, "LEFT")
             draw_camera(canvas, projector, right_sample, RIGHT, "RIGHT")
-            text(canvas, "SOLID = recent 2 s   DIM = history/interpolation", (1008, 630),
-                 0.35, MUTED)
+            view_note = (
+                "FIXED VIEW: IN FRONT OF + ABOVE BOTH GRIDS / DASH = X DEPTH"
+                if args.view_preset == "flu-front-above"
+                else "SOLID = recent 2 s   DIM = history/interpolation"
+            )
+            text(canvas, view_note, (1008, 630), 0.35, MUTED)
             draw_telemetry_card(
                 canvas, (995, 655, 435, 330), "LEFT", LEFT,
-                left, left_sample, now,
+                left, left_sample, now, coordinate_frame,
             )
             draw_telemetry_card(
                 canvas, (1450, 655, 435, 330), "RIGHT", RIGHT,
-                right, right_sample, now,
+                right, right_sample, now, coordinate_frame,
             )
             text(canvas, f"t = {now:6.3f} s", (1003, 1038), 0.62, WHITE, 2)
             text(canvas, "MEASURED = PnP observation", (1240, 1036), 0.38, MUTED)
             text(canvas, "INTERPOLATED = between accepted observations", (1482, 1036),
                  0.38, WARNING)
-            text(canvas, "Capture-local self-calibration; not external ground truth",
-                 (22, 1015), 0.50, MUTED)
-            text(canvas, f"Map: {world_map['map_id']}", (22, 1045), 0.42, MUTED)
+            text(canvas, provenance_first, (22, 1015), 0.43, MUTED)
+            text(canvas, provenance_second, (22, 1045), 0.40, WARNING)
             writer.write(canvas)
     finally:
         writer.release()
@@ -586,6 +750,14 @@ def main() -> int:
         "map_id": world_map["map_id"],
         "tracking_status": report["status"],
         "joint_valid_ratio": report["trajectories"]["joint"]["joint_valid_ratio"],
+        "view_preset": args.view_preset,
+        "coordinate_frame": coordinate_frame,
+        "view_eye_world": (
+            None if projector.eye is None else projector.eye.tolist()
+        ),
+        "view_target_world": (
+            None if projector.target is None else projector.target.tolist()
+        ),
         "temporal_outlier_rejected_frames": {
             side: report["trajectories"][side].get(
                 "temporal_outlier_rejected_frames", 0
