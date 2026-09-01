@@ -231,8 +231,9 @@ function serveFile(request,response,file,cache='no-store'){
 }
 
 async function handle(request,response){
-  const url=new URL(request.url,'http://localhost');
-  const pathname=decodeURIComponent(url.pathname);
+  let pathname;
+  try{pathname=decodeURIComponent(new URL(request.url,'http://localhost').pathname)}
+  catch{throw Object.assign(new Error('invalid request URL'),{status:400})}
 
   if(['POST','PUT','PATCH','DELETE'].includes(request.method)&&!requireWriteAuthorization(request,response))return;
 
@@ -307,5 +308,11 @@ async function handle(request,response){
   sendError(response,404,'not found')
 }
 
-const server=http.createServer((request,response)=>handle(request,response).catch(error=>{console.error(error);if(!response.headersSent)sendError(response,error.status||500,error.status?error.message:'internal server error');else response.destroy()}));
+const dispatch=(request,response)=>handle(request,response).catch(error=>{if(!error.status)console.error(error);if(!response.headersSent)sendError(response,error.status||500,error.status?error.message:'internal server error');else response.destroy()});
+const server=http.createServer(dispatch);
+server.on('checkContinue',(request,response)=>{
+  if(['POST','PUT','PATCH','DELETE'].includes(request.method)&&!authorizedForWrite(request)){requireWriteAuthorization(request,response);return}
+  response.writeContinue();dispatch(request,response)
+});
+server.on('checkExpectation',(_request,response)=>sendError(response,417,'unsupported expectation'));
 server.listen(port,host,()=>console.log(`READY http://${host}:${port}/`));
