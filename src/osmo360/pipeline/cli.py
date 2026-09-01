@@ -138,6 +138,13 @@ def parse_args() -> argparse.Namespace:
     progress_parser.add_argument("--host", default="127.0.0.1")
     progress_parser.add_argument("--port", type=int, default=7868)
     progress_parser.add_argument("--no-browser", action="store_true")
+    review_ui_parser = subparsers.add_parser(
+        "review-ui", help="serve the simple human data-quality review platform"
+    )
+    review_ui_parser.add_argument("dataset_root", type=Path)
+    review_ui_parser.add_argument("--host", default="127.0.0.1")
+    review_ui_parser.add_argument("--port", type=int, default=7869)
+    review_ui_parser.add_argument("--no-browser", action="store_true")
     return parser.parse_args()
 
 
@@ -161,6 +168,15 @@ def main() -> int:
         elif args.command == "progress":
             serve_progress(
                 args.status,
+                host=args.host,
+                port=args.port,
+                open_browser=not args.no_browser,
+            )
+            return 0
+        elif args.command == "review-ui":
+            from .review_ui import serve_review_ui
+            serve_review_ui(
+                args.dataset_root,
                 host=args.host,
                 port=args.port,
                 open_browser=not args.no_browser,
