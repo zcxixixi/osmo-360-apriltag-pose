@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render four synchronized fisheye videos beside one shared-map 3D trajectory."""
+"""Render four synchronized fisheye videos beside shared-map 6DoF telemetry."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import csv
 import hashlib
 import json
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -21,13 +22,19 @@ FFMPEG = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg"
 if not FFMPEG.is_file():
     FFMPEG = Path("/usr/bin/ffmpeg")
 
-BG = (20, 23, 29)
-PANEL = (31, 36, 44)
-MUTED = (120, 132, 148)
-WHITE = (235, 239, 244)
-CYAN = (238, 196, 72)
-GREEN = (108, 220, 126)
-RED = (85, 90, 245)
+BG = (13, 17, 23)
+PANEL = (24, 31, 41)
+PLOT_BG = (17, 24, 34)
+CARD = (29, 38, 50)
+GRID = (55, 67, 82)
+MUTED = (132, 145, 161)
+WHITE = (238, 242, 247)
+LEFT = (238, 196, 72)
+RIGHT = (118, 151, 255)
+AXIS_X = (92, 105, 255)
+AXIS_Y = (113, 222, 126)
+AXIS_Z = (255, 184, 82)
+WARNING = (65, 177, 255)
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,8 +43,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("tracking_dir", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--fps", type=float, default=30.0)
-    parser.add_argument("--duration", type=float, default=0.0,
-                        help="seconds; zero uses the complete common timeline")
+    parser.add_argument(
+        "--duration", type=float, default=0.0,
+        help="seconds; zero uses the complete common timeline",
+    )
     parser.add_argument("--ffmpeg", type=Path, default=FFMPEG)
     return parser.parse_args()
 
@@ -48,6 +57,16 @@ def _sha256(path: Path) -> str:
         for block in iter(lambda: handle.read(4 * 1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+@dataclass(frozen=True)
+class TrackSample:
+    position: np.ndarray
+    rotation: Rotation
+    rpy_deg: np.ndarray
+    linear_speed_m_s: float
+    angular_speed_deg_s: float
+    state: str
 
 
 class Track:
@@ -66,19 +85,45 @@ class Track:
             [float(row[f"{prefix}_q{axis}"]) for axis in "xyzw"]
             for row in valid
         ]))
+        self.states = np.asarray([
+            row.get(f"{prefix}_pose_state", "UNKNOWN") for row in valid
+        ])
         if len(self.times) < 2 or np.any(np.diff(self.times) <= 0):
             raise ValueError(f"{prefix} joint trajectory has no increasing valid track")
         self.slerp = Slerp(self.times, self.rotations)
+        raw_rpy = self.rotations.as_euler("xyz", degrees=True)
+        self.rpy_deg = np.degrees(np.unwrap(np.radians(raw_rpy), axis=0))
+        delta_t = np.diff(self.times)
+        linear_segments = np.linalg.norm(np.diff(self.positions, axis=0), axis=1) / delta_t
+        angular_segments = np.degrees(
+            (self.rotations[:-1].inv() * self.rotations[1:]).magnitude()
+        ) / delta_t
+        self.linear_speed_m_s = np.r_[linear_segments[0], linear_segments]
+        self.angular_speed_deg_s = np.r_[angular_segments[0], angular_segments]
 
-    def sample(self, now: float) -> tuple[np.ndarray, Rotation, float]:
+    def sample(self, now: float) -> TrackSample:
         clipped = float(np.clip(now, self.times[0], self.times[-1]))
         position = np.asarray([
             np.interp(clipped, self.times, self.positions[:, axis])
             for axis in range(3)
         ])
-        rotation = self.slerp([clipped])[0]
-        age = float(np.min(np.abs(self.times - now)))
-        return position, rotation, age
+        rpy = np.asarray([
+            np.interp(clipped, self.times, self.rpy_deg[:, axis])
+            for axis in range(3)
+        ])
+        nearest = int(np.argmin(np.abs(self.times - clipped)))
+        return TrackSample(
+            position=position,
+            rotation=self.slerp([clipped])[0],
+            rpy_deg=rpy,
+            linear_speed_m_s=float(np.interp(
+                clipped, self.times, self.linear_speed_m_s
+            )),
+            angular_speed_deg_s=float(np.interp(
+                clipped, self.times, self.angular_speed_deg_s
+            )),
+            state=str(self.states[nearest]),
+        )
 
 
 class VideoSampler:
@@ -120,71 +165,312 @@ def text(
     )
 
 
-def load_map(path: Path) -> tuple[dict, list[np.ndarray]]:
+def _dim(color: tuple[int, int, int], amount: float = 0.38) -> tuple[int, int, int]:
+    return tuple(int(channel * amount) for channel in color)
+
+
+def translucent_box(
+    canvas: np.ndarray,
+    upper_left: tuple[int, int],
+    lower_right: tuple[int, int],
+    color: tuple[int, int, int],
+    alpha: float = 0.86,
+) -> None:
+    x0, y0 = upper_left
+    x1, y1 = lower_right
+    overlay = canvas[y0:y1, x0:x1].copy()
+    overlay[:] = color
+    cv2.addWeighted(overlay, alpha, canvas[y0:y1, x0:x1], 1.0 - alpha, 0,
+                    canvas[y0:y1, x0:x1])
+
+
+def load_map(path: Path) -> tuple[dict, list[dict[str, object]]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
-    tags = [np.asarray(tag["corners_m"], dtype=float) for tag in payload["tags"]]
+    tags = [
+        {
+            "id": int(tag["id"]),
+            "panel": str(tag.get("panel", "grid_A")),
+            "corners": np.asarray(tag["corners_m"], dtype=float),
+        }
+        for tag in payload["tags"]
+    ]
     return payload, tags
 
 
 class Projector:
-    def __init__(self, points: np.ndarray, origin: tuple[int, int], size: tuple[int, int]):
-        # Fixed oblique world view; bounds stay fixed throughout the video.
-        self.view = Rotation.from_euler("xz", [58.0, -32.0], degrees=True)
-        transformed = self.view.apply(points)
-        low, high = np.percentile(transformed[:, :2], [1, 99], axis=0)
-        padding = np.maximum((high - low) * 0.10, 0.05)
-        self.low = low - padding
-        self.high = high + padding
+    def __init__(
+        self, points: np.ndarray, origin: tuple[int, int], size: tuple[int, int]
+    ):
+        # Orthographic engineering view: fixed scale makes spatial change legible.
+        self.view = Rotation.from_euler("xz", [62.0, -38.0], degrees=True)
+        transformed = self.view.apply(points)[:, :2]
+        low = transformed.min(axis=0)
+        high = transformed.max(axis=0)
+        span = np.maximum(high - low, 0.1)
+        padding = span * 0.10 + 0.015
+        low -= padding
+        high += padding
         self.origin = np.asarray(origin, dtype=float)
         self.size = np.asarray(size, dtype=float)
+        scale = min(self.size[0] / (high[0] - low[0]),
+                    self.size[1] / (high[1] - low[1]))
+        content = (high - low) * scale
+        self.offset = self.origin + (self.size - content) / 2.0
+        self.low = low
+        self.scale = scale
 
     def __call__(self, point: np.ndarray) -> tuple[int, int]:
         value = self.view.apply(np.asarray(point, dtype=float))[:2]
-        normalized = (value - self.low) / np.maximum(self.high - self.low, 1e-9)
-        pixel = self.origin + normalized * self.size
-        return int(round(pixel[0])), int(round(self.origin[1] + self.size[1] - normalized[1] * self.size[1]))
+        pixel = self.offset + (value - self.low) * self.scale
+        return int(round(pixel[0])), int(round(
+            self.origin[1] + self.size[1] - (pixel[1] - self.origin[1])
+        ))
 
 
 def draw_polyline(
-    canvas: np.ndarray, projector: Projector, points: np.ndarray,
-    color: tuple[int, int, int], thickness: int = 2,
+    canvas: np.ndarray,
+    projector: Projector,
+    points: np.ndarray,
+    color: tuple[int, int, int],
+    thickness: int = 2,
+    closed: bool = False,
 ) -> None:
     if len(points) < 2:
         return
     pixels = np.asarray([projector(point) for point in points], dtype=np.int32)
-    cv2.polylines(canvas, [pixels], False, color, thickness, cv2.LINE_AA)
+    cv2.polylines(canvas, [pixels], closed, color, thickness, cv2.LINE_AA)
+
+
+def draw_grid_and_axes(
+    canvas: np.ndarray,
+    projector: Projector,
+    point_bounds: tuple[np.ndarray, np.ndarray],
+) -> None:
+    low, high = point_bounds
+    x0 = np.floor((low[0] - 0.05) / 0.1) * 0.1
+    x1 = np.ceil((high[0] + 0.05) / 0.1) * 0.1
+    y0 = np.floor((low[1] - 0.05) / 0.1) * 0.1
+    y1 = np.ceil((high[1] + 0.05) / 0.1) * 0.1
+    for x in np.arange(x0, x1 + 0.001, 0.1):
+        major = abs((x * 10) % 2) < 0.01
+        draw_polyline(
+            canvas, projector, np.asarray([[x, y0, 0], [x, y1, 0]]),
+            GRID if major else _dim(GRID, 0.65), 1,
+        )
+    for y in np.arange(y0, y1 + 0.001, 0.1):
+        major = abs((y * 10) % 2) < 0.01
+        draw_polyline(
+            canvas, projector, np.asarray([[x0, y, 0], [x1, y, 0]]),
+            GRID if major else _dim(GRID, 0.65), 1,
+        )
+    origin = np.zeros(3)
+    for endpoint, color, label in (
+        (np.asarray([0.22, 0, 0]), AXIS_X, "X"),
+        (np.asarray([0, 0.22, 0]), AXIS_Y, "Y"),
+        (np.asarray([0, 0, 0.22]), AXIS_Z, "Z"),
+    ):
+        p0, p1 = projector(origin), projector(endpoint)
+        cv2.arrowedLine(canvas, p0, p1, color, 3, cv2.LINE_AA, tipLength=0.14)
+        text(canvas, f"{label}+", (p1[0] + 5, p1[1] - 5), 0.46, color, 2)
+    center = projector(origin)
+    cv2.circle(canvas, center, 5, WHITE, -1, cv2.LINE_AA)
+    text(canvas, "WORLD / GRID A", (center[0] + 9, center[1] + 18), 0.38, MUTED)
+
+
+def draw_tags(
+    canvas: np.ndarray, projector: Projector, tags: list[dict[str, object]]
+) -> None:
+    overlay = canvas.copy()
+    panel_points: dict[str, list[np.ndarray]] = {"grid_A": [], "grid_B": []}
+    for tag in tags:
+        corners = np.asarray(tag["corners"])
+        panel = str(tag["panel"])
+        pixels = np.asarray([projector(point) for point in corners], dtype=np.int32)
+        fill = (55, 72, 91) if panel == "grid_A" else (67, 57, 87)
+        cv2.fillConvexPoly(overlay, pixels, fill, cv2.LINE_AA)
+        panel_points.setdefault(panel, []).extend(corners)
+    cv2.addWeighted(overlay, 0.52, canvas, 0.48, 0, canvas)
+    for tag in tags:
+        corners = np.asarray(tag["corners"])
+        panel = str(tag["panel"])
+        outline = (105, 128, 153) if panel == "grid_A" else (135, 108, 159)
+        draw_polyline(canvas, projector, corners, outline, 1, closed=True)
+    for panel, points in panel_points.items():
+        if not points:
+            continue
+        center = projector(np.mean(np.asarray(points), axis=0))
+        text(
+            canvas, "APRILGRID A" if panel == "grid_A" else "APRILGRID B",
+            (center[0] - 46, center[1] - 8), 0.36, WHITE, 1,
+        )
+
+
+def draw_track(
+    canvas: np.ndarray,
+    projector: Projector,
+    track: Track,
+    now: float,
+    color: tuple[int, int, int],
+) -> None:
+    upto = int(np.searchsorted(track.times, now, side="right"))
+    if upto < 2:
+        return
+    draw_polyline(canvas, projector, track.positions[:upto], _dim(color), 2)
+    recent_start = max(0, int(np.searchsorted(track.times, now - 2.0)))
+    draw_polyline(canvas, projector, track.positions[recent_start:upto], color, 4)
+    for index in range(1, upto):
+        if "INTERPOLATED" in (track.states[index - 1], track.states[index]):
+            p0 = projector(track.positions[index - 1])
+            p1 = projector(track.positions[index])
+            cv2.line(canvas, p0, p1, _dim(color, 0.65), 2, cv2.LINE_AA)
 
 
 def draw_camera(
     canvas: np.ndarray,
     projector: Projector,
-    position: np.ndarray,
-    rotation: Rotation,
+    sample: TrackSample,
     color: tuple[int, int, int],
     label: str,
 ) -> None:
+    position = sample.position
     center = projector(position)
-    cv2.circle(canvas, center, 8, color, -1, cv2.LINE_AA)
-    length = 0.08
-    for axis, axis_color in zip(np.eye(3), (RED, GREEN, CYAN)):
-        endpoint = projector(position + rotation.apply(axis * length))
-        cv2.line(canvas, center, endpoint, axis_color, 3, cv2.LINE_AA)
-    text(canvas, label, (center[0] + 12, center[1] - 8), 0.55, color, 2)
+    local_frustum = np.asarray([
+        [-0.045, -0.032, 0.12], [0.045, -0.032, 0.12],
+        [0.045, 0.032, 0.12], [-0.045, 0.032, 0.12],
+    ])
+    frustum = sample.rotation.apply(local_frustum) + position
+    pixels = [projector(point) for point in frustum]
+    cv2.polylines(canvas, [np.asarray(pixels, dtype=np.int32)], True,
+                  _dim(color, 0.8), 2, cv2.LINE_AA)
+    for point in pixels:
+        cv2.line(canvas, center, point, _dim(color, 0.8), 1, cv2.LINE_AA)
+    for axis, axis_color in zip(np.eye(3), (AXIS_X, AXIS_Y, AXIS_Z)):
+        endpoint = projector(position + sample.rotation.apply(axis * 0.09))
+        cv2.arrowedLine(canvas, center, endpoint, axis_color, 2, cv2.LINE_AA,
+                        tipLength=0.16)
+    cv2.circle(canvas, center, 9, color, -1, cv2.LINE_AA)
+    cv2.circle(canvas, center, 4, WHITE, -1, cv2.LINE_AA)
+    text(canvas, label, (center[0] + 12, center[1] - 9), 0.52, color, 2)
+
+
+def draw_sparkline(
+    canvas: np.ndarray,
+    rect: tuple[int, int, int, int],
+    track: Track,
+    values: np.ndarray,
+    now: float,
+    labels: str,
+) -> None:
+    x, y, width, height = rect
+    cv2.rectangle(canvas, (x, y), (x + width, y + height), PLOT_BG, -1)
+    cv2.rectangle(canvas, (x, y), (x + width, y + height), GRID, 1)
+    low = float(np.min(values))
+    high = float(np.max(values))
+    margin = max((high - low) * 0.08, 1e-4)
+    low -= margin
+    high += margin
+    x_values = x + (track.times - track.times[0]) / (
+        track.times[-1] - track.times[0]
+    ) * width
+    palette = (AXIS_X, AXIS_Y, AXIS_Z)
+    upto = max(1, int(np.searchsorted(track.times, now, side="right")))
+    for axis, color in enumerate(palette):
+        y_values = y + height - (values[:, axis] - low) / (high - low) * height
+        points = np.c_[x_values, y_values].round().astype(np.int32)
+        cv2.polylines(canvas, [points], False, _dim(color, 0.32), 1, cv2.LINE_AA)
+        cv2.polylines(canvas, [points[:upto]], False, color, 1, cv2.LINE_AA)
+    if low <= 0 <= high:
+        zero_y = int(round(y + height - (0 - low) / (high - low) * height))
+        cv2.line(canvas, (x, zero_y), (x + width, zero_y), GRID, 1, cv2.LINE_AA)
+    cursor_x = int(round(x + np.clip(
+        (now - track.times[0]) / (track.times[-1] - track.times[0]), 0, 1
+    ) * width))
+    cv2.line(canvas, (cursor_x, y), (cursor_x, y + height), WHITE, 1, cv2.LINE_AA)
+    for index, label in enumerate(labels):
+        text(canvas, label, (x + 7 + index * 26, y + 13), 0.30,
+             palette[index], 1)
+    text(canvas, f"{low:+.1f}..{high:+.1f}", (x + width - 76, y + 13),
+         0.27, MUTED)
+
+
+def draw_telemetry_card(
+    canvas: np.ndarray,
+    rect: tuple[int, int, int, int],
+    label: str,
+    color: tuple[int, int, int],
+    track: Track,
+    sample: TrackSample,
+    now: float,
+) -> None:
+    x, y, width, height = rect
+    translucent_box(canvas, (x, y), (x + width, y + height), CARD, 0.94)
+    cv2.rectangle(canvas, (x, y), (x + width, y + height), _dim(color, 0.65), 1)
+    cv2.circle(canvas, (x + 17, y + 20), 6, color, -1, cv2.LINE_AA)
+    text(canvas, f"{label} CAMERA", (x + 30, y + 25), 0.50, WHITE, 2)
+    state_color = color if sample.state == "MEASURED" else WARNING
+    state_width = 92 if sample.state == "MEASURED" else 116
+    cv2.rectangle(canvas, (x + width - state_width - 10, y + 8),
+                  (x + width - 10, y + 31), _dim(state_color, 0.40), -1)
+    text(canvas, sample.state, (x + width - state_width + 1, y + 24),
+         0.33, state_color, 1)
+
+    text(canvas, "POSITION XYZ  [m]", (x + 12, y + 51), 0.35, MUTED)
+    text(canvas, "  ".join(
+        f"{axis} {value:+.3f}" for axis, value in zip("XYZ", sample.position)
+    ), (x + 12, y + 72), 0.43, WHITE, 1)
+    text(canvas, "ORIENTATION RPY  [deg, xyz]", (x + 12, y + 96), 0.35, MUTED)
+    text(canvas, "  ".join(
+        f"{axis} {value:+.1f}" for axis, value in zip("RPY", sample.rpy_deg)
+    ), (x + 12, y + 117), 0.43, WHITE, 1)
+    text(
+        canvas,
+        f"SPEED  {sample.linear_speed_m_s:5.2f} m/s     "
+        f"OMEGA  {sample.angular_speed_deg_s:5.1f} deg/s",
+        (x + 12, y + 142), 0.37, color, 1,
+    )
+    text(canvas, "XYZ OVER FULL CLIP", (x + 12, y + 162), 0.30, MUTED)
+    draw_sparkline(
+        canvas, (x + 12, y + 168, width - 24, 57),
+        track, track.positions, now, "XYZ",
+    )
+    text(canvas, "RPY OVER FULL CLIP", (x + 12, y + 244), 0.30, MUTED)
+    draw_sparkline(
+        canvas, (x + 12, y + 250, width - 24, 57),
+        track, track.rpy_deg, now, "RPY",
+    )
+
+
+def render_gradient_panel(canvas: np.ndarray) -> None:
+    x0, y0, x1, y1 = 980, 55, 1900, 1005
+    top = np.asarray([39, 48, 61], dtype=float)
+    bottom = np.asarray([15, 21, 29], dtype=float)
+    for y in range(y0, y1):
+        mix = (y - y0) / max(y1 - y0 - 1, 1)
+        canvas[y, x0:x1] = np.round(top * (1 - mix) + bottom * mix).astype(np.uint8)
+    cv2.rectangle(canvas, (x0, y0), (x1, y1), (70, 82, 98), 1)
+
+
+def _extract_frame(video: Path, timestamp_s: float, output: Path) -> None:
+    capture = cv2.VideoCapture(str(video))
+    capture.set(cv2.CAP_PROP_POS_MSEC, max(timestamp_s, 0.0) * 1000.0)
+    ok, image = capture.read()
+    capture.release()
+    if not ok or not cv2.imwrite(str(output), image):
+        raise ValueError(f"cannot extract video frame at {timestamp_s:.3f}s")
 
 
 def main() -> int:
     args = parse_args()
     dataset = args.dataset_root.resolve(strict=True)
     tracking = args.tracking_dir.resolve(strict=True)
-    joint_path = tracking / "joint_trajectory.csv"
-    world_map_path = tracking / "session_world_map.json"
-    report_path = tracking / "report.json"
-    with joint_path.open(newline="", encoding="utf-8") as handle:
+    with (tracking / "joint_trajectory.csv").open(
+        newline="", encoding="utf-8"
+    ) as handle:
         rows = list(csv.DictReader(handle))
     left = Track(rows, "left")
     right = Track(rows, "right")
-    world_map, tags = load_map(world_map_path)
-    report = json.loads(report_path.read_text(encoding="utf-8"))
+    world_map, tags = load_map(tracking / "session_world_map.json")
+    report = json.loads((tracking / "report.json").read_text(encoding="utf-8"))
     start = max(left.times[0], right.times[0])
     end = min(left.times[-1], right.times[-1])
     if args.duration > 0:
@@ -199,9 +485,19 @@ def main() -> int:
         "RIGHT FORWARD": dataset / "video/Right_forward.mp4",
     }
     samplers = {name: VideoSampler(path) for name, path in video_paths.items()}
-    all_points = np.vstack((left.positions, right.positions, *tags))
-    plot_origin, plot_size = (1010, 100), (860, 850)
-    projector = Projector(all_points, plot_origin, plot_size)
+    tag_points = np.vstack([np.asarray(tag["corners"]) for tag in tags])
+    all_world_points = np.vstack((left.positions, right.positions, tag_points))
+    low, high = all_world_points.min(axis=0), all_world_points.max(axis=0)
+    grid_corners = np.asarray([
+        [low[0] - 0.08, low[1] - 0.08, 0.0],
+        [high[0] + 0.08, low[1] - 0.08, 0.0],
+        [low[0] - 0.08, high[1] + 0.08, 0.0],
+        [high[0] + 0.08, high[1] + 0.08, 0.0],
+        [0.22, 0, 0], [0, 0.22, 0], [0, 0, 0.22],
+    ])
+    projector = Projector(
+        np.vstack((all_world_points, grid_corners)), (1000, 72), (880, 565)
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     intermediate = args.output.with_name(args.output.stem + ".mp4v.mp4")
     writer = cv2.VideoWriter(
@@ -217,36 +513,44 @@ def main() -> int:
             now = start + index / args.fps
             canvas = np.full((1080, 1920, 3), BG, dtype=np.uint8)
             text(canvas, "4x FISHEYE VIDEO", (24, 37), 0.72, WHITE, 2)
-            text(canvas, "SYNCHRONIZED JOINT 6DoF / ONE SHARED APRILGRID MAP", (1005, 37), 0.72, WHITE, 2)
+            text(canvas, "JOINT 6DoF / ONE SHARED APRILGRID MAP", (985, 37), 0.72, WHITE, 2)
             for tile, name in enumerate(names):
                 x = 20 + (tile % 2) * 475
                 y = 55 + (tile // 2) * 475
                 frame = samplers[name].sample(now, (455, 420))
                 canvas[y:y + 420, x:x + 455] = frame
-                color = CYAN if name.startswith("LEFT") else GREEN
+                color = LEFT if name.startswith("LEFT") else RIGHT
                 cv2.rectangle(canvas, (x, y), (x + 455, y + 420), color, 2)
-                text(canvas, name, (x + 10, y + 27), 0.48, color, 2)
+                translucent_box(canvas, (x + 6, y + 6), (x + 222, y + 35), BG, 0.70)
+                text(canvas, name, (x + 12, y + 27), 0.45, color, 2)
 
-            cv2.rectangle(canvas, (990, 55), (1900, 1000), PANEL, -1)
-            cv2.rectangle(canvas, (990, 55), (1900, 1000), (70, 78, 90), 1)
-            for tag in tags:
-                closed = np.vstack((tag, tag[0]))
-                draw_polyline(canvas, projector, closed, (70, 82, 96), 1)
-            left_now, left_rotation, left_age = left.sample(now)
-            right_now, right_rotation, right_age = right.sample(now)
-            left_upto = int(np.searchsorted(left.times, now, side="right"))
-            right_upto = int(np.searchsorted(right.times, now, side="right"))
-            draw_polyline(canvas, projector, left.positions[:left_upto], CYAN, 3)
-            draw_polyline(canvas, projector, right.positions[:right_upto], GREEN, 3)
-            draw_camera(canvas, projector, left_now, left_rotation, CYAN, "LEFT")
-            draw_camera(canvas, projector, right_now, right_rotation, GREEN, "RIGHT")
-            origin = projector(np.zeros(3))
-            cv2.drawMarker(canvas, origin, WHITE, cv2.MARKER_CROSS, 18, 2, cv2.LINE_AA)
-            text(canvas, "GRID A ORIGIN", (origin[0] + 10, origin[1] + 22), 0.42, MUTED)
-            text(canvas, f"t = {now:6.3f} s", (1010, 1030), 0.62, WHITE, 2)
-            text(canvas, f"LEFT sample age {left_age * 1000:4.0f} ms", (1250, 1030), 0.48, CYAN)
-            text(canvas, f"RIGHT sample age {right_age * 1000:4.0f} ms", (1540, 1030), 0.48, GREEN)
-            text(canvas, "Capture-local self-calibration; not external ground truth", (22, 1015), 0.50, MUTED)
+            render_gradient_panel(canvas)
+            cv2.rectangle(canvas, (995, 67), (1885, 645), PLOT_BG, -1)
+            cv2.rectangle(canvas, (995, 67), (1885, 645), GRID, 1)
+            draw_grid_and_axes(canvas, projector, (low, high))
+            draw_tags(canvas, projector, tags)
+            left_sample = left.sample(now)
+            right_sample = right.sample(now)
+            draw_track(canvas, projector, left, now, LEFT)
+            draw_track(canvas, projector, right, now, RIGHT)
+            draw_camera(canvas, projector, left_sample, LEFT, "LEFT")
+            draw_camera(canvas, projector, right_sample, RIGHT, "RIGHT")
+            text(canvas, "SOLID = recent 2 s   DIM = history/interpolation", (1008, 630),
+                 0.35, MUTED)
+            draw_telemetry_card(
+                canvas, (995, 655, 435, 330), "LEFT", LEFT,
+                left, left_sample, now,
+            )
+            draw_telemetry_card(
+                canvas, (1450, 655, 435, 330), "RIGHT", RIGHT,
+                right, right_sample, now,
+            )
+            text(canvas, f"t = {now:6.3f} s", (1003, 1038), 0.62, WHITE, 2)
+            text(canvas, "MEASURED = PnP observation", (1240, 1036), 0.38, MUTED)
+            text(canvas, "INTERPOLATED = between accepted observations", (1482, 1036),
+                 0.38, WARNING)
+            text(canvas, "Capture-local self-calibration; not external ground truth",
+                 (22, 1015), 0.50, MUTED)
             text(canvas, f"Map: {world_map['map_id']}", (22, 1045), 0.42, MUTED)
             writer.write(canvas)
     finally:
@@ -265,16 +569,14 @@ def main() -> int:
     ], check=True)
     intermediate.unlink(missing_ok=True)
     cover = args.output.with_name(args.output.stem + "_cover.jpg")
-    capture = cv2.VideoCapture(str(args.output))
-    capture.set(cv2.CAP_PROP_POS_MSEC, duration * 500.0)
-    ok, image = capture.read()
-    capture.release()
-    if not ok or not cv2.imwrite(str(cover), image):
-        raise ValueError("cannot extract Feishu video cover")
+    jump_check = args.output.with_name(args.output.stem + "_t7p1.jpg")
+    _extract_frame(args.output, duration * 0.5, cover)
+    _extract_frame(args.output, min(max(7.1 - start, 0.0), duration), jump_check)
     audit = {
-        "schema_version": "joint-four-mp4-trajectory-comparison/1.0",
+        "schema_version": "joint-four-mp4-trajectory-comparison/2.0",
         "output": str(args.output.resolve()),
         "cover": str(cover.resolve()),
+        "jump_check_frame": str(jump_check.resolve()),
         "sha256": _sha256(args.output),
         "width": 1920,
         "height": 1080,
@@ -284,6 +586,11 @@ def main() -> int:
         "map_id": world_map["map_id"],
         "tracking_status": report["status"],
         "joint_valid_ratio": report["trajectories"]["joint"]["joint_valid_ratio"],
+        "temporal_outlier_rejected_frames": {
+            side: report["trajectories"][side].get(
+                "temporal_outlier_rejected_frames", 0
+            ) for side in ("left", "right")
+        },
         "claims": report["claims"],
     }
     audit_path = args.output.with_suffix(".audit.json")

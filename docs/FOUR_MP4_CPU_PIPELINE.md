@@ -204,6 +204,13 @@ are marked `MEASURED`; gaps bounded by measurements are filled for the joint
 timeline and marked `INTERPOLATED`. The report separately records measured
 joint coverage and the maximum interpolation gap.
 
+Sparse planar observations receive an additional confidence-aware temporal
+gate. A pose supported by only two co-planar Tags carried entirely by LK flow
+is rejected when it implies more than 1.5 m/s or 180 deg/s from the previous
+accepted pose. Direct multi-Tag reacquisition is exempt, so this rejects weak
+IPPE branch flips without smoothing or clipping real observed motion. The pose
+CSV records the measured temporal speeds and rejection reason for auditing.
+
 Generic four-MP4 input can still provide an external world map and initial
 poses to the existing held-out joint pose-graph optimizer:
 
@@ -230,3 +237,7 @@ Render the four source views beside the synchronized shared-map 3D tracks:
   /data/session/final/dual-x5-four-mp4-cpu-v2/pairs/<pair-id>/tracking \
   /data/session/final/joint_trajectory_comparison.mp4
 ```
+
+The comparison view includes a metric world grid and XYZ axes, camera
+frustums, measured/interpolated state, live XYZ and RPY values, linear and
+angular speeds, and full-clip XYZ/RPY trend plots for both cameras.

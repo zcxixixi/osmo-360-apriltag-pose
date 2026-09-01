@@ -6,7 +6,11 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from osmo360.localization.cached_a3_bootstrap import write_joint_pose_csv
+from osmo360.localization.cached_a3_bootstrap import (
+    Pose,
+    _temporal_gate,
+    write_joint_pose_csv,
+)
 from osmo360.localization.raw_fisheye_world_pose import (
     make_kannala_brandt_ray_converter,
     make_x5_offset_ray_converter,
@@ -81,3 +85,29 @@ def test_explicit_h5_kb_model_matches_equivalent_x5_rear_record():
         [960, 960], [100, 960], [1800, 960], [960, 100], [960, 1800]
     ], dtype=float)
     assert np.allclose(explicit(pixels), x5(pixels), atol=2e-8)
+
+
+def test_sparse_flow_planar_jump_is_rejected_but_direct_reacquisition_is_not():
+    previous = Pose(np.zeros(3), Rotation.identity())
+    jumped = Pose(
+        np.asarray([0.50, 0.0, 0.0]),
+        Rotation.from_euler("z", 60.0, degrees=True),
+    )
+    weak = _temporal_gate(
+        jumped,
+        (7.0, previous),
+        7.14,
+        inlier_tag_count=2,
+        sources={"lk_forward_backward"},
+    )
+    direct = _temporal_gate(
+        jumped,
+        (7.0, previous),
+        7.14,
+        inlier_tag_count=5,
+        sources={"global_scout_roi_gray"},
+    )
+
+    assert weak["rejected"] is True
+    assert weak["reason"] == "sparse_flow_planar_pose_exceeds_temporal_limits"
+    assert direct["rejected"] is False
