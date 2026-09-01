@@ -22,16 +22,16 @@
 
 | 项目 | 当前证据 |
 |---|---|
-| 流水线 | `dual-x5-four-mp4-cpu-v7`，30 Hz，锁定 FFmpeg 9.0.1 `gray8 rawvideo` 管道，手部相机 FLU、`back = +X`，每帧数值位姿与可信度解耦，低置信度段支持严格标定的左右独立陀螺仪桥接 |
-| 本地算法提交 | `fcd574b` (`feat: stream grayscale frames through ffmpeg`) |
-| 服务器等价算法提交 | `11dfd60` |
+| 流水线 | `dual-x5-four-mp4-cpu-v8`，30 Hz，锁定 FFmpeg 9.0.1 `gray8 rawvideo` 管道；保留 inlier `lens_stream` 并对超限主导镜头 handoff 降信任；手部相机 FLU、`back = +X`，每帧数值位姿与可信度解耦 |
+| 本地算法提交 | `505febb` (`fix: distrust implausible fisheye lens handoffs`) |
+| 服务器等价算法提交 | `73ba77d` |
 | 运行时提交 | 本地 `0e0a2d4`，服务器等价 `45802c5` |
 | 审核网关提交 | 本地安全代码 `3e5a0b3`、unit `2fd08c3`；服务器等价 `a6f22f2`、`f0ffecd` |
-| 服务器无缓存耗时 | 无竞争 v5 基线 6.49 s；v7 在两条独立 ORB-SLAM 合计约 303% CPU 时为 13.53 s，平均 826% CPU，峰值 RSS 261,276 KiB、无 swap |
-| 输出 | 300/300 帧具备双侧数值位姿；268 帧联合可信，266 帧双侧实测，`SELF_CALIBRATED_PASS` |
-| 回归测试 | 本地和服务器均为 281 passed，7 skipped；新增真实 FFmpeg 全量/隔帧/非零 seek 逐帧一致性和合成 IMU 桥接测试 |
-| IMU 状态 | 当前 `dataset.h5` 共享 IMU 样本数为 0，左右独立流缺失；v7 明确 `UNAVAILABLE_NO_SAMPLES`，32 个长间隔帧回退视觉 `INTERPOLATED_UNTRUSTED`，不伪造 IMU |
-| 最新已发视频 | v7 `processed_joint_trajectory_30hz_tag_map_front_above_v7.mp4`，固定 `tag-map-front-above`，SHA-256 `913acc10...ea311` |
+| 服务器无缓存耗时 | 空闲服务器 v8 为 5.87 s，平均 1268% CPU，峰值 RSS 261,348 KiB、无 swap；此前无竞争 v5 基线为 6.49 s |
+| 输出 | 300/300 帧具备双侧数值位姿；266 帧联合可信，263 帧双侧实测，34 帧长间隔不可信，`SELF_CALIBRATED_PASS` |
+| 回归测试 | 本地 282 passed/8 skipped；服务器启用正式 v7 缓存回归后 283 passed/7 skipped，严格验证左侧仅 frame 168/360/420 命中 handoff 门、右侧 0、300/300 数值位姿 |
+| IMU 状态 | 当前 `dataset.h5` 共享 IMU 样本数为 0，左右独立流缺失；v8 明确 `UNAVAILABLE_NO_SAMPLES`，34 个长间隔帧回退视觉 `INTERPOLATED_UNTRUSTED`，不伪造 IMU |
+| 最新已发视频 | v8 `processed_joint_trajectory_30hz_tag_map_front_above_v8.mp4`，固定 `tag-map-front-above`，SHA-256 `fb12d243...c9a48` |
 | 受管服务实际 unit | `osmo-visualization.service`、`osmo-alignment-review.service`（认证网关）、`osmo-alignment-review-backend.service`；三者均为 user unit，active/enabled、`NRestarts=0` |
 
 ## 问题清单
@@ -44,8 +44,8 @@
 | QUAL-001 | 高 | RESOLVED | `write_joint_pose_csv` 对所有处于首尾测量之间的缺失帧插值，不限制相邻测量间隔。当前左轨迹报告最大插值间隔约 0.634 s，违反 v50 最大可信间隔 0.25 s 约束。 | v4 长间隔输出 `INTERPOLATED_UNTRUSTED`、空位姿、联合无效；渲染隐藏相机并断开轨迹/趋势线。服务器无缓存结果：可信最大 0.0667 s，拒绝最大 0.6340 s，32 帧不可信，联合有效率 89.33%，全部门通过；7.1 秒视频人工检查通过。 |
 | QUAL-002 | 高 | RESOLVED | v4 将长间隔的 XYZ/四元数置空，导致 32/300 帧不具备数值位姿，不符合当前“每帧都有位姿”的产品需求。 | v5 每帧保留位姿：长段插值为 `INTERPOLATED_UNTRUSTED`，首尾为 `HELD_UNTRUSTED`，`joint_has_pose` 与 `joint_valid` 解耦。服务器逐行审计 300/300 非空且有限，四元数归一，v3/v5 数值差为 0；视频中 7.1 s 位姿持续显示。 |
 | QUAL-003 | 中 | IN_PROGRESS | v7 已实现低置信度内部间隔的陀螺仪姿态桥接，但当前样例 H5 只有空的共享 `/sensor/imu`，没有可安全绑定到两只独立手部相机的样本。 | 新数据集提供左右独立 IMU 时间戳/角速度/valid、`T_rig_imu_left/right`、`T_rig_camera_left/right` 和明确 `T_target_source` 语义后，无缓存复跑并检查样本覆盖、最大间隔、端点闭合量及视频；位置继续使用视觉端点插值，不做未经验证的加速度二次积分。 |
-| QUAL-004 | 高 | OPEN | v7 左轨迹的强测量时间连续性没有进入质量门。`_temporal_gate` 仅拒绝 `inlier_tag_count <= 2` 且纯 LK 的弱解；样例在两组 AprilGrid 内点集合切换时，6 个 Tag 的解仍以 `valid` 接受。量化最大可信单步为 86.1 mm/33.37 ms，最大旋转为 21.25°/33.37 ms；7.1 s 附近 6.940→7.007 s 的接受锚点变化 140.2 mm/21.02°，输出因 6.974 s 插值而分成两个约 70.1 mm/10.51° 的台阶，随后 7.007→7.508 s 的长间隔又跨越 325.5 mm/56.55°。 | 修复必须保持 300/300 帧数值位姿：对强测量也计算跨网格/时间一致性，至少将不连续锚点显式降为不可信并用连续数值回退；不能删除位姿。先增加真实序列回归，核对跨网格相对标定/候选一致性，避免用任意低阈值误杀真实快速手部运动；变更后按固定闭环全测、无缓存复跑并复现 19:03 视角视频。 |
-| QUAL-005 | 高 | OPEN | 双鱼眼观测被当作同一中心相机射线使用：转换器只旋转单位射线，缓存虽保留 `lens_stream`，跟踪加载时却按面积逐帧择优并丢弃镜头来源，没有镜头光心平移、广义相机 PnP 或切换迟滞。当前 H5 只给每只手部相机的后镜头近似内参，KB 畸变系数和外参平移均为零；前镜头仅用嵌入 X5 offset。真实缓存中同帧同 Tag 的两镜头射线中位差左/右约 15.08°/14.10°；左侧 4 次 winner 镜头切换均造成 15.27° 以上射线台阶，其中 frame 358→360 正对应 6.006 s 的 83.5 mm/21.25°位姿跳变。CameraSDK 2.1.1 / MediaSDK 3.1.1 的公开 API 只返回/消费不透明 offset，没有导出完整畸变或含平移镜头外参的受支持接口；二进制内部几何符号不是可依赖 ABI。 | 新数据必须显式提供每只 X5 两个镜头的完整投影、畸变和 `T_rig_lens0/1`（含平移），或先做独立可复现的双鱼眼离线标定，再改用带射线光心的非中心/广义相机求解。简单逐 Tag 面积迟滞已被反事实排除：它只延后断点并制造混镜头高残差。完整标定前的候选补丁是保留 inlier 的镜头来源，对“主导镜头切换且超过 1.5 m/s 或 180°/s”的锚点降信任，再用现有数值回退保持每帧位姿；必须先固化真实序列回归，不得把样例内约 15°旋转或 SDK 私有符号固化为通用标定。 |
+| QUAL-004 | 高 | IN_PROGRESS | v8 已把强测量的镜头 handoff 纳入时间质量门：真实序列仅将左侧 frame 168/360/420 降信任，7.007 s 异常锚点不再标为实测；联合轨迹仍有 300/300 数值位姿，最大逐帧旋转 21.25°→11.16°。但完整数值轨迹最大平移单步仍为 86.1 mm，且在没有真值/完整镜头外参时不能证明所有同镜头或跨网格快速段都准确。 | 保留 v8 真实回归与每帧数值回退；新数据到位后以完整双镜头外参和广义相机解核对剩余 86.1 mm 单步，并再决定是否增加与镜头无关的跨网格候选一致性门，不能以任意低速度阈值误杀真实手部运动。 |
+| QUAL-005 | 高 | IN_PROGRESS | v8 已保留每个选中 inlier 的 `lens_stream`、输出主导镜头/计数，并对“主导镜头切换且速度超过 1.5 m/s 或角速度超过 180°/s”的首个几何有效候选降信任；观察镜头状态随后推进，避免连续误拒。正式样例左/右命中 3/0 帧，慢速 0.634 s handoff 保留，简单面积迟滞继续禁用。底层仍缺镜头光心平移、前镜头完整畸变和广义相机 PnP；CameraSDK/MediaSDK 公共 API 无法导出这些数据。 | 新数据必须显式提供每只 X5 两个镜头的完整投影、畸变和 `T_rig_lens0/1`（含平移），或先做独立可复现的双鱼眼离线标定，再改用带射线光心的非中心/广义相机求解。v8 是保守可信度补丁，不得宣称已修复几何模型，也不得把样例内约 15°旋转或 SDK 私有符号固化为通用标定。 |
 | REL-001 | 高 | RESOLVED | 结果发布采用“先删最终目录，再 copytree”。处理中断会丢失上一版已完成输出，且放大 SEC-001 的破坏面。 | 已改为同级临时目录完整复制后切换，旧目录先重命名为可恢复备份，切换成功后才删除；服务器真实发布成功且不存在 `.publish-*`/`.backup-*` 残留。 |
 | SEC-002 | 中 | OPEN | 服务器流水线以高权限 `ps` 用户运行；该用户属于 `sudo`、`docker`、`lxd`、`k3s-admin` 等组，项目代码的进程被攻破后影响面很大。 | 设计最小权限服务账户、只读代码/输入和独立可写缓存/输出；迁移前需用户授权，不能擅自改变现有组。 |
 | SEC-003 | 中 | IN_PROGRESS | 服务器有 `0.0.0.0:8000`、`:7864`、`:7865`、`:7869` 等项目相关服务监听局域网。`:7865`、`:7869` 已认证；其余服务的归属与接口已完成只读审计并拆为 SEC-005/007。 | 当前最高风险为独立项目的 SEC-005；`:7864` 按 SEC-007 决定停用或迁移。 |
@@ -63,7 +63,7 @@
 | SEC-011 | 高 | RESOLVED | CPython `urllib` 的默认 302 处理会把原请求的 `Authorization` 原样转发到跨域 Location；本地双 HTTP 服务已复现 Bearer 到达第二个域。设备同步和可视化 JSON API 使用默认 `urlopen`，上传客户端还信任创建响应中的绝对 `links`，错误配置或被攻破的平台可窃取写令牌。 | 所有带认证的 urllib API 请求使用拒绝重定向 opener，302 直接报错且第二服务未收到请求；上传 URL 不再读取响应中的绝对 links，而是校验 `[a-z0-9-]{1,64}` 项目 ID 后从用户配置的 server 本地构造四个端点。新增真实双服务泄露回归、恶意 links 和路径 ID 测试；本地 `5ae4c84`、服务器 `2c7f2d7`。 |
 | SEC-012 | 中 | OPEN | `:7865` 和新 `:7869` 仍通过局域网明文 HTTP 提供认证；这能阻止未授权客户端直接读写，但不能抵御同网段被动嗅探令牌、登录表单或会话 Cookie。`SameSite`/CSRF 不等于传输加密。 | 优先复用受管 TLS 反向代理或内部 CA，为两个服务提供 HTTPS 后将 Cookie 标为 `Secure`；部署前盘点现有 `:443` 所属，不能抢占 Kubernetes/其他业务端口。短期只在可信 LAN 使用，令牌不发飞书、不进 URL/日志。 |
 | EFF-001 | 高 | RESOLVED | 压缩 NPZ 的每个数组被重复打开和解压。缓存读取改为一次加载所有成员。 | 服务器无缓存耗时 14.26 s → 6.10 s；输出逐字节一致；提交 `293df8b`。 |
-| EFF-002 | 中 | RESOLVED | v7 主观察路径不再使用 `cv2.VideoCapture`：锁定 FFmpeg 9.0.1 精确 seek、按 cadence 选帧、提取 `gray8` luma 并经 bounded `rawvideo` stdout 传给 Python；逐帧验证固定字节数、期望帧数、退出码和运行时哈希。真实视频第 120 帧 seek 的 20 个输出与同一 FFmpeg 全量解码对应帧完全一致；合成视频全量/隔帧/seek 回归通过。 | 保持软件解码和每 worker 线程上限；当前共享负载 v7 为 13.53 s，不能与无竞争 6.49 s 直接比较。服务器空闲时补同条件无竞争基准，若仍未达到目标再基于阶段计时优化检测而非放宽轨迹质量门。 |
+| EFF-002 | 中 | RESOLVED | v8 主观察路径使用锁定 FFmpeg 9.0.1：精确 seek、按 cadence 选帧、提取 `gray8` luma 并经 bounded `rawvideo` stdout 传给 Python；逐帧验证固定字节数、期望帧数、退出码和运行时哈希。真实 seek 与全量对应帧一致，合成全量/隔帧/seek 回归通过。空闲服务器正式无缓存运行 5.87 s、平均 1268% CPU、峰值 255.2 MiB、无 swap，快于无竞争 v5 的 6.49 s。 | 保持软件解码、每 worker 线程上限和质量门；后续新数据变长时按阶段计时复测，不为追求耗时放宽轨迹可信度。 |
 | EFF-003 | 中 | RESOLVED | 观察缓存已有 4×4 预算，但备用联合 pose-graph 的 8 个 Python worker 未限制 BLAS/OpenMP，存在 8×32 嵌套线程放大；不同任务之间也没有主机级并发门。 | 每任务最多 16 逻辑线程，小主机自动降配；OpenCV/FFmpeg/BLAS/OpenMP/BLIS/vecLib 全部继承限额，pose-graph 每 worker 1 个数学线程。默认同用户整机 1 个任务槽，可在总量不超过逻辑核时显式增加。双任务并发实测串行、无发布竞态；轨迹 SHA 不变。提交本地 `5dad620`/`e2400fb`，服务器 `5d550f6`/`449fde0`。 |
 | EFF-004 | 低 | RESOLVED | `:7869` 审核服务主要待机，却因 OpenCV/数学库默认线程池保持 63 个线程、RSS 103,004 KiB。 | systemd 环境将所有原生线程池限制为 1；重启后接口仍为 200、32 条记录可读，线程 63→1、RSS 103,004→68,804 KiB，systemd `MemoryCurrent` 约 62.2→33.8 MiB。 |
 | EFF-005 | 低 | IN_PROGRESS | `:7869 /api/items` 仍同步调用旧源码的 `store.scan()`；新后端冷启动（含 Python/OpenCV 与首次扫描）约 8 s。生产热态 48 条记录连续 5 次为 11.7–28.4 ms，网关 12.8 MiB/1 task、后端 32.7 MiB/1 task，较先前一次 3.06 s 热请求明显改善但尚未证明持久。 | 保持认证/线程边界，下一轮跨小时采样冷/热分位；将无 Git 旧源码迁入受管分支后再实现带输入指纹失效的缓存，不能用永久缓存隐藏新数据。 |
@@ -281,13 +281,25 @@
 - 诊断使用 `TemporaryDirectory` 严格限定在数据集根下 `.audit-cycle014-*`，退出后已验证无残留。正式 v7 仍复核为 300/300 位姿、268 联合可信、266 双侧实测、`29.969730572 Hz`、`hand_camera_flu_back_x`、`SELF_CALIBRATED_PASS`；19:03 模板视频实际 SHA 仍为 `913acc10...ea311`。三项受管服务均 active/enabled、`NRestarts=0`。
 - 飞书整点进度 `om_x100b6640a991aca4c29fa814baa8f75` 已发送并回读验证成功。下一步先加入真实缓存回归，要求只命中 frame 168/360/420、保持 300/300 数值位姿并记录 inlier 镜头来源；随后实现联合 handoff 时间门并执行完整测试、服务器无缓存复跑和 19:03 固定机位出片。真实双镜头标定到位后再以广义相机模型替换这一保守门。
 
+### 2026-09-02 / Cycle 015
+
+- 完成 QUAL-004/005 的有界补丁并发布 `dual-x5-four-mp4-cpu-v8`：`Detection`/姿态 CSV 保留每个选中 inlier 的 `lens_stream` 来源、主导镜头和分镜头计数；仅当几何残差先通过、主导镜头相对上一候选发生切换，且相对上一可信姿态超过 `1.5 m/s OR 180°/s` 时把该候选降为 `temporal_outlier_rejected`。被降信任的首帧会推进“观测镜头”状态，但不推进可信姿态锚点，避免把一次真实 handoff 连锁误拒为整段无姿态。慢速 handoff 和快速同镜头直检保持接受。
+- 新增可选正式缓存回归 `OSMO_REAL_HANDOFF_CACHE_ROOT`；用受保护 v7 observation/map 实际运行时，左侧严格只命中 frame 168/360/420，右侧 0。frame 120 虽出现镜头多数变化，但其角残差为 3.29°，先由几何门拒绝且不计作 handoff 拒绝。联合回退回归严格得到 300 个 common timeline 行、300 个数值位姿、266 个联合可信、263 个双侧实测和 34 个长间隔不可信帧。
+- 本地聚焦回归 29 passed/1 skipped，完整测试 `282 passed, 8 skipped`；服务器启用真实缓存后聚焦 `30 passed`、完整测试 `283 passed, 7 skipped`。Python compileall 通过；当前环境没有 Ruff 可执行文件。变更前后 `./umi verify` 都只因已知外部冻结时间线 `/home/cenxi/.../dual_gripper_claw_to_claw_action_v50_fixed_timeline.json` 缺失而失败，按用户既有授权忽略环境 gate，但没有修改任何 v50 受保护代码或制品。
+- CPU 服务器首次 v8 自然无缓存运行完成：5.87 s wall、68.29 s user、6.16 s system、平均 1268% CPU、峰值 RSS 261,348 KiB、51 major faults、无 swap；运行时系统没有竞争性高 CPU 业务。结果为 `SELF_CALIBRATED_PASS`，所有报告门通过，300/300 帧有双侧数值位姿、266 联合可信、263 双侧实测、34 长间隔不可信；中位频率 `29.969730572 Hz`，左右 parent 唯一为 `session_grid_A`、child 唯一为 `hand_camera_flu_back_x`。
+- v8 左侧仅 3 个 handoff temporal reject；联合数值轨迹最大逐帧平移仍为 86.1 mm，最大逐帧旋转从 v7 的 21.25°降为 11.16°。7.007 s 锚点并入长间隔低置信度回退，7.1 s 仍有数值姿态但不再冒充实测。该结果关闭了样例中的已知镜头切换可信度漏洞，但没有补出缺失的镜头光心平移/前镜头完整畸变，QUAL-004/005 保持 `IN_PROGRESS`。
+- 严格用 `--view-preset tag-map-front-above --fps 30` 录制 `processed_joint_trajectory_30hz_tag_map_front_above_v8.mp4`：1920×1080、30 FPS、299 帧、9.976634 s，SHA-256 `fb12d2439c59b7573f07b98e4734aa24bab62d28e576083a6f68046d66bc9a48`；audit 为 `TAG MAP / CAMERA FLU`，固定 eye/target 与 v7 完全相同。人工检查封面和 7.1 s 确认两网格横排、正面斜上向下固定拍摄、不跟随、不旋转，7.1 s 左相机显示 `INTERPOLATED_UNTRUSTED`。
+- 正式 v8 final/cache 分别为 14 文件 8,480,955 B、39 文件 2,375,622 B；均无符号链接、全局可写项或 `.audit-cycle015-*` 残留。三项受管服务 active/enabled、`NRestarts=0`；磁盘 23% 使用、约 1.4 TiB 可用。SEC-005 独立 `:8000` 仍监听 LAN，本轮未越权修改。
+- 代码提交为本地 `505febb`、服务器等价 `73ba77d`。飞书文字 `om_x100b6641b20f88a0c4b17510107b516`、视频 `om_x100b6641b3f09ca0dfe45eb420cb891` 均发送并回读验证成功。下一步等待新数据携带两镜头完整投影/畸变与含平移外参，随后实现广义相机求解并重新验证剩余 86.1 mm 单步；安全侧仍优先等待 SEC-005/SEC-012 的授权边界。
+
 ## 最近一次流水线版本变更验证
 
-- 改动：v7 将四路主观察解码切到锁定 FFmpeg `gray8 rawvideo` 管道，并加入严格标定的左右独立陀螺仪低置信度姿态桥接；渲染方式和 19:03 固定视角不变。
-- 提交：本地 `fcd574b`，服务器等价 `11dfd60`。
-- 服务器输出：`/home/ps/instaumi-data/instaumi_000001/final/dual-x5-four-mp4-cpu-v7/`。
-- 服务器报告：300/300 帧具备数值位姿；联合可信 268（89.33%）；联合实测 266（88.67%）；长间隔不可信 32 帧；全部门通过。
-- 服务器运行：共享负载下 13.53 s；`time -v` 平均 CPU 826%；峰值 RSS 261,276 KiB；无 swap。无竞争基线仍采用 v5 的 6.49 s，待服务器空闲时再做同条件 v7 测量。
-- IMU：当前 H5 为 0 样本，`UNAVAILABLE_NO_SAMPLES`，32 帧使用视觉低置信度回退；能力已由合成 per-side IMU 测试覆盖，待新数据集实测。
-- 最终审阅视频：`reviews/processed_joint_trajectory_30hz_tag_map_front_above_v7.mp4`，SHA-256 `913acc10...ea311`，固定 `tag-map-front-above`。
-- 飞书：进度文字和视频均发送成功，消息 ID 见 Cycle 008 日志。
+- 改动：v8 保留 inlier 镜头来源，对超过既有运动上限的主导镜头 handoff 首帧降信任；仍保留每帧数值位姿，渲染语义和 19:03 固定视角不变。
+- 提交：本地 `505febb`，服务器等价 `73ba77d`。
+- 服务器输出：`/home/ps/instaumi-data/instaumi_000001/final/dual-x5-four-mp4-cpu-v8/`。
+- 服务器报告：300/300 帧具备数值位姿；联合可信 266（88.67%）；联合实测 263（87.67%）；长间隔不可信 34 帧；全部门通过。
+- 服务器运行：空闲服务器 5.87 s；`time -v` 平均 CPU 1268%；峰值 RSS 261,348 KiB；无 swap。
+- 真实缓存回归：左侧只拒绝 frame 168/360/420，右侧 0；完整测试本地 282/8、服务器 283/7。
+- IMU：当前 H5 为 0 样本，`UNAVAILABLE_NO_SAMPLES`，34 帧使用视觉低置信度回退；能力已由合成 per-side IMU 测试覆盖，待新数据集实测。
+- 最终审阅视频：`reviews/processed_joint_trajectory_30hz_tag_map_front_above_v8.mp4`，SHA-256 `fb12d243...c9a48`，固定 `tag-map-front-above`。
+- 飞书：文字 `om_x100b6641b20f88a0c4b17510107b516`、视频 `om_x100b6641b3f09ca0dfe45eb420cb891`，均已回读验证。
