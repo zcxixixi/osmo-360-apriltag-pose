@@ -16,7 +16,7 @@
   6. 从 Tag 正前方斜上视角录制四视频与联合 3D 轨迹对照视频；
   7. 将进度文字和新视频发送到既定飞书会话。
 - 整点自动任务：`instaumi`（`InstaUMI服务器整点维护`），每小时第 0 分钟唤醒当前任务并执行巡检/飞书同步。
-- 审阅视频视角固定沿用 19 点已接受样式：使用 `flu-front-above`，从 AprilGrid 正面一侧的斜上方向下拍摄，不跟随轨迹旋转。
+- 审阅视频视角固定沿用 19 点已接受样式：使用 `flu-front-above`，机位始终位于两个 AprilGrid 正面一侧，从斜上方向下拍且镜头面朝 AprilGrid；不跟随轨迹、不自动旋转，后续算法修改也不得改变该录制方式。
 
 ## 当前已验证基线
 
@@ -27,7 +27,7 @@
 | 服务器等价算法提交 | `b9f7803` |
 | 服务器无缓存耗时 | 6.49 s 处理 10 s 四路视频；`time -v` 平均 CPU 1164%，峰值 RSS 311,272 KiB |
 | 输出 | 300/300 帧具备双侧数值位姿；268 帧联合可信，266 帧双侧实测，`SELF_CALIBRATED_PASS` |
-| 回归测试 | 本地和服务器均为 247 passed，7 skipped |
+| 回归测试 | 本地和服务器均为 260 passed，7 skipped |
 | 一致性 | v5 全部 300 帧数值位姿与撤回前 v3 逐项最大差值为 0；只额外保留长间隔不可信标记 |
 | 最新已发视频 | v5 `processed_joint_trajectory_30hz_front_above_v5.mp4`，SHA-256 `fef54acf...c9a7f7` |
 
@@ -51,10 +51,12 @@
 | SEC-005 | 高 | OPEN | 独立 `/home/ps/rk3576/offline_flu_viewer` 以系统 Python 3.10 在 `0.0.0.0:8000` 从登录 session 连续运行 4 天，无认证接口可启动/取消处理、修改处理配置/标记，并对选定数据集递归删除 `slam`/`mocap_output` 等输出；请求体也没有大小上限。进程 RSS 约 463 MiB。 | 该目录不属于当前仓库，不能擅自改业务。需用户确认用途后立即停止旧 session，或改为受管 unit、loopback/反代认证、写请求体上限和 CSRF 防护；破坏性接口需二次确认/能力令牌。 |
 | SEC-006 | 高 | IN_PROGRESS | 同项目旧 checkout 的审核 UI 在 `0.0.0.0:7869`，无认证 POST 可写审核、分段和人工时间对齐；公开 GET 返回 32 条记录、绝对源路径及审核字段。原 user unit 无任何沙箱，空闲 63 线程。 | unit 已先做无接口变化的硬化：只写状态目录、`NoNewPrivileges`/`PrivateTmp`/只读 home/system、线程池固定 1；状态目录/SQLite `0700/0600`。仍需给网页写接口增加认证与 CSRF，按需收窄公开 GET。 |
 | SEC-007 | 低 | OPEN | `:7864` 是 4 天前从登录 session 启动的旧静态审核页面，只提供 GET，但绑定全 LAN、公开时间线/视频/网格，且仍运行 EOL 的系统 Node 20。 | 确认是否仍被使用；若已由 `:7865` 取代则停止，若保留则迁移受管 unit、项目 Node 24，并按数据敏感度限制访问。 |
+| SEC-008 | 中 | RESOLVED | Bandit 首轮扫描 32,217 行代码为 0 high/8 medium；实际输入面包括任意 urllib 协议、Node 下载来源/大小、XML 实体、PyTorch pickle checkpoint 和旧 INSV 共享临时目录。四 MP4 任务槽的 `/tmp` 告警已有同用户属主、`0700/0600`、拒绝符号链接和 `O_NOFOLLOW` 防护，属于已验证误报。 | HTTP 客户端现只接受无凭据/片段/反斜线的明确 HTTP(S)；Node 只接受 `nodejs.org` HTTPS、重定向同源、128 MiB 上限且继续校验 SHA；checkpoint 使用 `weights_only=True`；URDF 使用 `defusedxml`；旧 INSV 默认 scratch 进入各节点 checkout 的 `work/` 并校验属主/符号链接。复扫 32,308 行为 0 high/0 medium，提交本地 `bbfe7ac`、服务器 `8aa6fba`。 |
 | EFF-001 | 高 | RESOLVED | 压缩 NPZ 的每个数组被重复打开和解压。缓存读取改为一次加载所有成员。 | 服务器无缓存耗时 14.26 s → 6.10 s；输出逐字节一致；提交 `293df8b`。 |
 | EFF-002 | 中 | DEFERRED | FFmpeg 管道软件解码约 2.04 s，OpenCV 包装约 2.70 s；VAAPI 四路约 7.43 s。FFmpeg 像素输出与当前路径不完全一致，且缓存修复后解码已非主要瓶颈。 | 若后续解码占比重新升高，建立像素/检测回归门后再切换；当前不以小收益换算法输入变化。 |
 | EFF-003 | 中 | RESOLVED | 观察缓存已有 4×4 预算，但备用联合 pose-graph 的 8 个 Python worker 未限制 BLAS/OpenMP，存在 8×32 嵌套线程放大；不同任务之间也没有主机级并发门。 | 每任务最多 16 逻辑线程，小主机自动降配；OpenCV/FFmpeg/BLAS/OpenMP/BLIS/vecLib 全部继承限额，pose-graph 每 worker 1 个数学线程。默认同用户整机 1 个任务槽，可在总量不超过逻辑核时显式增加。双任务并发实测串行、无发布竞态；轨迹 SHA 不变。提交本地 `5dad620`/`e2400fb`，服务器 `5d550f6`/`449fde0`。 |
 | EFF-004 | 低 | RESOLVED | `:7869` 审核服务主要待机，却因 OpenCV/数学库默认线程池保持 63 个线程、RSS 103,004 KiB。 | systemd 环境将所有原生线程池限制为 1；重启后接口仍为 200、32 条记录可读，线程 63→1、RSS 103,004→68,804 KiB，systemd `MemoryCurrent` 约 62.2→33.8 MiB。 |
+| EFF-005 | 低 | OPEN | `:7869 /api/items` 会在读取 32 条记录时同步扫描/汇总数据；本轮冷探测 5 s 超时，随后稳定返回 200 但耗时 3.06 s。请求期间进程为 2 线程、RSS 80,092 KiB，`MemoryCurrent` 约 123 MiB，明显高于空闲基线；根页面仅 0.0006 s。 | 先在其可维护源码迁移后做端点分段计时、结果缓存和失效策略；不得为了提速放宽已设置的原生线程池或认证边界。与 SEC-006 一起处理。 |
 | REL-002 | 低 | RESOLVED | 本机不带隔离环境变量运行 pytest 时会自动加载 ROS Humble 的 `launch_testing` 插件，并因跨 Python 环境缺少 `yaml` 在收集前失败。 | `pyproject.toml` 明确屏蔽 7 个宿主 ROS/ament pytest entry point；本地和服务器均以普通 `pytest -q` 得到 `247 passed, 7 skipped`。提交本地 `598175b`、服务器 `61c1d02`。 |
 | REL-003 | 低 | DEFERRED | CPU 服务器未安装 Chrome/Chromium，因此可选的服务器端 WebGL 离线渲染不可用；四 MP4 轨迹审阅使用 Python/OpenCV，不受影响，`:7865` 也只在客户端浏览器渲染。原实现硬编码 `/usr/bin/google-chrome`。 | 已支持 `--chrome`/`OSMO_CHROME_BINARY` 与常见路径探测，缺失时启动前明确失败；本地前后视频 SHA 完全相同。仅在确需服务器 WebGL 时再固定、校验并安装项目级 Chromium，避免当前无收益地增加体积和攻击面。提交本地 `29f91f4`、服务器 `78c734c`。 |
 
@@ -128,6 +130,13 @@
 - `:7869` 认证仍未完成：源码没有 Authorization/令牌检查，POST 可改审核/分段/对齐，GET 暴露绝对路径和审核信息。不得因 unit 已硬化而关闭 SEC-006。
 - `:8000` 无认证 POST 可启动/取消流水线、修改配置/标记并调用 `shutil.rmtree` 清除结果；GET `/api/processing/status` 在只读探测中 10 秒未返回，说明还存在便宜触发的资源消耗面。该服务属于独立工程，未擅自停止或修改。
 - REL-002 已关闭：项目 pytest 配置在插件自动加载阶段屏蔽宿主 ROS/ament 的 `launch_testing`、`launch_ros` 和 5 个 ament lint entry point；不设置 `PYTEST_DISABLE_PLUGIN_AUTOLOAD` 时，本地/服务器仍稳定通过 `247 passed, 7 skipped`。
+- 用户再次确认审阅机位不可变化：严格沿用 19 点版本，从两个 AprilGrid 正面一侧的斜上方向下拍，镜头面朝 AprilGrid；已同时写入固定目标和整点自动任务约束。
+- Bandit 对 `src/`、`tools/` 的首轮结果为 0 high/8 medium；修复真实输入面并给经过属主/权限/防符号链接验证的四 MP4 `/tmp` fallback 添加理由后，复扫 32,308 行为 0 high/0 medium。低级告警 100 项留作后续按可达性分批审阅，不能把静态告警数量直接当成漏洞数量。
+- 安全补丁提交本地 `bbfe7ac`、服务器 `8aa6fba`；本地和服务器完整测试均为 `260 passed, 7 skipped`。锁定 Python 基础/全 extras 依赖再次经 `pip-audit` 验证均为 0 已知漏洞。
+- 服务器第一次 `uv sync` 因外部网络下载 SciPy/kiwisolver 长时间无进展而中止；仅终止本轮启动的两个同步进程。随后从本地锁定 wheel/cache 离线补齐并成功执行 `uv sync --frozen --extra test --offline`，服务器最终版本为 `defusedxml 0.7.1`、`kiwisolver 1.5.0`、`scipy 1.18.0`，普通 `./.venv/bin/pytest` 已恢复并通过。
+- 安全补丁未修改四 MP4 检测、位姿、时间线或审阅渲染语义；服务器 `joint_trajectory.csv` SHA-256 仍为 `52c3e192...b82ed`，v5 视频仍为 `fef54acf...c9a7f7`，因此没有重复处理数据或发送旧视频。
+- `:7865`、`:7869` unit 均保持 active，`:7865 /healthz` 正常。`:7869 /api/items` 冷探测出现一次 5 s 超时，复测 3.06 s 返回 200，新增 EFF-005 跟踪，未擅自改变独立审核服务业务代码。
+- 21:00 飞书文字进度发送成功，消息 ID `om_x100b66588b3788a0dfed92c99568203`；本轮无新视频。
 
 ## 最近一次算法改动验证
 
