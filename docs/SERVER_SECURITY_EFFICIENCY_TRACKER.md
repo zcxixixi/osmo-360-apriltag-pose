@@ -27,7 +27,7 @@
 | 服务器等价算法提交 | `b9f7803` |
 | 服务器无缓存耗时 | 6.49 s 处理 10 s 四路视频；`time -v` 平均 CPU 1164%，峰值 RSS 311,272 KiB |
 | 输出 | 300/300 帧具备双侧数值位姿；268 帧联合可信，266 帧双侧实测，`SELF_CALIBRATED_PASS` |
-| 回归测试 | 本地和服务器均为 243 passed，7 skipped |
+| 回归测试 | 本地和服务器均为 247 passed，7 skipped |
 | 一致性 | v5 全部 300 帧数值位姿与撤回前 v3 逐项最大差值为 0；只额外保留长间隔不可信标记 |
 | 最新已发视频 | v5 `processed_joint_trajectory_30hz_front_above_v5.mp4`，SHA-256 `fef54acf...c9a7f7` |
 
@@ -50,7 +50,7 @@
 | DEP-004 | 高 | OPEN | 项目名为 `ffmpeg-master-latest-linux64-gpl` 的二进制实际与系统相同，均为 Ubuntu FFmpeg 4.4.2；Ubuntu 报告 FFmpeg/库的 `+esm14` 安全更新仅 ESM 可用。当前流水线确实调用该旧二进制，目录名也会误导运维。 | 选择受维护、校验哈希的项目级 FFmpeg；建立逐帧像素/Tag 检测/轨迹回归，用新输出版本无缓存重跑 `instaumi_000001` 并按固定 `flu-front-above` 视角出片。 |
 | EFF-001 | 高 | RESOLVED | 压缩 NPZ 的每个数组被重复打开和解压。缓存读取改为一次加载所有成员。 | 服务器无缓存耗时 14.26 s → 6.10 s；输出逐字节一致；提交 `293df8b`。 |
 | EFF-002 | 中 | DEFERRED | FFmpeg 管道软件解码约 2.04 s，OpenCV 包装约 2.70 s；VAAPI 四路约 7.43 s。FFmpeg 像素输出与当前路径不完全一致，且缓存修复后解码已非主要瓶颈。 | 若后续解码占比重新升高，建立像素/检测回归门后再切换；当前不以小收益换算法输入变化。 |
-| EFF-003 | 中 | OPEN | 多进程/线程资源隔离策略尚未固化。此前 4 路各 8 线程端到端无收益，未来并发任务可能争抢 32 个逻辑核并拖慢整机。 | 增加任务级 CPU/线程预算、并发上限和基准矩阵；优先限制 OpenCV/BLAS/FFmpeg 内部线程嵌套。 |
+| EFF-003 | 中 | RESOLVED | 观察缓存已有 4×4 预算，但备用联合 pose-graph 的 8 个 Python worker 未限制 BLAS/OpenMP，存在 8×32 嵌套线程放大；不同任务之间也没有主机级并发门。 | 每任务最多 16 逻辑线程，小主机自动降配；OpenCV/FFmpeg/BLAS/OpenMP/BLIS/vecLib 全部继承限额，pose-graph 每 worker 1 个数学线程。默认同用户整机 1 个任务槽，可在总量不超过逻辑核时显式增加。双任务并发实测串行、无发布竞态；轨迹 SHA 不变。提交本地 `5dad620`/`e2400fb`，服务器 `5d550f6`/`449fde0`。 |
 | REL-002 | 低 | OPEN | 本机不带隔离环境变量运行 pytest 时会自动加载 ROS Humble 的 `launch_testing` 插件，并因跨 Python 环境缺少 `yaml` 在收集前失败。 | 维护命令统一设置 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`，或在项目 pytest 配置中只加载所需插件，避免宿主插件污染。 |
 | REL-003 | 低 | DEFERRED | CPU 服务器未安装 Chrome/Chromium，因此可选的服务器端 WebGL 离线渲染不可用；四 MP4 轨迹审阅使用 Python/OpenCV，不受影响，`:7865` 也只在客户端浏览器渲染。原实现硬编码 `/usr/bin/google-chrome`。 | 已支持 `--chrome`/`OSMO_CHROME_BINARY` 与常见路径探测，缺失时启动前明确失败；本地前后视频 SHA 完全相同。仅在确需服务器 WebGL 时再固定、校验并安装项目级 Chromium，避免当前无收益地增加体积和攻击面。提交本地 `29f91f4`、服务器 `78c734c`。 |
 
@@ -113,6 +113,11 @@
 - 不为当前未使用的服务器 WebGL 能力安装大型浏览器；四 MP4 审阅视频仍由 Python/OpenCV 生成，并继续强制 `flu-front-above` 固定视角。
 - 主机级风险单列而未擅自修改：28 个 standard-security 更新可用、79 个 ESM Apps 更新因未 attach 不可用；`apt-get -s upgrade` 会升级 38 个包。
 - 项目所谓 `ffmpeg-master-latest-linux64-gpl` 实际是 FFmpeg 4.4.2，且流水线正在使用。由于替换会改变解码输入，必须按算法输入变更闭环重跑数据和固定视角录制，不能混在 Node 安全修复中悄悄替换。
+- EFF-003 资源隔离修复：单任务上限 16 逻辑线程，主机按用户默认只放行 1 个任务；小 CPU 主机自动降低 4×4 配置，显式超配则 fail-closed。任务槽目录/文件权限为 `0700/0600`，拒绝符号链接和非本用户所有者。
+- 备用联合 pose-graph 原先可由 8 个 Python worker 各自继承 32 线程数学库；现固定为每 worker 1 个 BLAS/OpenMP 线程，并补齐 BLIS、vecLib、OpenMP/MKL dynamic 限制。
+- 本地/服务器全量测试均为 `247 passed, 7 skipped`。服务器缓存重跑 1.07 s，平均 CPU 824%，峰值 RSS 105,316 KiB、无 swap；任务槽等待约 18 µs。
+- 同时提交两条相同数据任务，先到者立即运行，后到者在 slot 0 等待 0.400 s 后运行；两者均成功，发布区没有 `.tmp`/`.publish-*`/`.backup-*` 残留。
+- 并发修复前后 `joint_trajectory.csv`、双侧 pose、世界图、跟踪报告和输入签名 6 个 SHA-256 全部相同；这不是轨迹/渲染算法变更，因此没有重复录制或发送视频，最近审阅视频仍为固定 `flu-front-above` 的 v5。
 
 ## 最近一次算法改动验证
 
