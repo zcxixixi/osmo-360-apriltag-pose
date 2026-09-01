@@ -30,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--minimum-tags", type=int, default=2)
     parser.add_argument("--minimum-calibration-inliers", type=int, default=20)
     parser.add_argument("--max-angular-rmse-deg", type=float, default=2.0)
+    parser.add_argument("--maximum-interpolation-gap-s", type=float, default=0.25)
     parser.add_argument("--opencv-threads", type=int, default=2)
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser.parse_args()
@@ -39,6 +40,10 @@ def main() -> int:
     args = parse_args()
     if args.opencv_threads <= 0:
         raise ValueError("--opencv-threads must be positive")
+    if not 0 < args.maximum_interpolation_gap_s <= 0.25:
+        raise ValueError(
+            "--maximum-interpolation-gap-s must be positive and no greater than 0.25"
+        )
     cv2.setNumThreads(args.opencv_threads)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     panel_a_payload, panel_a = load_direct_tag_map(args.panel_a_map)
@@ -82,6 +87,7 @@ def main() -> int:
         trajectory_rows["left"],
         trajectory_rows["right"],
         map_id=world_map["map_id"],
+        maximum_interpolation_gap_s=args.maximum_interpolation_gap_s,
     )
     gates = {
         "calibration_inliers_at_least_minimum": (
@@ -98,6 +104,10 @@ def main() -> int:
         "joint_valid_ratio_at_least_0_85": (
             trajectories["joint"]["joint_valid_ratio"] >= 0.85
         ),
+        "maximum_trusted_interpolation_gap_s_at_most_0_25": all(
+            value <= 0.25
+            for value in trajectories["joint"]["maximum_interpolation_gap_s"].values()
+        ),
         "left_angular_rmse_p95_deg_at_most_2": (
             trajectories["left"]["angular_rmse_deg"]["p95"] is not None
             and trajectories["left"]["angular_rmse_deg"]["p95"] <= 2.0
@@ -109,7 +119,7 @@ def main() -> int:
     }
     passed = all(gates.values())
     report = {
-        "schema_version": "cached-a3-self-calibrated-trajectories/1.0",
+        "schema_version": "cached-a3-self-calibrated-trajectories/1.1",
         "pair_id": args.pair_id,
         "status": "SELF_CALIBRATED_PASS" if passed else "SELF_CALIBRATED_GATE_FAILED",
         "claims": {
@@ -119,6 +129,10 @@ def main() -> int:
             "fixed_left_right_camera_extrinsic_used": False,
             "stitching_used": False,
             "joint_timeline_interpolation_used": True,
+            "maximum_trusted_interpolation_gap_s": args.maximum_interpolation_gap_s,
+            "long_gap_policy": (
+                "INTERPOLATED_UNTRUSTED; pose hidden and trajectory trail segmented"
+            ),
         },
         "calibration": calibration,
         "trajectories": trajectories,

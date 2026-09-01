@@ -1,6 +1,6 @@
-# Four-MP4 CPU pipeline v3
+# Four-MP4 CPU pipeline v4
 
-`dual-x5-four-mp4-cpu-v3` accepts the four independent raw fisheye MP4 streams
+`dual-x5-four-mp4-cpu-v4` accepts the four independent raw fisheye MP4 streams
 produced by two X5 cameras. It does not import INSV and does not invoke the
 Insta360 stitching SDK. The official panorama is therefore no longer a
 localization prerequisite.
@@ -167,7 +167,7 @@ records every flow, redetection, scout, fallback, and rejection count.
 Persistent cache defaults to:
 
 ```text
-dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v3/<pair-id>/
+dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v4/<pair-id>/
 ```
 
 Set `OSMO_PIPELINE_CACHE` to a server-local SSD if the dataset itself is on a
@@ -190,7 +190,7 @@ self-calibration, not external ground truth.
 The principal outputs are:
 
 ```text
-final/dual-x5-four-mp4-cpu-v3/pairs/<pair-id>/tracking/
+final/dual-x5-four-mp4-cpu-v4/pairs/<pair-id>/tracking/
 ├── session_world_map.json
 ├── left_pose.csv
 ├── right_pose.csv
@@ -200,9 +200,12 @@ final/dual-x5-four-mp4-cpu-v3/pairs/<pair-id>/tracking/
 
 `joint_trajectory.csv` has one shared H5 timestamp and one shared map ID per
 row, followed by both left and right 6DoF poses. Direct bearing measurements
-are marked `MEASURED`; gaps bounded by measurements are filled for the joint
-timeline and marked `INTERPOLATED`. The report separately records measured
-joint coverage and the maximum interpolation gap.
+are marked `MEASURED`; gaps bounded by measurements are filled only when the
+two bracketing measurements are at most 0.25 seconds apart and are marked
+`INTERPOLATED`. Longer gaps are serialized as `INTERPOLATED_UNTRUSTED` without
+a pose, invalidate that joint row, hide the camera in the audit video, and
+break the trajectory trail. The report separately records measured coverage,
+trusted/rejected maximum gaps, and untrusted long-gap frame counts.
 
 Published camera poses use child frame `hand_camera_flu_back_x`. Its `+X` is
 the optical direction of the `back`/stream-0 video, `+Y` points left, and `+Z`
@@ -240,7 +243,7 @@ Render the four source views beside the synchronized shared-map 3D tracks:
 ```bash
 .venv/bin/python -m tools.render_joint_four_mp4_trajectory \
   /data/session \
-  /data/session/final/dual-x5-four-mp4-cpu-v3/pairs/<pair-id>/tracking \
+  /data/session/final/dual-x5-four-mp4-cpu-v4/pairs/<pair-id>/tracking \
   /data/session/final/joint_trajectory_comparison.mp4
 ```
 
