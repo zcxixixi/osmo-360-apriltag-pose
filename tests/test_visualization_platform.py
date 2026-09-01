@@ -75,6 +75,23 @@ def test_processed_bundle_becomes_viewable_animation(tmp_path):
                 time.sleep(0.02)
         else:
             raise AssertionError("platform server did not become ready")
+        with socket.create_connection(("127.0.0.1", port), timeout=2) as connection:
+            connection.sendall(
+                (
+                    "POST /api/projects HTTP/1.1\r\n"
+                    f"Host: 127.0.0.1:{port}\r\n"
+                    "Content-Type: application/json\r\n"
+                    "Content-Length: 1000000000\r\n"
+                    "Expect: 100-continue\r\n\r\n"
+                ).encode()
+            )
+            expectation_response = connection.recv(4096)
+        assert expectation_response.startswith(b"HTTP/1.1 401")
+        assert b"100 Continue" not in expectation_response
+
+        with pytest.raises(urllib.error.HTTPError) as malformed_url:
+            _request(f"{base}/%E0%A4%A")
+        assert malformed_url.value.code == 400
         _, health, _ = _request(f"{base}/healthz")
         assert json.loads(health) == {
             "status": "ok",
