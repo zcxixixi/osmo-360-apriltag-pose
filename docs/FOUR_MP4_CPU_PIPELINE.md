@@ -29,11 +29,13 @@ so the source offset is retained for audit but is not applied again. The H5
 rear preview declares source stream 0 and frame-matches `*_back`; consequently
 `back=stream-0` and `forward=stream-1`.
 
-The current example H5 contains null camera intrinsics and identity placeholder
-rig extrinsics. The pipeline therefore uses the serial-bound X5 factory lens
-records in `config/devices/x5_factory_lens_offsets.json` for raw-pixel bearings,
-but correctly stops at `OBSERVATIONS_READY` instead of inventing a calibrated
-dual-camera trajectory.
+When present, the rear-lens Kannala-Brandt intrinsics and
+`T_rig_camera_left/right` rotations in H5 are used directly for stream 0.
+Stream 1 uses the serial-bound X5 factory lens record because the current H5
+schema exposes only the active rear lens. The complete H5 hash and calibration
+hash are cache inputs, so replacing H5 invalidates stale bearings even when the
+four MP4 files are unchanged. `T_right_left` is not used: the two cameras move
+independently and are localized against the same fixed AprilGrid map.
 
 ## Generic four-MP4 input contract
 
@@ -133,9 +135,9 @@ On the supplied four-stream, 1920×1920, 59.94 FPS, 10-second dataset, the first
 uncached observation pass measured 4.75 seconds on a Ryzen 9 9950X with the
 `4 x 4` fast profile. Four-stream decode alone measured 2.89 seconds, so this
 is close to the software HEVC decode floor. A cached repeat is about one second.
-These measurements cover the complete H5 ingest, hashing, four-stream Tag
-observation caches, and merging; they do not claim trajectory completion while
-the H5 rig calibration remains a placeholder.
+These measurements cover H5 ingest, hashing, four-stream Tag observation
+caches, and merging. Shared-map self-calibration and synchronized trajectory
+export are a separate, cached CPU stage.
 
 ## Resume and cache identity
 
@@ -144,7 +146,7 @@ default). A completed chunk is reused only when all of the following still
 match:
 
 - source MP4 SHA-256;
-- lens stream and factory offset;
+- complete H5 SHA-256, H5 rear calibration, lens stream, and factory offset;
 - synchronized clock mapping;
 - trajectory output stride and the complete temporal-search signature;
 - decoded frame range and CPU thread setting.
@@ -177,9 +179,33 @@ The four per-lens caches are merged into one calibrated dual-fisheye bearing
 cache per physical camera. The existing cached joint pose-graph optimizer then
 uses those two caches; it does not decode or stitch video.
 
-Until a capture-specific session world map and common-time initial pose files
-exist, the worker ends successfully with `OBSERVATIONS_READY`. It never labels
-an uncalibrated trajectory as complete. To enable the existing optimizer, add:
+For native InstaUMI input, the worker automatically estimates the rigid
+relationship between the fixed A3 grids (IDs 200-205 and 210-215) from both
+cameras' overlapping bearing observations. Both moving cameras are then
+localized in `session_grid_A`; they are not independently rebased. The result
+is accepted only after calibration-inlier, angular-residual, and coverage
+gates pass. The report explicitly labels this as capture-local
+self-calibration, not external ground truth.
+
+The principal outputs are:
+
+```text
+final/dual-x5-four-mp4-cpu-v2/pairs/<pair-id>/tracking/
+├── session_world_map.json
+├── left_pose.csv
+├── right_pose.csv
+├── joint_trajectory.csv
+└── report.json
+```
+
+`joint_trajectory.csv` has one shared H5 timestamp and one shared map ID per
+row, followed by both left and right 6DoF poses. Direct bearing measurements
+are marked `MEASURED`; gaps bounded by measurements are filled for the joint
+timeline and marked `INTERPOLATED`. The report separately records measured
+joint coverage and the maximum interpolation gap.
+
+Generic four-MP4 input can still provide an external world map and initial
+poses to the existing held-out joint pose-graph optimizer:
 
 ```json
 {
@@ -194,6 +220,13 @@ an uncalibrated trajectory as complete. To enable the existing optimizer, add:
 }
 ```
 
-These three capture-specific bootstrap products will be derived directly from
-the new data after its real format and calibration visibility are inspected.
-No stitched RGB video is needed for the cached joint optimization.
+No stitched RGB video is needed for either tracking path.
+
+Render the four source views beside the synchronized shared-map 3D tracks:
+
+```bash
+.venv/bin/python -m tools.render_joint_four_mp4_trajectory \
+  /data/session \
+  /data/session/final/dual-x5-four-mp4-cpu-v2/pairs/<pair-id>/tracking \
+  /data/session/final/joint_trajectory_comparison.mp4
+```

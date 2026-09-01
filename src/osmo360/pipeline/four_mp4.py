@@ -265,6 +265,16 @@ def _camera_record(
             if camera_config.get("factory_offset_source")
             else {}
         ),
+        **(
+            {
+                "rear_calibration": camera_config["rear_calibration"],
+                "rear_calibration_source": camera_config["rear_calibration_source"],
+                "rear_calibration_sha256": camera_config["rear_calibration_sha256"],
+                "timeline_h5_sha256": camera_config["timeline_h5_sha256"],
+            }
+            if camera_config.get("rear_calibration")
+            else {}
+        ),
     }
 
 
@@ -483,6 +493,7 @@ def discover_four_mp4_dataset(dataset_root: Path) -> dict[str, Any]:
                 "sync": sync,
                 "common_duration_upper_bound_s": common_duration,
                 "tracking": config.get("tracking"),
+                "auto_tracking": config.get("auto_tracking"),
             }
         ],
         "resource_budget": resource_budget(config),

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any
 
 import h5py
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 from .manifest import ManifestError, ROOT
 
@@ -55,6 +58,70 @@ def _factory_offsets() -> dict[str, Any]:
     return payload["devices"]
 
 
+def _rear_calibration(
+    calibration: dict[str, Any], side: str, x5_offset: str
+) -> dict[str, Any] | None:
+    camera = calibration.get("cameras", {}).get(side, {})
+    intrinsics = camera.get("intrinsics", {})
+    distortion = camera.get("distortion", {})
+    intrinsic_values = [intrinsics.get(name) for name in ("fx", "fy", "cx", "cy")]
+    if all(value is None for value in intrinsic_values):
+        return None
+    image_size = np.asarray(camera.get("image_size"), dtype=int)
+    if image_size.shape != (2,) or np.any(image_size <= 0):
+        raise ManifestError(f"InstaUMI H5 {side} rear calibration has invalid image_size")
+    try:
+        values = np.asarray([
+            intrinsics[name] for name in ("fx", "fy", "cx", "cy")
+        ], dtype=float)
+    except (KeyError, TypeError, ValueError) as error:
+        raise ManifestError(f"InstaUMI H5 {side} rear intrinsics are incomplete") from error
+    coefficients = np.asarray(distortion.get("coefficients"), dtype=float)
+    if not np.isfinite(values).all() or values[0] <= 0 or values[1] <= 0:
+        raise ManifestError(f"InstaUMI H5 {side} rear intrinsics are invalid")
+    if distortion.get("model") != "kannala_brandt" or coefficients.shape != (4,):
+        raise ManifestError(f"InstaUMI H5 {side} must use four-coefficient Kannala-Brandt")
+    transform = np.asarray(
+        calibration.get("extrinsics", {}).get(f"T_rig_camera_{side}"), dtype=float
+    )
+    if transform.shape != (4, 4) or not np.isfinite(transform).all():
+        raise ManifestError(f"InstaUMI H5 {side} T_rig_camera is invalid")
+
+    fields = x5_offset.split("_")
+    offset = np.asarray([float(value) for value in fields[1:]], dtype=float)
+    calibration_width = float(offset[13])
+    centre_x, centre_y, radius, tilt_x, tilt_y, half_fov_deg = offset[:6]
+    expected = np.asarray([
+        radius / math.radians(half_fov_deg) / calibration_width,
+        radius / math.radians(half_fov_deg) / calibration_width,
+        centre_x / calibration_width,
+        centre_y / calibration_width,
+    ])
+    normalized = values / np.asarray([
+        image_size[0], image_size[1], image_size[0], image_size[1]
+    ])
+    expected_rotation = Rotation.from_euler(
+        "xy", [tilt_x, tilt_y], degrees=True
+    ).as_matrix()
+    compatible = bool(
+        np.allclose(normalized, expected, atol=2e-6, rtol=2e-6)
+        and np.allclose(coefficients, 0.0, atol=1e-12)
+        and np.allclose(transform[:3, :3], expected_rotation, atol=2e-6, rtol=2e-6)
+        and np.allclose(transform[:3, 3], 0.0, atol=1e-12)
+    )
+    return {
+        "image_size": image_size.tolist(),
+        "projection_model": camera.get("projection_model"),
+        "intrinsics": {name: float(intrinsics[name]) for name in ("fx", "fy", "cx", "cy")},
+        "distortion": {
+            "model": distortion["model"],
+            "coefficients": coefficients.tolist(),
+        },
+        "T_rig_camera": transform.tolist(),
+        "factory_offset_compatible": compatible,
+    }
+
+
 def _timeline(handle: h5py.File, side: str) -> dict[str, Any]:
     base = f"/sensor/camera/{side}"
     required = ("timestamp_ns", "source_timestamp_ns", "frame_index", "valid")
@@ -91,7 +158,10 @@ def load_instaumi_config(root: Path) -> dict[str, Any]:
             if handle.attrs.get("schema_name", handle.attrs.get("schema")) != SCHEMA_VERSION:
                 raise ManifestError("dataset.h5 is not an InstaUMI dataset")
             metadata = _json_scalar(handle, "/metadata/dataset.json")
-            calibration = _json_scalar(handle, "/calib/calibration_full.json")
+            calibration_raw = handle["/calib/calibration_full.json"][()]
+            if isinstance(calibration_raw, bytes):
+                calibration_raw = calibration_raw.decode("utf-8")
+            calibration = json.loads(str(calibration_raw))
             left_timeline = _timeline(handle, "left")
             right_timeline = _timeline(handle, "right")
     except OSError as error:
@@ -107,6 +177,10 @@ def load_instaumi_config(root: Path) -> dict[str, Any]:
     if time.get("reference") != "dataset_start":
         raise ManifestError("InstaUMI video timestamps must use dataset_start as reference")
     offsets = _factory_offsets()
+    calibration_sha256 = hashlib.sha256(
+        str(calibration_raw).encode("utf-8")
+    ).hexdigest()
+    h5_sha256 = hashlib.sha256(h5_path.read_bytes()).hexdigest()
     cameras: dict[str, Any] = {}
     for side, title, timeline in (
         ("left", "Left", left_timeline),
@@ -122,6 +196,9 @@ def load_instaumi_config(root: Path) -> dict[str, Any]:
         expected_count = metadata.get("video", {}).get(side, {}).get("frame_count")
         if expected_count is not None and int(expected_count) != timeline["frame_count"]:
             raise ManifestError(f"InstaUMI H5 {side} video/timeline frame counts disagree")
+        rear_calibration = _rear_calibration(
+            calibration, side, factory["x5_offset"]
+        )
         cameras[side] = {
             "serial": serial,
             "x5_offset": factory["x5_offset"],
@@ -136,6 +213,16 @@ def load_instaumi_config(root: Path) -> dict[str, Any]:
                 "evidence": "H5 rear preview source_stream=0 and frame-equivalent *_back video",
             },
             "factory_offset_source": factory["source"],
+            "timeline_h5_sha256": h5_sha256,
+            **(
+                {
+                    "rear_calibration": rear_calibration,
+                    "rear_calibration_source": "dataset.h5:/calib/calibration_full.json",
+                    "rear_calibration_sha256": calibration_sha256,
+                }
+                if rear_calibration is not None
+                else {}
+            ),
         }
 
     time_calibration = calibration.get("time_calibration", {})
@@ -155,6 +242,12 @@ def load_instaumi_config(root: Path) -> dict[str, Any]:
             "source_right_left_offset_s": source_offset_ns / 1e9,
             "uncertainty_s": float(time_calibration.get("uncertainty_ns", 0)) / 1e9,
             "source_method": time_calibration.get("method"),
+        },
+        "auto_tracking": {
+            "enabled": True,
+            "mode": "shared-a3-self-calibrated-bearing-pnp",
+            "panel_a_map": str(ROOT / "config/a3_aprilgrid_A_200_205_120mm.json"),
+            "panel_b_map": str(ROOT / "config/a3_aprilgrid_B_210_215_120mm.json"),
         },
         "processing": {
             "profile": "fast-cpu",
@@ -186,6 +279,14 @@ def load_instaumi_config(root: Path) -> dict[str, Any]:
                 for side in ("left", "right")
                 for name in ("fx", "fy", "cx", "cy")
             ),
+            "rear_intrinsics_factory_compatible": all(
+                cameras[side].get("rear_calibration", {}).get(
+                    "factory_offset_compatible", False
+                )
+                for side in ("left", "right")
+            ),
+            "calibration_sha256": calibration_sha256,
+            "h5_sha256": h5_sha256,
             "extrinsics_status": "placeholder_identity"
             if calibration.get("extrinsics", {}).get("T_right_left")
             == [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]

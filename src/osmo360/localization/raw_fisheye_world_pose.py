@@ -170,6 +170,131 @@ def make_x5_offset_ray_converter(
     return convert, metadata
 
 
+def make_kannala_brandt_ray_converter(
+    intrinsics: dict[str, Any],
+    rig_from_camera: np.ndarray,
+    *,
+    calibration_width: int,
+    calibration_height: int,
+    source_width: int,
+    source_height: int,
+):
+    """Convert pixels with an explicit KB fisheye model into rig-frame rays."""
+    fx = float(intrinsics["fx"]) * source_width / calibration_width
+    fy = float(intrinsics["fy"]) * source_height / calibration_height
+    cx = float(intrinsics["cx"]) * source_width / calibration_width
+    cy = float(intrinsics["cy"]) * source_height / calibration_height
+    coefficients = np.asarray(intrinsics.get("coefficients", [0, 0, 0, 0]), dtype=float)
+    if coefficients.shape != (4,):
+        raise ValueError("Kannala-Brandt calibration needs four distortion coefficients")
+    rig_rotation = Rotation.from_matrix(np.asarray(rig_from_camera, dtype=float)[:3, :3])
+
+    def polynomial(theta: np.ndarray) -> np.ndarray:
+        theta2 = theta * theta
+        return theta * (
+            1
+            + coefficients[0] * theta2
+            + coefficients[1] * theta2**2
+            + coefficients[2] * theta2**3
+            + coefficients[3] * theta2**4
+        )
+
+    def convert(pixels: np.ndarray) -> np.ndarray:
+        pixels = np.asarray(pixels, dtype=float).reshape(-1, 2)
+        normalized = np.column_stack((
+            (pixels[:, 0] - cx) / fx,
+            (pixels[:, 1] - cy) / fy,
+        ))
+        distorted_radius = np.linalg.norm(normalized, axis=1)
+        low = np.zeros(len(pixels), dtype=float)
+        high = np.full(len(pixels), np.radians(100.0), dtype=float)
+        for _ in range(48):
+            middle = (low + high) / 2.0
+            below = polynomial(middle) < distorted_radius
+            low = np.where(below, middle, low)
+            high = np.where(below, high, middle)
+        theta = (low + high) / 2.0
+        direction = np.divide(
+            normalized,
+            distorted_radius[:, None],
+            out=np.zeros_like(normalized),
+            where=distorted_radius[:, None] > 1e-12,
+        )
+        rays_camera = np.column_stack((
+            np.sin(theta) * direction[:, 0],
+            np.sin(theta) * direction[:, 1],
+            np.cos(theta),
+        ))
+        rays = rig_rotation.apply(rays_camera)
+        return rays / np.linalg.norm(rays, axis=1, keepdims=True)
+
+    return convert, {
+        "camera_model": "kannala_brandt",
+        "source_size": [source_width, source_height],
+        "calibration_size": [calibration_width, calibration_height],
+        "intrinsics_scaled": {"fx": fx, "fy": fy, "cx": cx, "cy": cy},
+        "coefficients": coefficients.tolist(),
+        "ray_frame": "x5_dual_fisheye_rig_stream0",
+    }
+
+
+def make_kannala_brandt_rectified_maps(
+    intrinsics: dict[str, Any],
+    rig_from_camera: np.ndarray,
+    *,
+    calibration_width: int,
+    calibration_height: int,
+    source_width: int,
+    source_height: int,
+    view_size: int = 960,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Map the standard overlapping rig tangent views into a KB image."""
+    fx = float(intrinsics["fx"]) * source_width / calibration_width
+    fy = float(intrinsics["fy"]) * source_height / calibration_height
+    cx = float(intrinsics["cx"]) * source_width / calibration_width
+    cy = float(intrinsics["cy"]) * source_height / calibration_height
+    coefficients = np.asarray(intrinsics.get("coefficients", [0, 0, 0, 0]), dtype=float)
+    camera_from_rig = Rotation.from_matrix(
+        np.asarray(rig_from_camera, dtype=float)[:3, :3]
+    ).inv()
+    fov = np.radians(85.0)
+    coordinate = (
+        (np.arange(view_size) + 0.5 - view_size / 2.0)
+        / (view_size / 2.0)
+        * np.tan(fov / 2.0)
+    )
+    xx, yy = np.meshgrid(coordinate, coordinate)
+    base = np.stack([xx, yy, np.ones_like(xx)], axis=-1)
+    base /= np.linalg.norm(base, axis=-1, keepdims=True)
+    centres = [
+        (0, 0), (-55, 0), (55, 0), (0, -55), (0, 55),
+        (-45, -45), (-45, 45), (45, -45), (45, 45),
+        (-80, 0), (80, 0),
+    ]
+    maps = []
+    for yaw, pitch in centres:
+        rays_rig = Rotation.from_euler("yx", [yaw, pitch], degrees=True).apply(
+            base.reshape(-1, 3)
+        ).reshape(base.shape)
+        rays = camera_from_rig.apply(rays_rig.reshape(-1, 3)).reshape(base.shape)
+        theta = np.arccos(np.clip(rays[..., 2], -1.0, 1.0))
+        theta2 = theta * theta
+        radius = theta * (
+            1
+            + coefficients[0] * theta2
+            + coefficients[1] * theta2**2
+            + coefficients[2] * theta2**3
+            + coefficients[3] * theta2**4
+        )
+        planar = np.linalg.norm(rays[..., :2], axis=-1)
+        xmap = (cx + fx * radius * rays[..., 0] / np.maximum(planar, 1e-9)).astype(np.float32)
+        ymap = (cy + fy * radius * rays[..., 1] / np.maximum(planar, 1e-9)).astype(np.float32)
+        xmap[rays[..., 2] < np.cos(np.radians(100.0))] = -1
+        ymap[rays[..., 2] < np.cos(np.radians(100.0))] = -1
+        maps.append((xmap, ymap))
+    return maps
+
+
 def make_x5_rectified_maps(
     offset: str,
     *,

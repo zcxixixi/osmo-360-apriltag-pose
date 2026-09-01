@@ -21,6 +21,8 @@ from osmo360.pipeline.temporal_apriltag import (
 )
 from osmo360.localization.raw_fisheye_world_pose import (
     detect_rectified_tags,
+    make_kannala_brandt_ray_converter,
+    make_kannala_brandt_rectified_maps,
     make_ray_converter,
     make_rectified_maps,
     make_x5_offset_ray_converter,
@@ -35,6 +37,10 @@ def parse_args() -> argparse.Namespace:
     source.add_argument("--calibration", type=Path)
     source.add_argument("--x5-offset")
     parser.add_argument("--camera-serial")
+    parser.add_argument(
+        "--calibration-bundle-sha256",
+        help="identity of the complete dual-lens calibration used by the caller",
+    )
     parser.add_argument("--panoforge-root", type=Path)
     parser.add_argument("--stream", type=int, default=1)
     parser.add_argument("--source-width", type=int, required=True)
@@ -100,6 +106,11 @@ def parse_args() -> argparse.Namespace:
         "--timeline-camera",
         choices=("left", "right"),
         help="camera timeline to read from --timeline-h5",
+    )
+    parser.add_argument(
+        "--instaumi-rear-calibration",
+        action="store_true",
+        help="for stream 0, use the explicit rear-lens KB calibration in --timeline-h5",
     )
     parser.add_argument(
         "--temporal-tracking",
@@ -257,6 +268,56 @@ def main() -> int:
         ), scaled)
         calibration_source = str(calibration)
         calibration_sha256 = sha256(calibration)
+    elif args.instaumi_rear_calibration:
+        if args.timeline_h5 is None or args.timeline_camera is None or args.stream != 0:
+            raise ValueError(
+                "--instaumi-rear-calibration requires --timeline-h5, "
+                "--timeline-camera and --stream 0"
+            )
+        with h5py.File(args.timeline_h5, "r") as handle:
+            raw_calibration = handle["/calib/calibration_full.json"][()]
+        if isinstance(raw_calibration, bytes):
+            raw_calibration = raw_calibration.decode("utf-8")
+        payload = json.loads(str(raw_calibration))
+        camera = payload["cameras"][args.timeline_camera]
+        distortion = camera["distortion"]
+        explicit_intrinsics = {
+            **camera["intrinsics"],
+            "coefficients": distortion["coefficients"],
+        }
+        rig_from_camera = np.asarray(
+            payload["extrinsics"][f"T_rig_camera_{args.timeline_camera}"], dtype=float
+        )
+        calibration_width, calibration_height = map(int, camera["image_size"])
+        converter, scaled = make_kannala_brandt_ray_converter(
+            explicit_intrinsics,
+            rig_from_camera,
+            calibration_width=calibration_width,
+            calibration_height=calibration_height,
+            source_width=args.source_width,
+            source_height=args.source_height,
+        )
+        rectified_maps = (
+            make_kannala_brandt_rectified_maps(
+                explicit_intrinsics,
+                rig_from_camera,
+                calibration_width=calibration_width,
+                calibration_height=calibration_height,
+                source_width=args.source_width,
+                source_height=args.source_height,
+                view_size=args.rectified_view_size,
+            )
+            if args.rectified_detection
+            else []
+        )
+        x5_offset_record = args.x5_offset
+        calibration_source = (
+            f"instaumi_h5:{args.timeline_h5.resolve()}"
+            f"#/calib/calibration_full.json/cameras/{args.timeline_camera}"
+        )
+        calibration_sha256 = hashlib.sha256(
+            str(raw_calibration).encode("utf-8")
+        ).hexdigest()
     else:
         converter, scaled = make_x5_offset_ray_converter(
             args.x5_offset,
@@ -589,6 +650,10 @@ def main() -> int:
             if exact_timestamp_s is not None
             else "video_nominal_fps"
         ),
+        "timeline_h5_sha256": (
+            sha256(args.timeline_h5.resolve()) if args.timeline_h5 is not None else None
+        ),
+        "calibration_bundle_sha256": args.calibration_bundle_sha256,
         "native_grayscale_decode": args.native_grayscale_decode,
         "optical_flow_scale": args.optical_flow_scale,
         "forward_backward_check_interval_frames": (
@@ -664,6 +729,7 @@ def main() -> int:
             if exact_timestamp_s is not None
             else "video_nominal_fps"
         ),
+        "timeline_h5_sha256": processing_signature["timeline_h5_sha256"],
         "processing_signature": processing_signature,
         "temporal_tracking": args.temporal_tracking,
         "tracking": (

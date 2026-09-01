@@ -306,6 +306,26 @@ def build_chunk_tasks(
         for lens in camera["lenses"]:
             stream = int(lens["stream"])
             video = root / lens["path"]
+            use_h5_rear_calibration = bool(
+                stream == 0 and camera.get("rear_calibration")
+            )
+            calibration_sha256 = (
+                str(camera["rear_calibration_sha256"])
+                if use_h5_rear_calibration
+                else hashlib.sha256(camera["x5_offset"].encode()).hexdigest()
+            )
+            calibration_bundle_sha256 = hashlib.sha256(
+                "|".join((
+                    str(camera.get("rear_calibration_sha256", "")),
+                    hashlib.sha256(camera["x5_offset"].encode()).hexdigest(),
+                    str(camera.get("timeline_h5_sha256", "")),
+                )).encode()
+            ).hexdigest()
+            lens_signature = {
+                **processing_signature,
+                "timeline_h5_sha256": camera.get("timeline_h5_sha256"),
+                "calibration_bundle_sha256": calibration_bundle_sha256,
+            }
             chunk_root = cache_root / "observations" / side / f"lens-{stream}" / "chunks"
             for index, (start, end) in enumerate(
                 chunk_ranges(
@@ -320,6 +340,7 @@ def build_chunk_tasks(
                     str(PYTHON), "-m", "tools.cache_fisheye_apriltag_observations",
                     str(video), "--x5-offset", camera["x5_offset"],
                     "--camera-serial", camera["serial"], "--stream", str(stream),
+                    "--calibration-bundle-sha256", calibration_bundle_sha256,
                     "--source-width", str(lens["width"]),
                     "--source-height", str(lens["height"]),
                     "--clock-intercept-s", str(intercept),
@@ -355,6 +376,8 @@ def build_chunk_tasks(
                         "--timeline-h5", str(root / camera["timeline_h5"]),
                         "--timeline-camera", str(camera["timeline_camera"]),
                     ])
+                if use_h5_rear_calibration:
+                    command.append("--instaumi-rear-calibration")
                 if start:
                     command.append("--seek-to-start")
                 tasks.append(
@@ -368,6 +391,8 @@ def build_chunk_tasks(
                         log=cache_root / "logs" / f"cache-{side}-{stream}-{index:05d}.log",
                         expected={
                             "video_sha256": hashes[lens["path"]],
+                            "calibration_sha256": calibration_sha256,
+                            "timeline_h5_sha256": camera.get("timeline_h5_sha256"),
                             "stream": stream,
                             "detection_frame_range": [start, end],
                             "decoded_frame_range": [start, end],
@@ -385,7 +410,7 @@ def build_chunk_tasks(
                             "rectified_min_direct_tags": 4,
                             "rectified_required_ids": [2, 3],
                             "temporal_tracking": True,
-                            "processing_signature": processing_signature,
+                            "processing_signature": lens_signature,
                             "opencv_threads": threads,
                             "clock_mapping": {
                                 "formula": "local_time = intercept_s + slope * common_time",
@@ -504,7 +529,57 @@ def run_tracking(
 ) -> Path | None:
     tracking = pair.get("tracking")
     if not tracking or not tracking.get("enabled", False):
-        return None
+        automatic = pair.get("auto_tracking")
+        if not automatic or not automatic.get("enabled", False):
+            return None
+        panel_a = _tracking_path(root, automatic["panel_a_map"])
+        panel_b = _tracking_path(root, automatic["panel_b_map"])
+        output = cache_root / "tracking"
+        report = output / "report.json"
+        signature_path = output / "input-signature.json"
+        signature = {
+            "schema_version": "four-mp4-auto-tracking-input/1.0",
+            "algorithm_revision": "cached-a3-shared-map-joint-v3",
+            "mode": automatic.get("mode"),
+            "observation_processing_signature": {
+                side: json.loads(_sidecar(path).read_text(encoding="utf-8"))[
+                    "processing_signature"
+                ]
+                for side, path in dual.items()
+            },
+            "panel_map_sha256": {
+                "A": sha256(panel_a),
+                "B": sha256(panel_b),
+            },
+            "pair_id": pair["pair_id"],
+        }
+        cached_signature = None
+        if signature_path.is_file():
+            try:
+                cached_signature = json.loads(signature_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                pass
+        if not report.is_file() or cached_signature != signature:
+            threads = min(int(budget["maximum_active_cpu_threads"]), 4)
+            run(
+                [
+                    str(PYTHON), "-m", "tools.bootstrap_cached_a3_trajectories",
+                    "--left-cache", str(dual["left"]),
+                    "--right-cache", str(dual["right"]),
+                    "--panel-a-map", str(panel_a),
+                    "--panel-b-map", str(panel_b),
+                    "--pair-id", pair["pair_id"],
+                    "--opencv-threads", str(threads),
+                    "--output-dir", str(output),
+                ],
+                logs / "auto-shared-map-tracking.log",
+                environment=_worker_environment(threads),
+                gate=True,
+            )
+            if not report.is_file():
+                raise RuntimeError(f"automatic tracking did not produce {report}")
+            atomic_json(signature_path, signature)
+        return output
     required = {
         "left_initial_pose_common_time",
         "right_initial_pose_common_time",
@@ -630,8 +705,18 @@ def process_pair(root: Path, pair: dict[str, Any], cache_root: Path, budget: dic
             shutil.rmtree(destination)
         shutil.copytree(tracking, destination)
         report = json.loads((tracking / "report.json").read_text(encoding="utf-8"))
-        status_update(status, "trajectory_tracking", "PASS", report_status=report.get("status"))
-        overall = "COMPLETE" if report.get("status") == "HOLDOUT_PASS" else "TRACKING_GATE_FAILED"
+        tracking_passed = report.get("status") in {"HOLDOUT_PASS", "SELF_CALIBRATED_PASS"}
+        status_update(
+            status,
+            "trajectory_tracking",
+            "PASS" if tracking_passed else "FAIL",
+            report_status=report.get("status"),
+        )
+        overall = (
+            "COMPLETE"
+            if tracking_passed
+            else "TRACKING_GATE_FAILED"
+        )
     payload = json.loads(status.read_text(encoding="utf-8"))
     payload["status"] = overall
     atomic_json(status, payload)
