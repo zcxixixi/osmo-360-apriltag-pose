@@ -113,6 +113,7 @@ def parse_args() -> argparse.Namespace:
     )
     sync_parser.add_argument("--inventory", type=Path, default=DEFAULT_INVENTORY)
     sync_parser.add_argument("--server", default=DEFAULT_SERVER)
+    sync_parser.add_argument("--write-token-file", type=Path)
     assign_parser.add_argument("--inventory", type=Path, default=DEFAULT_INVENTORY)
     ui_parser = device_subparsers.add_parser(
         "ui", help="open the local visual X5 fleet manager"
@@ -207,6 +208,7 @@ def main() -> int:
                 result = sync_inventory(
                     args.inventory.resolve(),
                     args.server,
+                    args.write_token_file,
                 )
             elif args.device_command == "ui":
                 serve_device_ui(
