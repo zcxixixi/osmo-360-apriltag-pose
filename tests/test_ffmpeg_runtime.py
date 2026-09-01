@@ -112,6 +112,11 @@ def test_offline_ffmpeg_installer_validates_and_reuses_archive(tmp_path: Path) -
     assert reused["status"] == "reused"
     marker = tmp_path / "repo/work/tools/ffmpeg-test/.osmo360-runtime.json"
     assert json.loads(marker.read_text(encoding="utf-8"))["network_protocols"] is False
+    compatibility = tmp_path / "repo/work/tools/ffmpeg-master-latest-linux64-gpl/bin"
+    for name in ("ffmpeg", "ffprobe"):
+        wrapper = compatibility / name
+        assert wrapper.stat().st_mode & 0o111
+        assert str(tmp_path / f"repo/work/tools/ffmpeg-test/bin/{name}") in wrapper.read_text()
 
 
 def test_ffmpeg_installer_rejects_archive_path_traversal(tmp_path: Path) -> None:

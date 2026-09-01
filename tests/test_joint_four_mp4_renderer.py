@@ -2,7 +2,16 @@ from __future__ import annotations
 
 import numpy as np
 
-from tools.render_joint_four_mp4_trajectory import Projector, Track
+from tools.render_joint_four_mp4_trajectory import Projector, Track, parse_args
+
+
+def test_review_renderer_defaults_to_accepted_tag_map_view(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        ["render", "/dataset", "/tracking", "/output.mp4"],
+    )
+
+    assert parse_args().view_preset == "tag-map-front-above"
 
 
 def _track_row(time_s: float, x: float, *, state: str = "MEASURED") -> dict[str, str]:

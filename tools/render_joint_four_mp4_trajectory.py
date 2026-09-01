@@ -15,7 +15,7 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
-from osmo360.ffmpeg_runtime import project_ffmpeg_runtime
+from osmo360.ffmpeg_runtime import project_ffmpeg_runtime, resolve_ffmpeg_runtime
 from osmo360.localization.cached_a3_bootstrap import (
     MAXIMUM_TRUSTED_INTERPOLATION_GAP_S,
 )
@@ -49,10 +49,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--view-preset",
         choices=("legacy-oblique", "tag-map-front-above", "flu-front-above"),
-        default="legacy-oblique",
+        default="tag-map-front-above",
         help=(
-            "fixed 3D view; tag-map-front-above keeps the native Tag-map world, "
-            "while flu-front-above expects a FLU world"
+            "fixed 3D view; defaults to the accepted 19:03 tag-map-front-above "
+            "review template, while flu-front-above expects a FLU world"
         ),
     )
     parser.add_argument(
@@ -808,11 +808,16 @@ def main() -> int:
         for sampler in samplers.values():
             sampler.release()
 
-    ffmpeg = (
-        args.ffmpeg.resolve(strict=True)
-        if args.ffmpeg is not None
-        else project_ffmpeg_runtime().ffmpeg
-    )
+    if args.ffmpeg is None:
+        ffmpeg = project_ffmpeg_runtime().ffmpeg
+    else:
+        requested_ffmpeg = args.ffmpeg.resolve(strict=True)
+        runtime = resolve_ffmpeg_runtime(
+            environ={"OSMO_FFMPEG_BIN": str(requested_ffmpeg.parent), "PATH": ""}
+        )
+        if runtime.ffmpeg != requested_ffmpeg:
+            raise ValueError("--ffmpeg must name the ffmpeg member of a verified pair")
+        ffmpeg = runtime.ffmpeg
     subprocess.run([
         str(ffmpeg), "-y", "-hide_banner", "-loglevel", "error",
         "-i", str(intermediate), "-i", str(video_paths["LEFT BACK / H5 KB"]),
