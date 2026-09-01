@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import json
+import os
 from collections import Counter
 from pathlib import Path
 
@@ -14,6 +16,7 @@ from osmo360.localization.cached_a3_bootstrap import (
     _temporal_gate,
     load_cache_frames,
     pose_to_hand_camera_flu,
+    track_cache,
     write_joint_pose_csv,
 )
 from osmo360.localization.coordinate_frames import (
@@ -52,6 +55,7 @@ def test_cache_loader_decompresses_each_npz_member_once(monkeypatch, tmp_path: P
         "rays_camera": np.arange(36, dtype=np.float32).reshape(3, 4, 3),
         "area_px2": np.asarray([10.0, 12.0, 8.0], dtype=np.float32),
         "detection_source": np.asarray(["direct", "flow", "direct"]),
+        "lens_stream": np.asarray([0, 1, 0], dtype=np.int8),
         "timeline_frame_index": np.asarray([0, 1, 2], dtype=np.int32),
         "timeline_common_time_s": np.asarray([0.0, 0.1, 0.2]),
     }
@@ -79,6 +83,8 @@ def test_cache_loader_decompresses_each_npz_member_once(monkeypatch, tmp_path: P
     assert set(frames) == {0, 2}
     assert frames[0][5].area_px2 == 12.0
     assert frames[0][5].source == "flow"
+    assert frames[0][5].lens_stream == 1
+    assert frames[2][6].lens_stream == 0
     assert np.array_equal(frames[2][6].rays, arrays["rays_camera"][2])
     assert times == {0: 0.0, 1: 0.1, 2: 0.2}
 
@@ -224,6 +230,121 @@ def test_sparse_flow_planar_jump_is_rejected_but_direct_reacquisition_is_not():
     assert weak["rejected"] is True
     assert weak["reason"] == "sparse_flow_planar_pose_exceeds_temporal_limits"
     assert direct["rejected"] is False
+
+
+def test_fast_lens_handoff_is_rejected_once_without_blocking_same_lens_motion():
+    previous = Pose(np.zeros(3), Rotation.identity())
+    jumped = Pose(
+        np.asarray([0.10, 0.0, 0.0]),
+        Rotation.from_euler("z", 20.0, degrees=True),
+    )
+    handoff = _temporal_gate(
+        jumped,
+        (6.0, previous),
+        6.04,
+        inlier_tag_count=6,
+        sources={"global_scout_roi_gray"},
+        dominant_lens_stream=1,
+        previous_dominant_lens_stream=0,
+    )
+    same_lens = _temporal_gate(
+        jumped,
+        (6.0, previous),
+        6.04,
+        inlier_tag_count=6,
+        sources={"global_scout_roi_gray"},
+        dominant_lens_stream=1,
+        previous_dominant_lens_stream=1,
+    )
+    slow_handoff = _temporal_gate(
+        jumped,
+        (6.0, previous),
+        6.50,
+        inlier_tag_count=6,
+        sources={"global_scout_roi_gray"},
+        dominant_lens_stream=1,
+        previous_dominant_lens_stream=0,
+    )
+
+    assert handoff["rejected"] is True
+    assert handoff["lens_handoff_measurement"] is True
+    assert handoff["reason"] == "lens_handoff_pose_exceeds_temporal_limits"
+    assert same_lens["rejected"] is False
+    assert slow_handoff["rejected"] is False
+
+
+def test_real_four_mp4_cache_rejects_only_known_fast_lens_handoffs(
+    tmp_path: Path,
+):
+    """Optional production-cache regression, enabled explicitly on the server."""
+    root_value = os.environ.get("OSMO_REAL_HANDOFF_CACHE_ROOT")
+    if not root_value:
+        pytest.skip("set OSMO_REAL_HANDOFF_CACHE_ROOT for production-cache regression")
+    root = Path(root_value)
+    map_payload = json.loads(
+        (root / "tracking/session_world_map.json").read_text(encoding="utf-8")
+    )
+    panel_a = {
+        int(tag["id"]): np.asarray(tag["corners_m"], dtype=np.float64)
+        for tag in map_payload["tags"]
+        if tag["panel"] == "grid_A"
+    }
+    transform_payload = map_payload["panel_transform"]
+    panel_a_to_b = Pose(
+        np.asarray(transform_payload["translation_m"], dtype=np.float64),
+        Rotation.from_quat(transform_payload["quaternion_xyzw"]),
+    )
+    panel_b = {
+        int(tag["id"]): panel_a_to_b.rotation.inv().apply(
+            np.asarray(tag["corners_m"], dtype=np.float64)
+            - panel_a_to_b.position
+        )
+        for tag in map_payload["tags"]
+        if tag["panel"] == "grid_B"
+    }
+
+    left_rows, left_summary = track_cache(
+        root / "observations/left/dual-lens-corners.npz",
+        panel_a,
+        panel_b,
+        panel_a_to_b,
+    )
+    right_rows, right_summary = track_cache(
+        root / "observations/right/dual-lens-corners.npz",
+        panel_a,
+        panel_b,
+        panel_a_to_b,
+    )
+    rejected_left = [
+        int(row["frame"])
+        for row in left_rows
+        if row["quality_status"] == "temporal_outlier_rejected"
+        and row["temporal_gate_reason"]
+        == "lens_handoff_pose_exceeds_temporal_limits"
+    ]
+    rejected_right = [
+        int(row["frame"])
+        for row in right_rows
+        if row["quality_status"] == "temporal_outlier_rejected"
+        and row["temporal_gate_reason"]
+        == "lens_handoff_pose_exceeds_temporal_limits"
+    ]
+
+    assert rejected_left == [168, 360, 420]
+    assert rejected_right == []
+    assert left_summary["lens_handoff_temporal_outlier_rejected_frames"] == 3
+    assert right_summary["lens_handoff_temporal_outlier_rejected_frames"] == 0
+    joint_summary = write_joint_pose_csv(
+        tmp_path / "joint.csv",
+        left_rows,
+        right_rows,
+        map_id=map_payload["map_id"],
+    )
+    assert joint_summary["common_timeline_frames"] == 300
+    assert joint_summary["joint_pose_frames"] == 300
+    assert joint_summary["joint_valid_frames"] == 266
+    assert joint_summary["joint_measured_frames"] == 263
+    assert joint_summary["untrusted_long_gap_frames"] == 34
 
 
 def test_hand_camera_flu_positive_x_is_back_stream_optical_axis():
