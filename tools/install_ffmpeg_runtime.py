@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import shlex
 import stat
 import tarfile
 import tempfile
@@ -17,6 +18,7 @@ from tools._root import ROOT
 
 
 REVISION = ROOT / "config/runtime_revisions/ffmpeg_linux_x64_9_0_1.json"
+LEGACY_RUNTIME_DIR = Path("work/tools/ffmpeg-master-latest-linux64-gpl/bin")
 
 
 def _sha256(path: Path) -> str:
@@ -83,6 +85,36 @@ def _validate_tree(root: Path, revision: dict) -> dict[str, str]:
     return hashes
 
 
+def _install_compatibility_wrappers(repo_root: Path, destination: Path) -> dict[str, str]:
+    """Point older project tools at the same verified runtime."""
+
+    root = repo_root.resolve()
+    legacy_bin = root / LEGACY_RUNTIME_DIR
+    for candidate in (legacy_bin.parent, legacy_bin):
+        if candidate.is_symlink():
+            raise ValueError(f"legacy FFmpeg compatibility path is a symlink: {candidate}")
+        if candidate.exists() and candidate.stat().st_uid != os.getuid():
+            raise ValueError(
+                f"legacy FFmpeg compatibility path is owned by another user: {candidate}"
+            )
+    legacy_bin.mkdir(parents=True, exist_ok=True)
+    result: dict[str, str] = {}
+    for name in ("ffmpeg", "ffprobe"):
+        target = (destination / "bin" / name).resolve(strict=True)
+        wrapper = legacy_bin / name
+        if wrapper.is_symlink():
+            raise ValueError(f"legacy FFmpeg wrapper is a symlink: {wrapper}")
+        temporary = legacy_bin / f".{name}.tmp-{os.getpid()}"
+        temporary.write_text(
+            "#!/bin/sh\nset -eu\nexec " + shlex.quote(str(target)) + " \"$@\"\n",
+            encoding="utf-8",
+        )
+        temporary.chmod(0o755)
+        os.replace(temporary, wrapper)
+        result[name] = str(wrapper)
+    return result
+
+
 def install_ffmpeg_runtime(
     *,
     archive_path: Path,
@@ -104,12 +136,14 @@ def install_ffmpeg_runtime(
                 raise RuntimeError(f"existing {name} binary hash mismatch: {binary}")
             _version(binary, name)
             hashes[name] = actual
+        wrappers = _install_compatibility_wrappers(repo_root, destination)
         return {
             "status": "reused",
             "revision_id": revision["revision_id"],
             "ffmpeg": str(destination / revision["binaries"]["ffmpeg"]["path"]),
             "ffprobe": str(destination / revision["binaries"]["ffprobe"]["path"]),
             "binary_sha256": hashes,
+            "compatibility_wrappers": wrappers,
         }
 
     archive = archive_path.expanduser().resolve(strict=True)
@@ -147,12 +181,15 @@ def install_ffmpeg_runtime(
                 path.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
         os.rename(extracted, destination)
 
+    wrappers = _install_compatibility_wrappers(repo_root, destination)
+
     return {
         "status": "installed",
         "revision_id": revision["revision_id"],
         "ffmpeg": str(destination / revision["binaries"]["ffmpeg"]["path"]),
         "ffprobe": str(destination / revision["binaries"]["ffprobe"]["path"]),
         "binary_sha256": hashes,
+        "compatibility_wrappers": wrappers,
     }
 
 
