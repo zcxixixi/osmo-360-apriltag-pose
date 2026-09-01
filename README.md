@@ -158,10 +158,12 @@ uv pip install --python .venv/bin/python -r requirements-train-cu130.txt
 `dual_gripper_3d/` 的浏览器三维渲染器需要 Node.js：
 
 ```bash
-cd dual_gripper_3d
-npm ci
-cd ..
+.venv/bin/python -m tools.install_node_runtime
+.venv/bin/python -m tools.install_node_dependencies
 ```
+
+安装器按 `config/runtime_revisions/node_linux_x64_24_20_0.json` 校验官方归档
+SHA-256；运行时也可通过 `OSMO_NODE_BINARY` 显式指定兼容的 Node >=22.12.0。
 
 DJI 原始 `.OSV` 拼接依赖本机 PanoForge，默认查找与本仓库同级的 `panoforge-test/`。也可以在运行时指定：
 

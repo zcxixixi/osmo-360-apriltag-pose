@@ -14,6 +14,7 @@ from scipy.spatial.transform import Rotation
 import zarr
 
 from osmo360.localization.world_frames import compile_world_tag_map
+from osmo360.visualization.node_runtime import resolve_node_binary
 
 
 from tools._root import ROOT
@@ -175,7 +176,8 @@ def main() -> int:
     for camera in range(2):
         encode_rgb_video(arrays[f"camera{camera}_rgb"], camera_videos[camera], fps)
     run([
-        "node", str(RENDERER), "--timeline", str(timeline_path), "--mesh-dir", str(MESH_DIR),
+        str(resolve_node_binary()), str(RENDERER), "--timeline", str(timeline_path),
+        "--mesh-dir", str(MESH_DIR),
         "--output", str(base_video), "--ffmpeg", str(FFMPEG),
         "--duration", str(timeline["duration_s"]), "--fps", str(fps),
     ])

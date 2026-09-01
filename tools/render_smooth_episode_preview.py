@@ -16,6 +16,7 @@ from osmo360.datasets.vla_dataset_export import (
     apply_camera_to_tcp, load_pose_csv, resample_pose, smooth_positions, smooth_rotations,
 )
 from osmo360.localization.world_frames import compile_world_tag_map
+from osmo360.visualization.node_runtime import resolve_node_binary
 
 
 def run(command: list[str]) -> None:
@@ -290,7 +291,8 @@ def main() -> int:
     if has_camera_insets:
         for camera in range(2):
             encode_rgb_video(source[f"camera{camera}_rgb"], camera_videos[camera], source_hz)
-    run(["node", str(RENDERER), "--timeline", str(timeline_path), "--mesh-dir", str(MESH_DIR),
+    run([str(resolve_node_binary()), str(RENDERER), "--timeline", str(timeline_path),
+         "--mesh-dir", str(MESH_DIR),
          "--output", str(base_video), "--ffmpeg", str(FFMPEG), "--duration", str(duration), "--fps", str(args.fps)])
     if has_camera_insets:
         run([str(FFMPEG), "-y", "-hide_banner", "-loglevel", "error",

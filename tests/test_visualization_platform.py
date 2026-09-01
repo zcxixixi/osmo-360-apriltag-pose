@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from osmo360.visualization.node_runtime import resolve_node_binary
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVER = ROOT / "dual_gripper_3d" / "platform_server.mjs"
@@ -44,7 +46,7 @@ def test_processed_bundle_becomes_viewable_animation(tmp_path):
     environment["OSMO_PLATFORM_WRITE_TOKEN"] = WRITE_TOKEN
     process = subprocess.Popen(
         [
-            "node",
+            str(resolve_node_binary()),
             str(SERVER),
             "--data-dir",
             str(tmp_path),
@@ -219,7 +221,7 @@ def test_platform_server_fails_closed_without_write_token(tmp_path):
     environment.pop("OSMO_PLATFORM_WRITE_TOKEN_FILE", None)
     result = subprocess.run(
         [
-            "node",
+            str(resolve_node_binary()),
             str(SERVER),
             "--data-dir",
             str(tmp_path),
