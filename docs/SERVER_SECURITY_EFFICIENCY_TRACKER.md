@@ -27,7 +27,7 @@
 | 服务器等价算法提交 | `b9f7803` |
 | 服务器无缓存耗时 | 6.49 s 处理 10 s 四路视频；`time -v` 平均 CPU 1164%，峰值 RSS 311,272 KiB |
 | 输出 | 300/300 帧具备双侧数值位姿；268 帧联合可信，266 帧双侧实测，`SELF_CALIBRATED_PASS` |
-| 回归测试 | 本地和服务器均为 232 passed，7 skipped |
+| 回归测试 | 本地和服务器均为 243 passed，7 skipped |
 | 一致性 | v5 全部 300 帧数值位姿与撤回前 v3 逐项最大差值为 0；只额外保留长间隔不可信标记 |
 | 最新已发视频 | v5 `processed_joint_trajectory_30hz_front_above_v5.mp4`，SHA-256 `fef54acf...c9a7f7` |
 
@@ -45,13 +45,14 @@
 | SEC-003 | 中 | IN_PROGRESS | 服务器有 `0.0.0.0:8000`、`:7864`、`:7865`、`:7869` 等项目相关服务监听局域网。已确认 `:7864` 仅静态 GET，`:7865` 写入认证已修复；`:7869` 和独立 `rk3576/:8000` 仍有未认证操作接口。 | 下一步与用户确认两个独立/旧服务的业务用途，优先绑定 loopback 或增加认证；同时评估公开 GET 的数据可见性。 |
 | SEC-004 | 高 | RESOLVED | `:7865` 平台原先允许任意 LAN 客户端无认证覆盖 4 MiB 设备库存、创建项目、上传最大 8 GiB 视频并发布场景，可造成数据篡改与存储/CPU DoS。 | 所有 POST/PUT/PATCH/DELETE 在读体前统一验证 Bearer，等时比较；无令牌服务 fail-closed；令牌文件 `0600`。生产已验证 200/401/400 边界和实际设备同步，客户端/服务器测试及全量 237 passed/7 skipped。 |
 | DEP-001 | 中 | IN_PROGRESS | 已完成锁定 Python 与 Node 依赖审计：`pip-audit` 基础 32 项、全 extras 49 项均为 0 已知漏洞；Node 漏洞链已由 DEP-002 修复。主机系统与 FFmpeg 风险分别转入 DEP-003/004。 | 保持锁文件扫描；完成 DEP-003/004 的授权、替换和真实数据回归后关闭总项。 |
-| DEP-002 | 高 | RESOLVED | `puppeteer-core 24.16.0` 经 `@puppeteer/browsers` 引入受 GHSA-jmr9-qjv8-65gv 影响的 `extract-zip 2.0.1`；本地 Node 18、服务器 Node 20 均已停止安全维护。生产 `:7865` 仅安装 Three.js，漏洞不可达，但离线渲染树可达依赖。 | 已固定官方 Node 24.20.0 归档及 SHA-256，项目内安装且所有 Python 渲染入口拒绝 Node <22.12；Puppeteer 升至 25.9.0，依赖 80→26，`npm audit` 3 high→0。待服务器部署验证后补提交号。 |
+| DEP-002 | 高 | RESOLVED | `puppeteer-core 24.16.0` 经 `@puppeteer/browsers` 引入受 GHSA-jmr9-qjv8-65gv 影响的 `extract-zip 2.0.1`；本地 Node 18、服务器 Node 20 均已停止安全维护。生产 `:7865` 仅安装 Three.js，漏洞不可达，但离线渲染树可达依赖。 | 已固定官方 Node 24.20.0 归档/二进制 SHA-256，所有 Python 渲染入口拒绝 Node <22.12；Puppeteer 25.9.0，依赖 80→26，`npm audit` 3 high→0。提交本地 `8e1fab9`、服务器 `fa14ff0`；生产服务已运行在项目 Node 24。 |
 | DEP-003 | 高 | OPEN | Ubuntu 22.04 主机有 28 个可直接安装的 standard-security 更新；另有 79 个 ESM Apps 安全更新在未 attach Ubuntu Pro 时不可用。模拟升级共 38 个包，涉及 coreutils、util-linux、libssh、bzip2、bind9、PIL 等。 | 系统级升级可能影响其他项目，需用户授权维护窗口；先备份/列出服务，升级后重启受影响服务并运行整套服务器回归。 |
 | DEP-004 | 高 | OPEN | 项目名为 `ffmpeg-master-latest-linux64-gpl` 的二进制实际与系统相同，均为 Ubuntu FFmpeg 4.4.2；Ubuntu 报告 FFmpeg/库的 `+esm14` 安全更新仅 ESM 可用。当前流水线确实调用该旧二进制，目录名也会误导运维。 | 选择受维护、校验哈希的项目级 FFmpeg；建立逐帧像素/Tag 检测/轨迹回归，用新输出版本无缓存重跑 `instaumi_000001` 并按固定 `flu-front-above` 视角出片。 |
 | EFF-001 | 高 | RESOLVED | 压缩 NPZ 的每个数组被重复打开和解压。缓存读取改为一次加载所有成员。 | 服务器无缓存耗时 14.26 s → 6.10 s；输出逐字节一致；提交 `293df8b`。 |
 | EFF-002 | 中 | DEFERRED | FFmpeg 管道软件解码约 2.04 s，OpenCV 包装约 2.70 s；VAAPI 四路约 7.43 s。FFmpeg 像素输出与当前路径不完全一致，且缓存修复后解码已非主要瓶颈。 | 若后续解码占比重新升高，建立像素/检测回归门后再切换；当前不以小收益换算法输入变化。 |
 | EFF-003 | 中 | OPEN | 多进程/线程资源隔离策略尚未固化。此前 4 路各 8 线程端到端无收益，未来并发任务可能争抢 32 个逻辑核并拖慢整机。 | 增加任务级 CPU/线程预算、并发上限和基准矩阵；优先限制 OpenCV/BLAS/FFmpeg 内部线程嵌套。 |
 | REL-002 | 低 | OPEN | 本机不带隔离环境变量运行 pytest 时会自动加载 ROS Humble 的 `launch_testing` 插件，并因跨 Python 环境缺少 `yaml` 在收集前失败。 | 维护命令统一设置 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`，或在项目 pytest 配置中只加载所需插件，避免宿主插件污染。 |
+| REL-003 | 低 | DEFERRED | CPU 服务器未安装 Chrome/Chromium，因此可选的服务器端 WebGL 离线渲染不可用；四 MP4 轨迹审阅使用 Python/OpenCV，不受影响，`:7865` 也只在客户端浏览器渲染。原实现硬编码 `/usr/bin/google-chrome`。 | 已支持 `--chrome`/`OSMO_CHROME_BINARY` 与常见路径探测，缺失时启动前明确失败；本地前后视频 SHA 完全相同。仅在确需服务器 WebGL 时再固定、校验并安装项目级 Chromium，避免当前无收益地增加体积和攻击面。提交本地 `29f91f4`、服务器 `78c734c`。 |
 
 ## 已完成的安全检查
 
@@ -105,6 +106,11 @@
 - 项目级修复使用 Node 24.20.0，官方归档 SHA-256 `2f2c0da1...0a7cbf2`；安装到 gitignored `work/tools/`，不升级宿主系统 Node。所有 Python WebGL 入口统一优先使用该运行时，并明确拒绝 Node <22.12.0。
 - Puppeteer 升级至 25.9.0，锁定依赖数从 80 降到 26，`extract-zip` 已不存在，`npm audit` 从 3 high 降为 0；安装统一使用 `npm ci --ignore-scripts`。
 - 新增运行时选择、过期版本拒绝和归档路径穿越测试；聚焦测试 `6 passed`。Node 24 + Puppeteer 25 + 现有 Chrome/Three.js 的真实 WebGL 单帧编码成功。
+- 本地与服务器全量测试最终均为 `243 passed, 7 skipped`；本机 `./umi verify` 仍只因缺少既有 `/home/cenxi/.../dual_gripper_claw_to_claw_action_v50_fixed_timeline.json` 外部冻结文件失败，受保护文件未修改。
+- Node 修复提交：本地 `8e1fab9`、服务器等价 `fa14ff0`。生产 `:7865` 的 user systemd unit 已从系统 Node 20 切到项目 Node 24，旧 unit 备份为 `osmo-visualization.service.pre-node24-20260901.bak`；服务 active/enabled、0 次重启，进程 RSS 约 61.2 MiB。
+- 生产切换后 `GET /healthz` 为 200，无认证 `POST /api/projects` 为 401 且保留 `WWW-Authenticate: Bearer`；实际进程 `/proc/.../exe` 指向校验过的项目 Node 24.20.0。
+- 服务器缺少任何 Chrome/Chromium，原 WebGL 离线渲染本就不可用。新增显式浏览器路径解析和 fail-fast，提交本地 `29f91f4`、服务器 `78c734c`；本地同一单帧输出修改前后 SHA-256 均为 `caee3906...6a3c82`，证明默认路径上的像素/编码不变。
+- 不为当前未使用的服务器 WebGL 能力安装大型浏览器；四 MP4 审阅视频仍由 Python/OpenCV 生成，并继续强制 `flu-front-above` 固定视角。
 - 主机级风险单列而未擅自修改：28 个 standard-security 更新可用、79 个 ESM Apps 更新因未 attach 不可用；`apt-get -s upgrade` 会升级 38 个包。
 - 项目所谓 `ffmpeg-master-latest-linux64-gpl` 实际是 FFmpeg 4.4.2，且流水线正在使用。由于替换会改变解码输入，必须按算法输入变更闭环重跑数据和固定视角录制，不能混在 Node 安全修复中悄悄替换。
 
