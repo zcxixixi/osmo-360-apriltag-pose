@@ -96,15 +96,16 @@ def raw_fisheye_cache_audit(path: Path) -> dict[str, Any]:
     }
     if schema not in supported:
         raise ValueError(f"unsupported/non-fisheye cache schema: {sidecar}")
-    tracking = metadata.get("tracking") if schema.endswith("-lk") else None
+    tracking = metadata.get("tracking")
     if tracking is not None:
         if tracking.get("method") != "pyramidal LK forward/backward on raw fisheye pixels":
             raise ValueError(f"unsupported optical-flow cache: {sidecar}")
         if tracking.get("pose_interpolation_used") is not False:
             raise ValueError(f"optical-flow cache may not contain pose interpolation: {sidecar}")
-        parent = Path(str(metadata.get("parent_cache", "")))
-        if not parent.is_file():
-            raise ValueError(f"optical-flow parent cache is missing: {parent}")
+        if tracking.get("integrated_one_pass") is not True:
+            parent = Path(str(metadata.get("parent_cache", "")))
+            if not parent.is_file():
+                raise ValueError(f"optical-flow parent cache is missing: {parent}")
     source_size = metadata.get("source_size")
     if not (
         isinstance(source_size, list)

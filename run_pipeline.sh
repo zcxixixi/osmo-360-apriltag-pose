@@ -8,8 +8,15 @@ fi
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 DATASET_ROOT="$(readlink -f -- "$1")"
-if [[ ! -d "$DATASET_ROOT/raw/left" || ! -d "$DATASET_ROOT/raw/right" ]]; then
-    printf 'Dataset must contain raw/left/ and raw/right/: %s\n' "$DATASET_ROOT" >&2
+INSTAUMI_OK=1
+for REQUIRED in dataset.h5 video/Left_back.mp4 video/Left_forward.mp4 video/Right_back.mp4 video/Right_forward.mp4; do
+    if [[ ! -f "$DATASET_ROOT/$REQUIRED" ]]; then
+        INSTAUMI_OK=0
+        break
+    fi
+done
+if [[ "$INSTAUMI_OK" != "1" && ( ! -d "$DATASET_ROOT/raw/left" || ! -d "$DATASET_ROOT/raw/right" ) ]]; then
+    printf 'Dataset must contain dataset.h5 + video/*.mp4, or raw/left + raw/right: %s\n' "$DATASET_ROOT" >&2
     exit 2
 fi
 

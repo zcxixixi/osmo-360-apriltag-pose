@@ -73,6 +73,33 @@ def test_dual_x5_raw_cache_requires_both_traceable_lens_tracks(tmp_path):
     assert audit["stitching_used"] is False
 
 
+def test_dual_x5_integrated_flow_cache_is_audited_without_a_second_pass_parent(tmp_path):
+    videos = [tmp_path / "lens0.mp4", tmp_path / "lens1.mp4"]
+    for video in videos:
+        video.write_bytes(b"raw")
+    cache = tmp_path / "dual-temporal.npz"
+    cache.write_bytes(b"cache")
+    cache.with_suffix(".json").write_text(json.dumps({
+        "schema_version": "fisheye-apriltag-observation-cache/1.2-dual-lens",
+        "camera_serial": "X5-SERIAL",
+        "streams": [0, 1],
+        "source_videos": list(map(str, videos)),
+        "source_size": [2880, 2880],
+        "calibration": "embedded_x5_offset",
+        "calibration_sha256": ["sha"],
+        "x5_offset": "m2_offset",
+        "tracking": {
+            "method": "pyramidal LK forward/backward on raw fisheye pixels",
+            "integrated_one_pass": True,
+            "pose_interpolation_used": False,
+        },
+    }))
+
+    audit = raw_fisheye_cache_audit(cache)
+
+    assert audit["optical_flow_measurements"]["integrated_one_pass"] is True
+
+
 def test_a3_panel_transform_and_120_mm_map_are_accepted(tmp_path):
     transform_path = tmp_path / "session-map.json"
     transform_path.write_text(json.dumps({

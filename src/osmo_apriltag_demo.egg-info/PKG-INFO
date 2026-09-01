@@ -4,6 +4,7 @@ Version: 0.1.0
 Summary: Offline Osmo 360 panorama AprilGrid pose processor with legacy RTMP demo
 Requires-Python: <3.14,>=3.11
 Requires-Dist: flask>=3.1.3
+Requires-Dist: h5py<4,>=3.11
 Requires-Dist: matplotlib>=3.11.1
 Requires-Dist: numpy<3,>=2.0
 Requires-Dist: opencv-contrib-python<5,>=4.10
@@ -17,3 +18,7 @@ Provides-Extra: test
 Requires-Dist: pytest<10,>=8.3; extra == "test"
 Provides-Extra: gpu
 Requires-Dist: cupy-cuda13x[ctk]<15,>=14.2; extra == "gpu"
+Provides-Extra: node-gpu
+Requires-Dist: av<19,>=18.1; extra == "node-gpu"
+Requires-Dist: cupy-cuda13x[ctk]<15,>=14.2; extra == "node-gpu"
+Requires-Dist: PyNvVideoCodec==2.2.2; (platform_system == "Linux" and platform_machine == "x86_64") and extra == "node-gpu"

@@ -92,4 +92,5 @@ def test_run_pipeline_shell_requires_only_dataset_path(tmp_path: Path):
     assert os.access(script, os.X_OK)
     process = subprocess.run([str(script), str(tmp_path)], capture_output=True, text=True)
     assert process.returncode == 2
-    assert "raw/left/ and raw/right/" in process.stderr
+    assert "dataset.h5 + video/*.mp4" in process.stderr
+    assert "raw/left + raw/right" in process.stderr

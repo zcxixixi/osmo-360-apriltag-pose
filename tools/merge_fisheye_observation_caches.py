@@ -26,6 +26,19 @@ TIMELINE_KEYS = (
     "timeline_local_time_s",
     "timeline_common_time_s",
 )
+TRACKING_COUNTERS = (
+    "forward_backward_check_frame_count",
+    "flow_attempted_tag_count",
+    "flow_accepted_tag_count",
+    "flow_rejected_status_count",
+    "flow_rejected_forward_backward_count",
+    "flow_rejected_geometry_count",
+    "global_scout_frame_count",
+    "global_scout_decoded_count",
+    "local_redetect_frame_count",
+    "local_redetect_decoded_count",
+    "tracked_output_observation_count",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -48,7 +61,15 @@ def main() -> int:
     streams = [int(item["stream"]) for item in metadata]
     if len(set(streams)) != len(streams):
         raise ValueError("lens cache stream IDs must be unique")
-    invariant_keys = ("camera_serial", "source_size", "fps", "frame_count", "clock_mapping", "ray_frame")
+    invariant_keys = (
+        "camera_serial",
+        "source_size",
+        "fps",
+        "frame_count",
+        "clock_mapping",
+        "ray_frame",
+        "processing_signature",
+    )
     for key in invariant_keys:
         values = [item.get(key) for item in metadata]
         if any(value != values[0] for value in values[1:]):
@@ -79,9 +100,12 @@ def main() -> int:
         "camera_serial": metadata[0]["camera_serial"],
         "streams": sorted(streams),
         "source_videos": [item["video"] for item in metadata],
+        "source_video_sha256": [item["video_sha256"] for item in metadata],
+        "input_caches": [str(path) for path in paths],
         "source_size": metadata[0]["source_size"],
         "fps": metadata[0]["fps"],
         "frame_count": metadata[0]["frame_count"],
+        "processing_signature": metadata[0].get("processing_signature"),
         "clock_mapping": metadata[0]["clock_mapping"],
         "ray_frame": metadata[0]["ray_frame"],
         "calibration": "embedded_x5_offset",
@@ -95,7 +119,34 @@ def main() -> int:
         "synthetic_frames_used": False,
         "cache": str(args.output.resolve()),
     }
-    sidecar(args.output).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    tracking_values = [item.get("tracking") for item in metadata]
+    if any(tracking_values):
+        if not all(isinstance(value, dict) for value in tracking_values):
+            raise ValueError("lens caches mix temporal and non-temporal observations")
+        configs = [
+            {key: value for key, value in tracking.items() if key not in TRACKING_COUNTERS}
+            for tracking in tracking_values
+        ]
+        if any(value != configs[0] for value in configs[1:]):
+            raise ValueError("lens caches disagree on temporal tracking configuration")
+        tracking = dict(configs[0])
+        tracking.update({
+            key: sum(int(value.get(key, 0)) for value in tracking_values)
+            for key in TRACKING_COUNTERS
+        })
+        tracking["per_stream"] = {
+            str(stream): {
+                key: int(value.get(key, 0)) for key in TRACKING_COUNTERS
+            }
+            for stream, value in zip(streams, tracking_values)
+        }
+        report["tracking"] = tracking
+    metadata_path = sidecar(args.output)
+    temporary_metadata = metadata_path.with_suffix(".json.tmp")
+    temporary_metadata.write_text(
+        json.dumps(report, indent=2) + "\n", encoding="utf-8"
+    )
+    temporary_metadata.replace(metadata_path)
     print(json.dumps(report, indent=2))
     return 0
 

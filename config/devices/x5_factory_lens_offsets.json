@@ -1,0 +1,22 @@
+{
+  "schema_version": "x5-factory-lens-offsets/1.0",
+  "description": "Serial-bound factory lens records copied from the embedded metadata of the source X5 INSV files before four-MP4 export.",
+  "devices": {
+    "IAHEA2606KKUKF": {
+      "x5_offset": "m2_2654.631_2707.350_2668.000_0.142_0.470_91.037_2654.997_8064.260_2690.980_0.069_0.398_89.596_10752_5376_11378",
+      "source": "VID_20260831_152334_00_001.insv embedded trailer",
+      "captured_source_lens_size": [
+        2880,
+        2880
+      ]
+    },
+    "IAHEA2606M5WSK": {
+      "x5_offset": "n2_2663.778_2695.450_2691.260_-0.331_0.192_89.482_2653.083_8069.790_2689.460_0.386_0.193_90.228_10752_5376_11378",
+      "source": "VID_20260831_152336_00_001.insv embedded trailer",
+      "captured_source_lens_size": [
+        2880,
+        2880
+      ]
+    }
+  }
+}

@@ -201,6 +201,12 @@ def _run_assigned(node: str, commands: list[list[str]]) -> list[dict[str, Any]]:
 
 def process_dataset(dataset_root: Path, *, dry_run: bool = False) -> dict[str, Any]:
     root = dataset_root.resolve(strict=True)
+    has_insv = any((root / "raw").glob("*/*.insv"))
+    if not has_insv:
+        from .four_mp4 import is_four_mp4_dataset, process_four_mp4_dataset
+
+        if is_four_mp4_dataset(root):
+            return process_four_mp4_dataset(root, dry_run=dry_run)
     final_root = root / "final" / PIPELINE_REVISION
     final_root.mkdir(parents=True, exist_ok=True)
     lock = discover_dataset(root)
