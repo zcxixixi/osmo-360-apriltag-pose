@@ -21,14 +21,14 @@
 
 | 项目 | 当前证据 |
 |---|---|
-| 流水线 | `dual-x5-four-mp4-cpu-v3`，30 Hz，手部相机 FLU，`back = +X` |
-| 本地提交 | `293df8b` (`perf: load trajectory cache arrays once`) |
-| 服务器等价提交 | `fa896da` |
-| 服务器无缓存耗时 | 6.10 s 处理 10 s 四路视频；改动前 14.26 s |
-| 输出 | 300 样本，29.97 Hz，`SELF_CALIBRATED_PASS` |
-| 回归测试 | 210 passed，7 skipped |
-| 一致性 | 性能修复前后 CSV、共享地图输出逐字节一致 |
-| 最新已发视频 | v3 `processed_joint_trajectory_30hz_front_above_v1.mp4` |
+| 流水线 | `dual-x5-four-mp4-cpu-v4`，30 Hz，手部相机 FLU，`back = +X`，最大可信插值 0.25 s |
+| 本地算法提交 | `9865b92` (`fix: bound joint trajectory interpolation gaps`) |
+| 服务器等价算法提交 | `4bf7060` |
+| 服务器无缓存耗时 | 6.63 s 处理 10 s 四路视频；聚合 CPU 平均 950%/峰值 2167%，聚合峰值 RSS 1.31 GiB |
+| 输出 | 300 样本，268 帧联合可信（89.33%），266 帧双侧实测（88.67%），`SELF_CALIBRATED_PASS` |
+| 回归测试 | 本地和服务器均为 230 passed，7 skipped |
+| 一致性 | v3/v4 的共享地图、左右实测 pose CSV SHA-256 完全相同；v4 只改变长缺口联合轨迹语义 |
+| 最新已发视频 | v4 `processed_joint_trajectory_30hz_front_above_v4.mp4`，SHA-256 `73474b02...49e27` |
 
 ## 问题清单
 
@@ -36,9 +36,9 @@
 
 | ID | 优先级 | 状态 | 问题与证据 | 解决标准 / 下一步 |
 |---|---:|---|---|---|
-| SEC-001 | 高 | IN_PROGRESS | H5 `dataset_id` 和 JSON `pair_id` 未验证即参与缓存/最终目录拼接；worker 发布阶段对计算出的目标目录执行 `shutil.rmtree`。恶意 `../` 可造成路径穿越和越界删除。涉及 `instaumi.py`、`four_mp4.py`、`four_mp4_worker.py`、`dataset_worker.py`。 | 本地已实现标识白名单、发现/worker 双重验证、修订锁检查、路径包含性与符号链接拒绝；恶意输入测试和真实数据 dry-run 均通过。待服务器部署验证后置为 `RESOLVED`。 |
-| QUAL-001 | 高 | IN_PROGRESS | `write_joint_pose_csv` 对所有处于首尾测量之间的缺失帧插值，不限制相邻测量间隔。当前左轨迹报告最大插值间隔约 0.634 s，违反 v50 最大可信间隔 0.25 s 约束。 | v4 本地已限制为 0.25 s：长间隔输出 `INTERPOLATED_UNTRUSTED`、空位姿、联合无效，渲染隐藏相机并断开轨迹/趋势线。真实缓存复算：可信最大 0.0667 s，32 帧不可信，联合有效率 89.33%，仍通过全部门。待服务器无缓存运行和视频发送后关闭。 |
-| REL-001 | 高 | IN_PROGRESS | 结果发布采用“先删最终目录，再 copytree”。处理中断会丢失上一版已完成输出，且放大 SEC-001 的破坏面。 | 本地已改为同级临时目录完整复制后切换，旧目录先重命名为可恢复备份，切换成功后才删除；待服务器真实发布验证。 |
+| SEC-001 | 高 | RESOLVED | H5 `dataset_id` 和 JSON `pair_id` 未验证即参与缓存/最终目录拼接；worker 发布阶段对计算出的目标目录执行 `shutil.rmtree`。恶意 `../` 可造成路径穿越和越界删除。涉及 `instaumi.py`、`four_mp4.py`、`four_mp4_worker.py`、`dataset_worker.py`。 | 已实现标识白名单、发现/worker 双重验证、修订锁检查、解析后包含性检查与逐级符号链接拒绝；13 个恶意输入/发布场景、真实 dry-run、服务器完整发布均通过。提交 `80e0f7f`，服务器 `3f09e68`。 |
+| QUAL-001 | 高 | RESOLVED | `write_joint_pose_csv` 对所有处于首尾测量之间的缺失帧插值，不限制相邻测量间隔。当前左轨迹报告最大插值间隔约 0.634 s，违反 v50 最大可信间隔 0.25 s 约束。 | v4 长间隔输出 `INTERPOLATED_UNTRUSTED`、空位姿、联合无效；渲染隐藏相机并断开轨迹/趋势线。服务器无缓存结果：可信最大 0.0667 s，拒绝最大 0.6340 s，32 帧不可信，联合有效率 89.33%，全部门通过；7.1 秒视频人工检查通过。 |
+| REL-001 | 高 | RESOLVED | 结果发布采用“先删最终目录，再 copytree”。处理中断会丢失上一版已完成输出，且放大 SEC-001 的破坏面。 | 已改为同级临时目录完整复制后切换，旧目录先重命名为可恢复备份，切换成功后才删除；服务器真实发布成功且不存在 `.publish-*`/`.backup-*` 残留。 |
 | SEC-002 | 中 | OPEN | 服务器流水线以高权限 `ps` 用户运行；该用户属于 `sudo`、`docker`、`lxd`、`k3s-admin` 等组，项目代码的进程被攻破后影响面很大。 | 设计最小权限服务账户、只读代码/输入和独立可写缓存/输出；迁移前需用户授权，不能擅自改变现有组。 |
 | SEC-003 | 中 | OPEN | 服务器有 `0.0.0.0:8000`、`:7864`、`:7865`、`:7869` 等项目相关服务监听局域网，认证与写接口边界尚未逐项验证。 | 审查端点、认证、上传大小和路径处理；不需要外网/局域网访问的服务绑定 loopback；变更前确认业务用途。 |
 | DEP-001 | 中 | OPEN | Python/Node/系统依赖尚未完成可复现的 CVE 与过期版本审计。 | 锁定依赖清单，运行适合离线/在线环境的漏洞扫描，区分可达性并记录升级回归。 |
@@ -68,12 +68,19 @@
 - QUAL-001 本地修复完成并升级为 `dual-x5-four-mp4-cpu-v4`：同一真实 bearings 从旧版 300/300“有效”改为 268/300 可信；32 帧长空洞 fail-closed，最大可信插值 0.0667 s，状态仍为 `SELF_CALIBRATED_PASS`。
 - v4 聚焦视频已人工检查封面与 7.1 秒帧：左侧在空洞中显示 `UNTRUSTED` 与 XYZ/RPY N/A，3D 相机隐藏、轨迹断开；不再把 0.634 秒空洞画成平滑跳变。
 - 变更后完整测试 `230 passed, 7 skipped`。`./umi verify` 仍在读取本机缺失的外部冻结 v50 timeline 时失败，受保护文件未修改。
-- 下一步：提交 v4，部署服务器，执行无缓存完整处理、资源采样、最终视频和飞书发送。
+- v4 已提交 `9865b92` 并以等价提交 `4bf7060` 部署服务器；服务器完整测试同为 `230 passed, 7 skipped`。
+- 服务器无缓存完整运行 6.63 s；`time -v` 平均 CPU 1180%，0.1 s 进程树采样平均/峰值 950%/2167%（32 逻辑核整机约 29.7%/67.7%）；聚合峰值 RSS 1,374,412 KiB（约 1.31 GiB、整机 2.17%）；无 swap。
+- v3/v4 `session_world_map.json`、`left_pose.csv`、`right_pose.csv` SHA-256 分别完全相同；300 行中 32 行明确不可信且对应左侧坐标为空。
+- 最终视频已生成并人工检查封面/7.1 s：服务器与本地路径均为 `final/dual-x5-four-mp4-cpu-v4/reviews/processed_joint_trajectory_30hz_front_above_v4.mp4`，SHA-256 `73474b0208836e526efe68c941b4115cbbdff3887f4d8377606d4754cb349e27`。
+- 飞书进度消息 `om_x100b665f8cc4d4a8c1c7df3e2b59fbf`、视频消息 `om_x100b665f8c7678a4c00eeb6b35018dd` 均发送成功。
+- 下一步巡检重点：SEC-002 最小权限账户、SEC-003 LAN 服务接口、DEP-001 依赖漏洞、EFF-003 并发资源隔离。
 
 ## 最近一次算法改动验证
 
 - 改动：v4 有界联合轨迹插值与 fail-closed 渲染（QUAL-001）。
-- 本地聚焦真实数据输出：`/tmp/instaumi-v4-focused-6LOhSU/`。
+- 提交：本地 `9865b92`，服务器等价 `4bf7060`。
+- 服务器输出：`/home/ps/instaumi-data/instaumi_000001/final/dual-x5-four-mp4-cpu-v4/`。
 - 本地报告：300 帧；联合可信 268（89.33%）；联合实测 266（88.67%）；长空洞 32 帧；最大可信/拒绝插值 0.066733/0.633966 s；全部门通过。
-- 本地审阅视频：`joint_v4_bounded_interpolation_front_above.mp4`，SHA-256 `3396bd93...f9b9d7`，仅用于变更前服务器闭环检查。
-- 待补：提交、服务器耗时/CPU/内存、服务器输出目录、最终视频路径/哈希、飞书发送结果。
+- 服务器运行：6.63 s；平均/峰值进程树 CPU 950%/2167%；峰值 RSS 1.31 GiB。
+- 最终审阅视频：`reviews/processed_joint_trajectory_30hz_front_above_v4.mp4`，SHA-256 `73474b02...49e27`。
+- 飞书：文字与视频均发送成功，消息 ID 见 Cycle 001 日志。
