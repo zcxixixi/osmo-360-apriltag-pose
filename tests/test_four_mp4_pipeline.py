@@ -19,7 +19,9 @@ RIGHT_SERIAL = "IAHEA2606KKUKF"
 OFFSET = "m2_100_100_100_0_0_90_100_300_100_0_0_90_400_200_1"
 
 
-def _make_dataset(tmp_path: Path, *, descriptor: bool = True) -> Path:
+def _make_dataset(
+    tmp_path: Path, *, descriptor: bool = True, pair_id: str = "pair-01-test"
+) -> Path:
     paths = {}
     for side in ("left", "right"):
         for stream in (0, 1):
@@ -30,7 +32,7 @@ def _make_dataset(tmp_path: Path, *, descriptor: bool = True) -> Path:
     if descriptor:
         value = {
             "schema_version": four_mp4.INPUT_SCHEMA,
-            "pair_id": "pair-01-test",
+            "pair_id": pair_id,
             "cameras": {
                 "left": {
                     "serial": LEFT_SERIAL,
@@ -68,7 +70,9 @@ def _probe(_path: Path) -> dict[str, object]:
     }
 
 
-def _make_instaumi_dataset(tmp_path: Path) -> Path:
+def _make_instaumi_dataset(
+    tmp_path: Path, *, dataset_id: str = "instaumi_test_000001"
+) -> Path:
     video = tmp_path / "video"
     video.mkdir()
     for name in (
@@ -80,7 +84,7 @@ def _make_instaumi_dataset(tmp_path: Path) -> Path:
         (video / name).write_bytes(name.encode())
     metadata = {
         "schema_version": "1.0.0",
-        "dataset_id": "instaumi_test_000001",
+        "dataset_id": dataset_id,
         "created_at_utc": "2026-09-01T08:41:03Z",
         "time": {"reference": "dataset_start"},
         "devices": {
@@ -188,6 +192,25 @@ def test_four_mp4_requires_factory_offset_when_mp4_has_no_embedded_metadata(
     monkeypatch.setattr(four_mp4, "_embedded_identity", lambda _path: (None, None))
 
     with pytest.raises(ManifestError, match="x5_offset"):
+        four_mp4.discover_four_mp4_dataset(root)
+
+
+@pytest.mark.parametrize("pair_id", ["../outside", "pair/escape", " bad", ""])
+def test_four_mp4_rejects_unsafe_pair_id(monkeypatch, tmp_path: Path, pair_id: str):
+    root = _make_dataset(tmp_path, pair_id=pair_id)
+    monkeypatch.setattr(four_mp4, "_probe_mp4", _probe)
+    monkeypatch.setattr(four_mp4, "_embedded_identity", lambda _path: (None, None))
+
+    with pytest.raises(ManifestError, match="pair_id"):
+        four_mp4.discover_four_mp4_dataset(root)
+
+
+def test_instaumi_rejects_unsafe_dataset_id(monkeypatch, tmp_path: Path):
+    root = _make_instaumi_dataset(tmp_path, dataset_id="../../outside")
+    monkeypatch.setattr(four_mp4, "_probe_mp4", _probe)
+    monkeypatch.setattr(four_mp4, "_embedded_identity", lambda _path: (None, None))
+
+    with pytest.raises(ManifestError, match="metadata.dataset_id"):
         four_mp4.discover_four_mp4_dataset(root)
 
 

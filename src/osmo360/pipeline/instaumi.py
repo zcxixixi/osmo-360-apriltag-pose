@@ -12,7 +12,7 @@ import h5py
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from .manifest import ManifestError, ROOT
+from .manifest import ManifestError, ROOT, validate_path_component
 
 
 SCHEMA_VERSION = "instaumi"
@@ -231,7 +231,10 @@ def load_instaumi_config(root: Path) -> dict[str, Any]:
     return {
         "schema_version": "dual-x5-four-mp4-input/1.0",
         "input_format": "instaumi-four-fisheye-mp4-hdf5/1.0",
-        "pair_id": str(metadata.get("dataset_id") or root.name),
+        "pair_id": validate_path_component(
+            metadata["dataset_id"] if "dataset_id" in metadata else root.name,
+            field="InstaUMI metadata.dataset_id",
+        ),
         "recorded_at": created,
         "cameras": cameras,
         # MP4s are already clipped onto the common dataset timeline.  The source
