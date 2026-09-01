@@ -17,7 +17,13 @@ const scene=path.resolve(argv.scene||path.join(root,'single_gripper_scene.html')
 const platform=path.resolve(argv.platform||path.join(root,'platform.html'));
 const host=argv.host||'127.0.0.1';
 const port=Number(argv.port||7865);
-const publicBaseUrl=argv['public-base-url']?.replace(/\/+$/,'')||null;
+const configuredPublicBaseUrl=argv['public-base-url']?.replace(/\/+$/,'')||null;
+let publicBaseUrl=null;
+if(configuredPublicBaseUrl){
+  const parsed=new URL(configuredPublicBaseUrl);
+  if(!['http:','https:'].includes(parsed.protocol)||parsed.username||parsed.password||parsed.pathname!=='/'||parsed.search||parsed.hash)throw new Error('--public-base-url must be an HTTP(S) origin without credentials, path, query, or fragment');
+  publicBaseUrl=parsed.origin
+}
 const MAX_JSON_BYTES=64*1024*1024;
 const MAX_VIDEO_BYTES=8*1024*1024*1024;
 const MAX_SCENE_BYTES=2*1024*1024;
@@ -41,10 +47,32 @@ function loadWriteToken(){
 }
 const writeToken=loadWriteToken();
 
-await fsp.mkdir(dataDir,{recursive:true});
+await fsp.mkdir(dataDir,{recursive:true,mode:0o700});
+const dataDirectoryStat=await fsp.lstat(dataDir);
+if(!dataDirectoryStat.isDirectory()||dataDirectoryStat.isSymbolicLink()||(process.getuid&&dataDirectoryStat.uid!==process.getuid()))throw new Error('data directory must be a real directory owned by the service user');
+await fsp.chmod(dataDir,0o700);
+for(const entry of await fsp.readdir(dataDir,{withFileTypes:true})){
+  const entryPath=path.join(dataDir,entry.name);
+  if(entry.name==='x5_device_inventory.json'){
+    const metadata=await fsp.lstat(entryPath);
+    if(!metadata.isFile()||metadata.isSymbolicLink()||(process.getuid&&metadata.uid!==process.getuid()))throw new Error('device inventory must be a regular file owned by the service user');
+    await fsp.chmod(entryPath,0o600);continue
+  }
+  if(!PROJECT_ID.test(entry.name))continue;
+  const directoryMetadata=await fsp.lstat(entryPath);
+  if(!directoryMetadata.isDirectory()||directoryMetadata.isSymbolicLink()||(process.getuid&&directoryMetadata.uid!==process.getuid()))throw new Error(`invalid project directory: ${entry.name}`);
+  await fsp.chmod(entryPath,0o700);
+  for(const child of await fsp.readdir(entryPath,{withFileTypes:true})){
+    const childPath=path.join(entryPath,child.name),childMetadata=await fsp.lstat(childPath);
+    if(childMetadata.isSymbolicLink()||(process.getuid&&childMetadata.uid!==process.getuid()))throw new Error(`invalid project asset: ${entry.name}/${child.name}`);
+    if(childMetadata.isFile())await fsp.chmod(childPath,0o600)
+  }
+}
 
 const mime=file=>file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.json')?'application/json; charset=utf-8':file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.stl')?'model/stl':file.endsWith('.mp4')?'video/mp4':'application/octet-stream';
-const sendJson=(response,status,payload,headers={})=>{const body=Buffer.from(JSON.stringify(payload));response.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Content-Length':body.length,'Cache-Control':'no-store',...headers});response.end(body)};
+const BASE_SECURITY_HEADERS={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Cross-Origin-Resource-Policy':'same-origin','Permissions-Policy':'camera=(), microphone=(), geolocation=()'};
+const HTML_SECURITY_HEADERS={...BASE_SECURITY_HEADERS,'Content-Security-Policy':"default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self'; worker-src 'self' blob:"};
+const sendJson=(response,status,payload,headers={})=>{const body=Buffer.from(JSON.stringify(payload));response.writeHead(status,{...BASE_SECURITY_HEADERS,'Content-Type':'application/json; charset=utf-8','Content-Length':body.length,'Cache-Control':'no-store',...headers});response.end(body)};
 function safeAsset(base,relative){
   const resolved=path.resolve(base,relative),prefix=path.resolve(base)+path.sep;
   if(!resolved.startsWith(prefix))throw Object.assign(new Error('invalid asset path'),{status:400});
@@ -62,7 +90,11 @@ function requireWriteAuthorization(request,response){
   sendJson(response,401,{error:'write authorization required'},{'WWW-Authenticate':'Bearer realm="osmo-motion-studio"'});
   return false
 }
-const requestOrigin=request=>publicBaseUrl||`${String(request.headers['x-forwarded-proto']||'http').split(',')[0]}://${request.headers.host}`;
+const requestOrigin=request=>{
+  if(publicBaseUrl)return publicBaseUrl;
+  const address=String(request.socket.localAddress),hostLiteral=address.includes(':')?`[${address}]`:address;
+  return `http://${hostLiteral}:${request.socket.localPort}`
+};
 const projectResponse=(request,metadata)=>{
   const origin=requestOrigin(request),base=`${origin}/api/projects/${metadata.id}`;
   return {...metadata,view_url:metadata.status==='ready'?`${origin}/view/${metadata.id}/?interactive=1`:null,links:{self:base,timeline_upload:`${base}/timeline`,video_upload:`${base}/video`,scene_upload:`${base}/scene`,publish:`${base}/publish`}}
@@ -78,11 +110,25 @@ const projectDir=id=>path.join(dataDir,id);
 const metadataPath=id=>path.join(projectDir(id),'project.json');
 async function readMetadata(id){
   if(!PROJECT_ID.test(id))throw Object.assign(new Error('invalid project id'),{status:400});
-  try{return JSON.parse(await fsp.readFile(metadataPath(id),'utf8'))}catch(error){if(error.code==='ENOENT')throw Object.assign(new Error('project not found'),{status:404});throw error}
+  try{
+    const directoryStat=await fsp.lstat(projectDir(id));
+    if(!directoryStat.isDirectory()||directoryStat.isSymbolicLink()||(process.getuid&&directoryStat.uid!==process.getuid()))throw Object.assign(new Error('invalid project directory'),{status:400});
+    const metadataStat=await fsp.lstat(metadataPath(id));
+    if(!metadataStat.isFile()||metadataStat.isSymbolicLink()||(process.getuid&&metadataStat.uid!==process.getuid()))throw Object.assign(new Error('invalid project metadata file'),{status:400});
+    const metadata=JSON.parse(await fsp.readFile(metadataPath(id),'utf8'));
+    if(!metadata||metadata.id!==id||!PROJECT_ID.test(metadata.id)||typeof metadata.name!=='string')throw Object.assign(new Error('invalid project metadata'),{status:400});
+    return metadata
+  }catch(error){if(error.code==='ENOENT')throw Object.assign(new Error('project not found'),{status:404});throw error}
+}
+const temporaryPath=destination=>`${destination}.part-${process.pid}-${randomBytes(6).toString('hex')}`;
+async function writeFileAtomic(destination,contents){
+  const temporary=temporaryPath(destination);
+  try{await fsp.writeFile(temporary,contents,{flag:'wx',mode:0o600});await fsp.rename(temporary,destination)}
+  catch(error){await fsp.rm(temporary,{force:true});throw error}
 }
 async function writeMetadata(metadata){
   metadata.updated_at=new Date().toISOString();
-  await fsp.writeFile(metadataPath(metadata.id),JSON.stringify(metadata,null,2)+'\n');
+  await writeFileAtomic(metadataPath(metadata.id),JSON.stringify(metadata,null,2)+'\n');
 }
 
 async function listProjects(){
@@ -95,11 +141,11 @@ async function listProjects(){
   return projects.sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
 }
 
-async function receiveFile(request,destination,maxBytes){
+async function receiveFile(request,destination,maxBytes,validateTemporary=null){
   const declared=Number(request.headers['content-length']);
   if(Number.isFinite(declared)&&declared>maxBytes)throw Object.assign(new Error('file too large'),{status:413});
-  const temporary=destination+'.part';
-  const output=fs.createWriteStream(temporary,{flags:'w'});
+  const temporary=temporaryPath(destination);
+  const output=fs.createWriteStream(temporary,{flags:'wx',mode:0o600});
   let bytes=0;
   try{
     for await(const chunk of request){
@@ -109,9 +155,23 @@ async function receiveFile(request,destination,maxBytes){
     }
     await new Promise((resolve,reject)=>{output.once('error',reject);output.end(resolve)});
     if(bytes===0)throw Object.assign(new Error('empty file'),{status:400});
+    if(validateTemporary)await validateTemporary(temporary);
     await fsp.rename(temporary,destination);
     return bytes;
   }catch(error){output.destroy();await fsp.rm(temporary,{force:true});throw error}
+}
+
+async function validateMp4File(file){
+  const handle=await fsp.open(file,'r');
+  try{
+    const header=Buffer.alloc(12),{bytesRead}=await handle.read(header,0,header.length,0);
+    if(bytesRead<header.length||header.toString('ascii',4,8)!=='ftyp')throw Object.assign(new Error('front-video.mp4 is not an ISO BMFF/MP4 file'),{status:400})
+  }finally{await handle.close()}
+}
+
+async function validateSceneFile(file){
+  const source=await fsp.readFile(file,'utf8');
+  if(!source.includes("fetch('timeline.json')")||!source.includes('front-video.mp4'))throw Object.assign(new Error('scene.html is not a processed-bundle renderer'),{status:400})
 }
 
 const finiteVector=(value,length)=>Array.isArray(value)&&value.length===length&&value.every(Number.isFinite);
@@ -145,22 +205,28 @@ function validateDeviceInventory(inventory){
 }
 
 async function readDeviceInventory(){
-  try{return JSON.parse(await fsp.readFile(deviceInventoryPath,'utf8'))}
+  try{
+    const metadata=await fsp.lstat(deviceInventoryPath);
+    if(!metadata.isFile()||metadata.isSymbolicLink()||(process.getuid&&metadata.uid!==process.getuid()))throw new Error('device inventory must be a regular file owned by the service user');
+    return JSON.parse(await fsp.readFile(deviceInventoryPath,'utf8'))
+  }
   catch(error){if(error.code==='ENOENT')return {schema_version:'x5-device-inventory/1.0',sdk_revision_id:null,devices:{}};throw error}
 }
 
 function serveFile(request,response,file,cache='no-store'){
   if(!fs.existsSync(file)){sendError(response,404,'not found');return}
-  const stat=fs.statSync(file),range=request.headers.range;
+  const stat=fs.lstatSync(file),range=request.headers.range;
+  if(!stat.isFile()||stat.isSymbolicLink()){sendError(response,404,'not found');return}
+  const security=file.endsWith('.html')?HTML_SECURITY_HEADERS:BASE_SECURITY_HEADERS;
   if(range&&file.endsWith('.mp4')){
     const match=/^bytes=(\d+)-(\d*)$/.exec(range);
     if(!match){response.writeHead(416,{'Content-Range':`bytes */${stat.size}`});response.end();return}
     const start=Number(match[1]),end=match[2]?Number(match[2]):stat.size-1;
     if(start<0||end>=stat.size||start>end){response.writeHead(416,{'Content-Range':`bytes */${stat.size}`});response.end();return}
-    response.writeHead(206,{'Content-Type':mime(file),'Content-Length':end-start+1,'Content-Range':`bytes ${start}-${end}/${stat.size}`,'Accept-Ranges':'bytes','Cache-Control':cache});
+    response.writeHead(206,{...security,'Content-Type':mime(file),'Content-Length':end-start+1,'Content-Range':`bytes ${start}-${end}/${stat.size}`,'Accept-Ranges':'bytes','Cache-Control':cache});
     fs.createReadStream(file,{start,end}).pipe(response);return
   }
-  response.writeHead(200,{'Content-Type':mime(file),'Content-Length':stat.size,'Accept-Ranges':'bytes','Cache-Control':cache});
+  response.writeHead(200,{...security,'Content-Type':mime(file),'Content-Length':stat.size,'Accept-Ranges':'bytes','Cache-Control':cache});
   fs.createReadStream(file).pipe(response)
 }
 
@@ -173,17 +239,20 @@ async function handle(request,response){
   if(request.method==='GET'&&pathname==='/'){serveFile(request,response,platform);return}
   if(request.method==='GET'&&pathname==='/healthz'){sendJson(response,200,{status:'ok',service:'osmo-motion-studio',api_version:'v1',write_authentication:'bearer'});return}
   if(request.method==='GET'&&pathname==='/api/capabilities'){sendJson(response,200,{api_version:'v1',input_mode:'processed_bundle',write_authentication:{type:'bearer',required:true},required_files:{timeline:{name:'timeline.json',content_type:'application/json',max_bytes:MAX_JSON_BYTES},video:{name:'front-video.mp4',content_type:'video/mp4',max_bytes:MAX_VIDEO_BYTES},scene:{name:'scene.html',content_type:'text/html',max_bytes:MAX_SCENE_BYTES}},upload_sequence:['POST /api/projects','PUT {links.timeline_upload}','PUT {links.video_upload}','PUT {links.scene_upload}','POST {links.publish}'],renderer:{scene:'project-versioned',legacy_fallback:'single_gripper_scene',fixed_mesh_revision:'gripper_v52_new_r1'}});return}
-  if(pathname==='/api/devices'&&request.method==='GET'){const inventory=await readDeviceInventory();validateDeviceInventory(inventory);sendJson(response,200,inventory);return}
+  if(pathname==='/api/devices'&&request.method==='GET'){
+    if(!requireWriteAuthorization(request,response))return;
+    const inventory=await readDeviceInventory();validateDeviceInventory(inventory);sendJson(response,200,inventory);return
+  }
   if(pathname==='/api/devices'&&request.method==='PUT'){
-    const inventory=await readJsonBody(request,MAX_DEVICE_INVENTORY_BYTES),count=validateDeviceInventory(inventory),temporary=deviceInventoryPath+'.part';
-    await fsp.writeFile(temporary,JSON.stringify(inventory,null,2)+'\n');await fsp.rename(temporary,deviceInventoryPath);sendJson(response,200,{status:'saved',count,inventory});return
+    const inventory=await readJsonBody(request,MAX_DEVICE_INVENTORY_BYTES),count=validateDeviceInventory(inventory);
+    await writeFileAtomic(deviceInventoryPath,JSON.stringify(inventory,null,2)+'\n');sendJson(response,200,{status:'saved',count,inventory});return
   }
   if(request.method==='GET'&&pathname==='/api/projects'){sendJson(response,200,{projects:(await listProjects()).map(project=>projectResponse(request,project))});return}
   if(request.method==='POST'&&pathname==='/api/projects'){
     const input=await readJsonBody(request);
     const name=String(input.name||'未命名动画').trim().slice(0,80)||'未命名动画';
     const id=`${new Date().toISOString().replace(/\D/g,'').slice(0,14)}-${randomBytes(3).toString('hex')}`;
-    await fsp.mkdir(projectDir(id));
+    await fsp.mkdir(projectDir(id),{mode:0o700});
     const metadata={id,name,status:'uploading',created_at:new Date().toISOString(),updated_at:new Date().toISOString(),error:null};
     await writeMetadata(metadata);sendJson(response,201,{project:projectResponse(request,metadata)});return
   }
@@ -199,14 +268,12 @@ async function handle(request,response){
       metadata.timeline_bytes=bytes;metadata.status='uploading';metadata.error=null;await writeMetadata(metadata);sendJson(response,200,{project:projectResponse(request,metadata),bytes});return
     }
     if(action==='video'&&request.method==='PUT'){
-      const bytes=await receiveFile(request,path.join(projectDir(id),'front-video.mp4'),MAX_VIDEO_BYTES);
+      const bytes=await receiveFile(request,path.join(projectDir(id),'front-video.mp4'),MAX_VIDEO_BYTES,validateMp4File);
       metadata.video_bytes=bytes;metadata.status='uploading';metadata.error=null;await writeMetadata(metadata);sendJson(response,200,{project:projectResponse(request,metadata),bytes});return
     }
     if(action==='scene'&&request.method==='PUT'){
       const destination=path.join(projectDir(id),'scene.html');
-      const bytes=await receiveFile(request,destination,MAX_SCENE_BYTES);
-      const source=await fsp.readFile(destination,'utf8');
-      if(!source.includes("fetch('timeline.json')")||!source.includes('front-video.mp4'))throw Object.assign(new Error('scene.html is not a processed-bundle renderer'),{status:400});
+      const bytes=await receiveFile(request,destination,MAX_SCENE_BYTES,validateSceneFile);
       metadata.scene_bytes=bytes;metadata.status='uploading';metadata.error=null;await writeMetadata(metadata);sendJson(response,200,{project:projectResponse(request,metadata),bytes});return
     }
     if(action==='publish'&&request.method==='POST'){
