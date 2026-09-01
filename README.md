@@ -65,12 +65,13 @@ dataset-root/
 `IAHEA2606M5WSK`/BaseTag2、右 `IAHEA2606KKUKF`/BaseTag3。短于 30 秒的误触
 录制自动列入忽略清单；其余左右原片按录制时间一一配对，再用音频相关求精确同步。
 
-纯 CPU 的四路鱼眼 MP4 v2 入口同样使用上述单参数命令。若根目录包含
+纯 CPU 的四路鱼眼 MP4 v3 入口同样使用上述单参数命令。若根目录包含
 `dataset.h5` 以及 `video/{Left,Right}_{back,forward}.mp4`，入口会直接读取 H5 中的
-设备身份与逐帧对齐时间轴，并自动切换到 `dual-x5-four-mp4-cpu-v2`；也继续支持
+设备身份与逐帧对齐时间轴，并自动切换到 `dual-x5-four-mp4-cpu-v3`；也继续支持
 `raw/left` 与 `raw/right` 各两个 MP4 的通用布局。该流程跳过 SDK 拼接，直接取
-HEVC 灰度平面，用 15 Hz LK、局部 ROI 和低频切面恢复缓存四路鱼眼观测。InstaUMI
-极速档默认四个进程、每进程四线程；9950X 上四路 10 秒样例首跑实测 4.75 秒。
+HEVC 灰度平面，用 30 Hz LK、局部 ROI 和低频切面恢复缓存四路鱼眼观测。InstaUMI
+极速档默认四个进程、每进程四线程；i7-14790F 上四路 10 秒样例 30 Hz
+首次无缓存实测 21.77 秒，完整缓存复用约 1.27 秒。
 输入描述、资源参数和缓存目录见
 [`docs/FOUR_MP4_CPU_PIPELINE.md`](docs/FOUR_MP4_CPU_PIPELINE.md)。
 
