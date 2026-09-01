@@ -10,6 +10,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from osmo360.visualization.node_runtime import resolve_node_binary
 
 from tools._root import ROOT
 FFMPEG = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg"
@@ -102,7 +103,7 @@ def main() -> int:
     timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
     duration = timeline["duration_s"] if full else min(args.duration, timeline["duration_s"])
     run([
-        "node", str(ROOT / "dual_gripper_3d/render_frames.mjs"),
+        str(resolve_node_binary()), str(ROOT / "dual_gripper_3d/render_frames.mjs"),
         "--timeline", str(timeline_path),
         "--mesh-dir", str(ROOT / "assets/osmo_rig/osmo定位.SLDASM/meshes"),
         "--output", str(base), "--ffmpeg", str(ffmpeg),

@@ -29,7 +29,7 @@ jobs:
           python-version: "3.13"
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24.20.0"
           cache: npm
           cache-dependency-path: dual_gripper_3d/package-lock.json
       - run: npm ci --prefix dual_gripper_3d

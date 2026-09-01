@@ -21,7 +21,8 @@ install -d -m 0700 ~/.config/osmo360
 umask 077
 openssl rand -hex 32 > ~/.config/osmo360/platform-write-token
 OSMO_PLATFORM_WRITE_TOKEN_FILE="$HOME/.config/osmo360/platform-write-token" \
-  node dual_gripper_3d/platform_server.mjs \
+  work/tools/node-v24.20.0-linux-x64/bin/node \
+  dual_gripper_3d/platform_server.mjs \
   --data-dir /srv/osmo-visualization/data \
   --mesh-dir assets/gripper_v52_new_r1/meshes \
   --host 0.0.0.0 --port 7865

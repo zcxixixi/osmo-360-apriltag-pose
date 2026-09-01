@@ -1,0 +1,19 @@
+{
+  "schema_version": "node-runtime-revision/1.0",
+  "revision_id": "node-linux-x64-24.20.0",
+  "platform": "linux-x86_64",
+  "node_version": "24.20.0",
+  "minimum_supported_version": "22.12.0",
+  "install_root": "work/tools",
+  "runtime_dir": "node-v24.20.0-linux-x64",
+  "binary": {
+    "path": "bin/node",
+    "sha256": "89af8424dd53e560b1933f87ba650d8bf57c83ca5a04600eefb31f416aabbae7"
+  },
+  "archive": {
+    "name": "node-v24.20.0-linux-x64.tar.xz",
+    "url": "https://nodejs.org/dist/v24.20.0/node-v24.20.0-linux-x64.tar.xz",
+    "sha256": "2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2"
+  },
+  "source_checksums": "https://nodejs.org/dist/v24.20.0/SHASUMS256.txt"
+}

@@ -19,6 +19,7 @@ from scipy.spatial.transform import Rotation, Slerp
 
 
 from osmo360.paths import ROOT
+from osmo360.visualization.node_runtime import resolve_node_binary
 FFMPEG = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg"
 RENDERER = ROOT / "dual_gripper_3d/render_frames.mjs"
 MESH_DIR = ROOT / "assets/osmo_rig/osmo定位.SLDASM/meshes"
@@ -165,7 +166,7 @@ def main() -> int:
         encoding="utf-8",
     )
     command([
-        "node", str(RENDERER), "--timeline", str(timeline_path),
+        str(resolve_node_binary()), str(RENDERER), "--timeline", str(timeline_path),
         "--mesh-dir", str(MESH_DIR), "--output", str(base_video),
         "--ffmpeg", str(FFMPEG), "--duration", str(query[-1]),
         "--fps", str(args.fps),

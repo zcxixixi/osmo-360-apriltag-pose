@@ -24,6 +24,7 @@ from osmo360.visualization.render_single_gripper_motion_demo import (
     sample_pose,
     stats,
 )
+from osmo360.visualization.node_runtime import resolve_node_binary
 from osmo360.rig_revision import load_rig_revision, sha256
 from osmo360.datasets.vla_dataset_export import smooth_positions, smooth_rotations
 from osmo360.localization.world_frames import compile_world_tag_map
@@ -667,7 +668,7 @@ def main() -> int:
     output_video = output_dir / "single_gripper_webgl_100fps.mp4"
     run(
         [
-            "node",
+            str(resolve_node_binary()),
             str(RENDERER),
             "--timeline",
             str(timeline_path),
