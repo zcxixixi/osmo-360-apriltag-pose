@@ -249,3 +249,11 @@ and above both AprilGrids, draws the vertical Tag plane, labels the world and
 camera FLU axes, and adds dashed camera-to-wall `X` depth guides. The pose
 conversion must be performed and audited before rendering; the view preset is
 display-only and does not silently reinterpret input coordinates.
+
+When only the hand-camera child frame is FLU and the parent remains the native
+`tag_map`, use `--view-preset tag-map-front-above`. For the four-MP4 X5 rig,
+hand-camera `+X` is the optical direction of the `back`/stream-0 lens, `+Y` is
+left, and `+Z` is up. The corresponding source-camera basis bridge is
+`X_hand -> +Z_source`, `Y_hand -> -X_source`, `Z_hand -> -Y_source`. This
+preset views the native `Z_map=0` Tag wall from its front and physical `-Y_map`
+upper side; it does not rotate the world positions.
