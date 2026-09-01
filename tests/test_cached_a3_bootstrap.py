@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import csv
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from osmo360.localization import cached_a3_bootstrap
 from osmo360.localization.cached_a3_bootstrap import (
     Pose,
     _temporal_gate,
+    load_cache_frames,
     pose_to_hand_camera_flu,
     write_joint_pose_csv,
 )
@@ -39,6 +42,44 @@ def _row(frame: int, time_s: float, x: float | None) -> dict[str, str | int]:
         "inlier_tag_count": 4 if valid else 0,
         "measurement_source": "cached_raw_fisheye_bearing_direct",
     }
+
+
+def test_cache_loader_decompresses_each_npz_member_once(monkeypatch, tmp_path: Path):
+    arrays = {
+        "frame_index": np.asarray([0, 0, 2], dtype=np.int32),
+        "tag_id": np.asarray([5, 5, 6], dtype=np.int32),
+        "rays_camera": np.arange(36, dtype=np.float32).reshape(3, 4, 3),
+        "area_px2": np.asarray([10.0, 12.0, 8.0], dtype=np.float32),
+        "detection_source": np.asarray(["direct", "flow", "direct"]),
+        "timeline_frame_index": np.asarray([0, 1, 2], dtype=np.int32),
+        "timeline_common_time_s": np.asarray([0.0, 0.1, 0.2]),
+    }
+
+    class CountingArchive:
+        def __init__(self):
+            self.reads: Counter[str] = Counter()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def __getitem__(self, key: str):
+            self.reads[key] += 1
+            return arrays[key]
+
+    archive = CountingArchive()
+    monkeypatch.setattr(cached_a3_bootstrap.np, "load", lambda _path: archive)
+
+    frames, times = load_cache_frames(tmp_path / "observations.npz")
+
+    assert archive.reads == Counter({key: 1 for key in arrays})
+    assert set(frames) == {0, 2}
+    assert frames[0][5].area_px2 == 12.0
+    assert frames[0][5].source == "flow"
+    assert np.array_equal(frames[2][6].rays, arrays["rays_camera"][2])
+    assert times == {0: 0.0, 1: 0.1, 2: 0.2}
 
 
 def test_joint_csv_interpolates_both_tracks_in_one_map(tmp_path: Path):

@@ -169,25 +169,38 @@ def refine_pose(world_points: np.ndarray, rays: np.ndarray, initial: Pose) -> Po
 
 def load_cache_frames(path: Path) -> tuple[dict[int, dict[int, Detection]], dict[int, float]]:
     with np.load(path) as cache:
-        frames: dict[int, dict[int, Detection]] = {}
-        for index, frame_value in enumerate(cache["frame_index"]):
-            frame = int(frame_value)
-            tag_id = int(cache["tag_id"][index])
-            detection = Detection(
-                tag_id=tag_id,
-                rays=np.asarray(cache["rays_camera"][index], dtype=np.float64),
-                area_px2=float(cache["area_px2"][index]),
-                source=str(cache["detection_source"][index]),
-            )
-            previous = frames.setdefault(frame, {}).get(tag_id)
-            if previous is None or detection.area_px2 > previous.area_px2:
-                frames[frame][tag_id] = detection
-        times = {
-            int(frame): float(common_time)
-            for frame, common_time in zip(
-                cache["timeline_frame_index"], cache["timeline_common_time_s"]
-            )
-        }
+        # ``NpzFile.__getitem__`` decompresses the complete member array.  Keep
+        # every lookup outside the per-observation loop; otherwise a compressed
+        # cache is inflated thousands of times while loading one trajectory.
+        frame_indices = np.asarray(cache["frame_index"])
+        tag_ids = np.asarray(cache["tag_id"])
+        rays = np.asarray(cache["rays_camera"], dtype=np.float64)
+        areas = np.asarray(cache["area_px2"])
+        sources = np.asarray(cache["detection_source"])
+        timeline_frames = np.asarray(cache["timeline_frame_index"])
+        timeline_times = np.asarray(cache["timeline_common_time_s"], dtype=np.float64)
+
+    frames: dict[int, dict[int, Detection]] = {}
+    for frame_value, tag_value, ray, area, source in zip(
+        frame_indices, tag_ids, rays, areas, sources, strict=True
+    ):
+        frame = int(frame_value)
+        tag_id = int(tag_value)
+        detection = Detection(
+            tag_id=tag_id,
+            rays=ray,
+            area_px2=float(area),
+            source=str(source),
+        )
+        previous = frames.setdefault(frame, {}).get(tag_id)
+        if previous is None or detection.area_px2 > previous.area_px2:
+            frames[frame][tag_id] = detection
+    times = {
+        int(frame): float(common_time)
+        for frame, common_time in zip(
+            timeline_frames, timeline_times, strict=True
+        )
+    }
     return frames, times
 
 
