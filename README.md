@@ -33,12 +33,98 @@
 ./umi review manifests/captures/x5-20260829-114845-iahea2606kmurq-sdk-r3.json
 ./umi review manifests/captures/x5-20260829-114845-iahea2606kmurq-sdk-r3.json --publish
 ./umi progress /path/to/pipeline_status.json
+./umi review-ui /path/to/processed-dataset-root
 ```
 
 `inspect` 校验全部哈希；`process` 运行 manifest 管线；`review` 生成不可变审核包；
-`progress` 轮询状态 JSON，显示各 stage 的执行节点、进度、产物和错误。底层
-`render_*`、`calibrate_*`、`fuse_*` 工具仅用于内部实现或历史复现，其状态可用
-`./umi commands --legacy` 查看。
+`progress` 显示各 stage 的执行节点、进度、产物和错误；`review-ui` 提供面向非技术
+审核员的中文界面，支持双路画面、3D/真实视频同步审核入口、长视频动作分段、
+通过/重处理/拒绝、审核历史、SQLite 持久化和复处理/UMI 导出队列。没有发布
+3D 世界姿态审核包的数据不能标记为通过。底层 `render_*`、`calibrate_*`、
+`fuse_*` 工具仅用于内部实现或历史复现，其状态可用 `./umi commands --legacy` 查看。
+
+双 X5 数据集的对外入口固定为一个参数：
+```bash
+./run_pipeline.sh /absolute/path/to/dataset-root
+```
+
+调用者只提供数据集根目录。Pipeline 递归扫描其中的 `.insv` 原片，从 INSV
+内嵌元数据识别序列号和录制时间，再按设备注册表自动确定物理左右手、BaseTag
+与同步采集对。调用者不创建 JSON、不重命名厂商文件、不逐个执行 `tools/`
+内部步骤，也不在命令行填写左右序列号或 Tag ID。
+
+### 双 X5 数据集目录契约
+
+唯一必需输入是只读的 `raw/`。文件可保留相机原名，也可分子目录存放；逻辑身份
+不能依赖文件名、SD 卡卷标、插入顺序或目录顺序：
+
+```text
+dataset-root/
+├── raw/
+│   ├── VID_....insv
+│   ├── VID_....insv
+│   └── ...                         # 可包含多个同步采集对
+└── pipeline/                       # 全部由 Pipeline 创建
+    ├── manifest.lock.json          # 自动生成；用户不编辑
+    ├── status.json
+    └── pairs/
+        └── pair-<NN>-<HHMMSS>/
+            ├── cache/
+            │   ├── left/
+            │   │   ├── lens-0-corners.npz
+            │   │   ├── lens-1-corners.npz
+            │   │   └── dual-lens-corners.npz
+            │   └── right/
+            │       ├── lens-0-corners.npz
+            │       ├── lens-1-corners.npz
+            │       └── dual-lens-corners.npz
+            ├── calibration/
+            │   ├── session_world_map.json
+            │   ├── session_world_map_audit.json
+            │   ├── left_camera_to_tcp.json
+            │   └── right_camera_to_tcp.json
+            ├── trajectory/
+            │   ├── left_camera_world.csv
+            │   ├── right_camera_world.csv
+            │   ├── left_tcp_world.csv
+            │   └── right_tcp_world.csv
+            ├── gates/report.json
+            ├── review/
+            └── export/
+```
+
+`pipeline/manifest.lock.json` 是运行时自动生成的审计锁，不是用户输入。它记录：
+原片相对路径与哈希、内嵌序列号、左右角色、BaseTag、实际分辨率/FPS、音频同步
+仿射模型、代码 revision、设备 revision 和各 stage 输入输出哈希。删除
+`pipeline/` 后可只凭 `raw/` 重新生成；任何主机绝对路径都不能成为数据集身份。
+
+路径优先使用相对 `dataset-root` 的相对路径，禁止把某台工作站的绝对挂载路径写成
+可移植数据集身份。`left`、`right` 始终表示物理左右手，不表示 SD 卡插入顺序、
+卷标或画面位置。设备身份只认 INSV 内嵌序列号；当前固定配对为左
+`IAHEA2606M5WSK`/BaseTag2、右 `IAHEA2606KKUKF`/BaseTag3。
+
+本批 `20260831` 试验数据保留实际的 2880×2880 双鱼眼、59.94 FPS 元数据；
+`4K30` 是后续新采集 profile，不能回写或重解释已有视频。Pipeline 以每个 INSV
+探测到的真实分辨率/FPS 为准，并把期望 profile 与实测值同时写入门禁报告。
+
+命名规则：
+
+- 数据集根目录：`<task>-<YYYYMMDD>-v<revision>`；
+- 采集对 ID：`pair-<两位序号>-<HHMMSS>`；
+- 原片保留厂商文件名；Pipeline 依据内嵌序列号和录制时间生成逻辑 `left`/`right`
+  绑定，不要求用户改名；
+- 双镜头固定为 `lens-0`、`lens-1`，必须同时缓存和审计，禁止默认单镜头；
+- 所有时间戳以同步后的公共时钟秒表示；原始本地时钟和仿射映射必须保留在审计中；
+- 位置单位为米，角度报告为度，四元数顺序为 `xyzw`；
+- 位姿统一为 `T_parent_child`，即把 child 坐标中的点映射到 parent；
+- 每个采集对独立估计并冻结 `T_session_grid_A_grid_B`，禁止跨视频复用 A/B 摆位；
+- 左相机必须观测墙 Tag 和右 BaseTag3，右相机必须观测墙 Tag 和左 BaseTag2；
+- 官方 2:1 全景仅用于 RGB/人工审核；近距离 BaseTag 与世界位姿的度量输入必须来自
+  X5 两路原始鱼眼四角和内嵌镜头标定。
+
+`pipeline/status.json` 记录每个 stage 的状态、输入哈希、代码 revision、执行节点、
+开始/结束时间、输出路径和错误。相同输入哈希与 revision 必须复用；任一身份、
+同步、A3 双板、BaseTag 闭环或 TCP 门禁失败时，`export/` 不得生成训练就绪标记。
 
 仓库根目录只保留项目配置和 `umi` 主入口。正式产品代码统一放在
 `src/osmo360/`，离线实验工具放在 `tools/`，兼容命令放在 `bin/`，专项说明
@@ -237,36 +323,15 @@ UMI中的 `robot*_eef_pos` 和姿态是共同世界坐标，`robot*_eef_delta_fr
 ### 输入规则
 
 - `.OSV`：执行 DJI 工厂标定拼接、IMU 提取、6DoF 解算和数据集封装；
-- `.insv/.lrv`：调用官方 Insta360 MediaSDK 拼接为无 FlowState、无方向锁定的 2:1 MP4，再进行轨迹解算；仅凭 2:1 尺寸不会把双鱼眼 LRV 误判为等距柱状全景；
-- 2:1 MP4：跳过原始鱼眼拼接，直接进行轨迹解算和数据集封装。
+- `.insv`：必须解码两路原始 2880×2880 鱼眼轨道；四角先转换为同一 X5 rig
+  的单位射线，再参与 A3 双板、BaseTag 和相机/TCP 联合解算。MediaSDK 另行生成
+  无 FlowState、无方向锁定的官方 2:1 RGB，仅供审核和导出；
+- `.lrv`：仅作快速预览或发现，不能作为度量位姿输入；
+- 2:1 MP4：可用于 RGB、人工审核和诊断轨迹；由于近场拼接视差，不能替代 X5
+  双原始鱼眼的 BaseTag/TCP 精度门禁。
 
-## 数据集结构
-
-默认输出到 `camera-datasets/<run-name>/dataset/`：
-
-```text
-dataset/
-├── media/
-│   └── panorama.mp4
-├── annotations/
-│   ├── trajectory_6dof.csv
-│   ├── pose_direct.csv
-│   └── detections.jsonl
-├── calibration/
-├── sensor/
-├── previews/
-│   └── trajectory_overlay.mp4
-└── metadata.json
-```
-
-- `trajectory_6dof.csv`：时间戳、位置、四元数、父子坐标系、Tag地图哈希、测量来源和状态；
-- `pose_direct.csv`、`detections.jsonl`：可审计的直接视觉结果；
-- `calibration/`：相机工厂标定与坐标系信息；
-- `sensor/`：DJI IMU 数据；
-- `metadata.json`：数据集版本、输入身份、参数、坐标约定和质量统计；
-- `trajectory_overlay.mp4`：可选的 6DoF/夹爪模型质检视频。
-
-状态字段区分 `direct`、`optical_flow`、`recovered`、`predicted` 和 `lost`，下游训练或评估时不能把恢复帧当作直接真值。
+## 单相机兼容输出
+DJI/单相机兼容流程继续输出 `media/panorama.mp4`、`annotations/{trajectory_6dof.csv,pose_direct.csv,detections.jsonl}`、`calibration/`、`sensor/`、`previews/trajectory_overlay.mp4` 和 `metadata.json`。状态仍区分 `direct`、`optical_flow`、`recovered`、`predicted`、`lost`；恢复帧不能作为直接真值。
 
 ## Insta360 X5 与 OptiTrack 评估
 
