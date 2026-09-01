@@ -14,7 +14,10 @@ def pose_transform(a_path:Path,b_path:Path,min_inliers:int):
 
 def difference(a_r,a_t,b_r,b_t):return float(np.linalg.norm(a_t-b_t)),float(np.degrees((a_r.inv()*b_r).magnitude()))
 def load_layout(path):return json.loads(path.read_text())
-def map_from_layout(layout,world_frame):return {'schema_version':'world-apriltag-map/1.0','map_id':layout['revision_id']+'-'+layout['board'],'world_frame':world_frame,'calibration_status':'VERIFIED_PRINT_LAYOUT','tag_outer_size_m':layout['tag_black_outer_size_mm']/1000,'tags':layout['tags']}
+def map_from_layout(layout,world_frame):
+ if layout.get('schema_version')=='world-apriltag-map/1.0':
+  result=dict(layout);result['world_frame']=world_frame;return result
+ return {'schema_version':'world-apriltag-map/1.0','map_id':layout['revision_id']+'-'+layout['board'],'world_frame':world_frame,'calibration_status':'VERIFIED_PRINT_LAYOUT','tag_outer_size_m':layout['tag_black_outer_size_mm']/1000,'tags':layout['tags']}
 def main():
  p=argparse.ArgumentParser();p.add_argument('--left-a-pose',type=Path,required=True);p.add_argument('--left-b-pose',type=Path,required=True);p.add_argument('--right-a-pose',type=Path,required=True);p.add_argument('--right-b-pose',type=Path,required=True);p.add_argument('--layout-a',type=Path,required=True);p.add_argument('--layout-b',type=Path,required=True);p.add_argument('--pair-id',required=True);p.add_argument('--output-dir',type=Path,required=True);p.add_argument('--minimum-inliers',type=int,default=20);a=p.parse_args();a.output_dir.mkdir(parents=True,exist_ok=True)
  la=load_layout(a.layout_a);lb=load_layout(a.layout_b);(a.output_dir/'panel_A_map.json').write_text(json.dumps(map_from_layout(la,'session_grid_A'),indent=2)+'\n');(a.output_dir/'panel_B_map.json').write_text(json.dumps(map_from_layout(lb,'session_grid_B'),indent=2)+'\n')

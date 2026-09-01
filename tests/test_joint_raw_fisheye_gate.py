@@ -20,15 +20,12 @@ from tools.joint_dual_camera_pose_graph_cached import (
     solve_frames_temporally,
 )
 from scipy.spatial.transform import Rotation
-from tools.joint_camera_correction_cached import nearest_detection_frame as nearest_correction_detection_frame
-from tools.calibrate_basetag_reciprocal_cached import (
-    load_both_wall_support_times,
-    timestamp_supported,
-)
+from tools.calibrate_capture_a3_pair import map_from_layout
 from osmo360.localization.raw_fisheye_world_pose import (
     make_x5_offset_ray_converter,
     make_x5_rectified_maps,
 )
+from tools.raw_fisheye_world_pose_cached import bootstrap_pose_from_bearings
 
 
 def write_cache_sidecar(tmp_path: Path, size=(3840, 3840), stream=1):
@@ -94,6 +91,18 @@ def test_a3_panel_transform_and_120_mm_map_are_accepted(tmp_path):
     assert points[200].shape == (4, 3)
 
 
+def test_a3_world_map_layout_is_accepted_without_legacy_wrapper():
+    layout = json.loads(
+        Path("config/a3_aprilgrid_A_200_205_120mm.json").read_text(),
+    )
+
+    mapped = map_from_layout(layout, "session_grid_A")
+
+    assert mapped["map_id"] == layout["map_id"]
+    assert mapped["world_frame"] == "session_grid_A"
+    assert mapped["tags"] == layout["tags"]
+
+
 def test_x5_embedded_offset_maps_both_lens_centres_into_one_rig_frame():
     offset = "m2_100_100_100_0_0_90_100_300_100_0_0_90_400_200_1"
     front, front_metadata = make_x5_offset_ray_converter(
@@ -106,6 +115,40 @@ def test_x5_embedded_offset_maps_both_lens_centres_into_one_rig_frame():
     assert front([[100, 100]])[0] == pytest.approx([0, 0, 1])
     assert back([[100, 100]])[0] == pytest.approx([0, 0, -1])
     assert front_metadata["ray_frame"] == back_metadata["ray_frame"]
+
+
+def test_cached_bearings_bootstrap_physical_camera_side_without_video():
+    tags = [
+        np.asarray([
+            [-0.13, -0.06, 0.0],
+            [-0.01, -0.06, 0.0],
+            [-0.01, 0.06, 0.0],
+            [-0.13, 0.06, 0.0],
+        ]),
+        np.asarray([
+            [0.01, -0.06, 0.0],
+            [0.13, -0.06, 0.0],
+            [0.13, 0.06, 0.0],
+            [0.01, 0.06, 0.0],
+        ]),
+    ]
+    expected = Transform(
+        np.asarray([0.03, -0.02, 0.80]),
+        Rotation.from_euler("xyz", [180.0, 2.0, -3.0], degrees=True),
+    )
+    camera_world = expected.inverse()
+    observations = []
+    for points in tags:
+        camera_points = camera_world.p + camera_world.r.apply(points)
+        rays = camera_points / np.linalg.norm(camera_points, axis=1, keepdims=True)
+        observations.append((points, rays))
+
+    bootstrapped = bootstrap_pose_from_bearings(observations)
+
+    assert bootstrapped is not None
+    position, rotation = bootstrapped
+    assert position == pytest.approx(expected.p, abs=1e-5)
+    assert (rotation.inv() * expected.r).magnitude() < 1e-5
 
 
 def test_x5_rectified_maps_stay_on_the_raw_lens_image():
@@ -141,8 +184,8 @@ def test_pairing_snaps_to_an_actual_synchronized_detection_frame():
     assert nearest_detection_frame(frames, times, 0.100) == 3
     assert nearest_detection_frame(frames, times, 0.220) == 9
     assert nearest_detection_frame(frames, times, 0.400) is None
-    assert nearest_correction_detection_frame(frames, times, 0.100) is None
-    assert nearest_correction_detection_frame(frames, times, 0.068) == 3
+    assert nearest_detection_frame(frames, times, 0.100, max_delta_s=0.020) is None
+    assert nearest_detection_frame(frames, times, 0.068, max_delta_s=0.020) == 3
 
 
 def test_two_perpendicular_walls_reject_planar_mirror_seed():
@@ -307,18 +350,3 @@ def test_temporal_holdout_uses_previous_pose_but_not_heldout_cross(monkeypatch):
     assert calls[1][1].tolist() == pytest.approx([1.0, 0.0, 0.0])
 
 
-def test_reciprocal_calibration_keeps_only_direct_two_wall_pose_rows(tmp_path):
-    pose = tmp_path / "pose.csv"
-    pose.write_text(
-        "timestamp,quality_status,detected_ids\n"
-        "0.000,valid,134 135\n"
-        "0.033,valid,128 129\n"
-        "0.067,invalid,128 134\n"
-        "0.100,valid,128 134\n",
-        encoding="utf-8",
-    )
-    times = load_both_wall_support_times(
-        pose, {134, 135, 136, 137}, {128, 129, 130, 131, 132, 133})
-    assert times.tolist() == pytest.approx([0.100])
-    assert timestamp_supported(times, 0.115)
-    assert not timestamp_supported(times, 0.121)

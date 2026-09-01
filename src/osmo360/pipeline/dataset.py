@@ -19,7 +19,7 @@ FFPROBE = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffprobe"
 SERIAL_PATTERN = re.compile(rb"IAHE[A-Z0-9]{10}")
 OFFSET_PATTERN = re.compile(rb"[mn]2(?:_-?\d+(?:\.\d+)?){15}")
 TIME_PATTERN = re.compile(r"VID_(\d{8})_(\d{6})_")
-PIPELINE_REVISION = "dual-x5-raw-v1"
+PIPELINE_REVISION = "instaumi-align-v1"
 
 
 @dataclass(frozen=True)
@@ -115,8 +115,21 @@ def inspect_video(path: Path, expected_side: str) -> RawVideo:
     )
 
 
+def _source_checksums(root: Path) -> dict[str, str]:
+    path = root / "sha256.txt"
+    if not path.is_file():
+        return {}
+    checksums: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        fields = line.strip().split(maxsplit=1)
+        if len(fields) == 2 and re.fullmatch(r"[0-9a-fA-F]{64}", fields[0]):
+            checksums[fields[1].lstrip("*./")] = fields[0].lower()
+    return checksums
+
+
 def discover_dataset(dataset_root: Path) -> dict[str, Any]:
     root = dataset_root.resolve(strict=True)
+    checksums = _source_checksums(root)
     paths: list[tuple[Path, str]] = []
     for side in ("left", "right"):
         directory = root / "raw" / side
@@ -143,10 +156,15 @@ def discover_dataset(dataset_root: Path) -> dict[str, Any]:
                 f"pair {index} recording starts differ by {start_delta:.3f}s (>15s)"
             )
         pair_id = f"pair-{index:02d}-{max(left_video.recorded_at, right_video.recorded_at):%H%M%S}"
+        left_record = left_video.record(root)
+        right_record = right_video.record(root)
+        left_record["sha256"] = checksums.get(left_record["path"], "")
+        right_record["sha256"] = checksums.get(right_record["path"], "")
         pairs.append({
             "pair_id": pair_id,
-            "left": left_video.record(root),
-            "right": right_video.record(root),
+            "dataset_id": f"instaumi_{index:06d}",
+            "left": left_record,
+            "right": right_record,
             "recording_start_delta_s": start_delta,
             "common_duration_upper_bound_s": min(left_video.duration_s, right_video.duration_s),
         })
@@ -170,10 +188,11 @@ def _nodes() -> list[str]:
     return nodes
 
 
-def _worker_command(root: Path, pair_id: str, scratch: Path) -> list[str]:
+def _worker_command(root: Path, pair_id: str, dataset_id: str, scratch: Path) -> list[str]:
     return [
         "./.venv/bin/python", "-m", "osmo360.pipeline.dataset_worker",
-        str(root), "--pair-id", pair_id, "--scratch-root", str(scratch),
+        str(root), "--pair-id", pair_id, "--dataset-id", dataset_id,
+        "--scratch-root", str(scratch),
     ]
 
 
@@ -201,18 +220,26 @@ def _run_assigned(node: str, commands: list[list[str]]) -> list[dict[str, Any]]:
 
 def process_dataset(dataset_root: Path, *, dry_run: bool = False) -> dict[str, Any]:
     root = dataset_root.resolve(strict=True)
-    final_root = root / "final" / PIPELINE_REVISION
-    final_root.mkdir(parents=True, exist_ok=True)
     lock = discover_dataset(root)
-    lock_path = final_root / "manifest.lock.json"
-    lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+    # Each standardized dataset is self-contained. The worker lock is stored
+    # with derived data, beside (not inside) dataset.h5 and video/.
+    for pair in lock["pairs"]:
+        processed = root / pair["dataset_id"] / "processed"
+        processed.mkdir(parents=True, exist_ok=True)
+        (processed / "manifest.lock.json").write_text(
+            json.dumps({**lock, "pairs": [pair], "pair_count": 1}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    lock_path = root / lock["pairs"][0]["dataset_id"] / "processed" / "manifest.lock.json" if lock["pairs"] else root / "raw" / "manifest.empty.json"
     nodes = _nodes()
     scratch_base = Path(os.environ.get("OSMO_PIPELINE_SCRATCH", "/tmp/osmo-pipeline"))
     assignments: dict[str, list[list[str]]] = {node: [] for node in nodes}
     for index, pair in enumerate(lock["pairs"]):
         node = nodes[index % len(nodes)]
-        scratch = scratch_base / root.name / PIPELINE_REVISION / pair["pair_id"]
-        assignments[node].append(_worker_command(root, pair["pair_id"], scratch))
+        scratch = scratch_base / root.name / PIPELINE_REVISION / pair["dataset_id"]
+        assignments[node].append(
+            _worker_command(root, pair["pair_id"], pair["dataset_id"], scratch)
+        )
     if dry_run:
         return {
             "status": "DRY_RUN",
@@ -234,8 +261,9 @@ def process_dataset(dataset_root: Path, *, dry_run: bool = False) -> dict[str, A
         "nodes": nodes,
         "results": results,
     }
-    status_path = final_root / "status.json"
-    status_path.write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
+    for pair in lock["pairs"]:
+        status_path = root / pair["dataset_id"] / "processed" / "pipeline_status.json"
+        status_path.write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
     if failed:
-        raise ManifestError(f"{len(failed)} pair worker(s) failed; see {status_path}")
+        raise ManifestError(f"{len(failed)} pair worker(s) failed; see instaumi_*/processed/pipeline_status.json")
     return status
