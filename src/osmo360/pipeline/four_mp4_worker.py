@@ -544,7 +544,9 @@ def run_tracking(
         signature_path = output / "input-signature.json"
         signature = {
             "schema_version": "four-mp4-auto-tracking-input/1.0",
-            "algorithm_revision": "cached-a3-shared-map-joint-v5-hand-flu-back-x",
+            "algorithm_revision": (
+                "cached-a3-shared-map-joint-v6-bounded-interpolation-hand-flu-back-x"
+            ),
             "mode": automatic.get("mode"),
             "observation_processing_signature": {
                 side: json.loads(_sidecar(path).read_text(encoding="utf-8"))[

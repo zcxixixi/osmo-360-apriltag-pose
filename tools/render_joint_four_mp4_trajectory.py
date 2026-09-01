@@ -15,6 +15,9 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
+from osmo360.localization.cached_a3_bootstrap import (
+    MAXIMUM_TRUSTED_INTERPOLATION_GAP_S,
+)
 from tools._root import ROOT
 
 
@@ -79,7 +82,15 @@ class TrackSample:
 
 
 class Track:
-    def __init__(self, rows: list[dict[str, str]], prefix: str):
+    def __init__(
+        self,
+        rows: list[dict[str, str]],
+        prefix: str,
+        *,
+        maximum_gap_s: float = MAXIMUM_TRUSTED_INTERPOLATION_GAP_S,
+    ):
+        if not 0 < maximum_gap_s <= MAXIMUM_TRUSTED_INTERPOLATION_GAP_S:
+            raise ValueError("maximum_gap_s must be positive and no greater than 0.25")
         valid = [
             row for row in rows
             if row.get(f"{prefix}_quality_status") in {"valid", "interpolated"}
@@ -99,6 +110,9 @@ class Track:
         ])
         if len(self.times) < 2 or np.any(np.diff(self.times) <= 0):
             raise ValueError(f"{prefix} joint trajectory has no increasing valid track")
+        self.maximum_gap_s = maximum_gap_s
+        gaps = np.diff(self.times)
+        self.segment_ids = np.cumsum(np.r_[False, gaps > maximum_gap_s])
         self.slerp = Slerp(self.times, self.rotations)
         raw_rpy = self.rotations.as_euler("xyz", degrees=True)
         self.rpy_deg = np.degrees(np.unwrap(np.radians(raw_rpy), axis=0))
@@ -107,11 +121,33 @@ class Track:
         angular_segments = np.degrees(
             (self.rotations[:-1].inv() * self.rotations[1:]).magnitude()
         ) / delta_t
+        linear_segments[gaps > maximum_gap_s] = 0.0
+        angular_segments[gaps > maximum_gap_s] = 0.0
         self.linear_speed_m_s = np.r_[linear_segments[0], linear_segments]
         self.angular_speed_deg_s = np.r_[angular_segments[0], angular_segments]
 
-    def sample(self, now: float) -> TrackSample:
-        clipped = float(np.clip(now, self.times[0], self.times[-1]))
+    def segment_slices(self, upto: int | None = None) -> list[slice]:
+        stop = len(self.times) if upto is None else min(max(upto, 0), len(self.times))
+        if stop == 0:
+            return []
+        split = np.flatnonzero(np.diff(self.segment_ids[:stop]) != 0) + 1
+        edges = np.r_[0, split, stop]
+        return [slice(int(start), int(end)) for start, end in zip(edges[:-1], edges[1:])]
+
+    def sample(self, now: float) -> TrackSample | None:
+        tolerance = 1e-6
+        if now < self.times[0] - tolerance or now > self.times[-1] + tolerance:
+            return None
+        upper = int(np.searchsorted(self.times, now, side="left"))
+        if upper < len(self.times) and abs(float(self.times[upper] - now)) <= tolerance:
+            clipped = float(self.times[upper])
+        else:
+            if upper == 0 or upper >= len(self.times):
+                return None
+            lower = upper - 1
+            if self.times[upper] - self.times[lower] > self.maximum_gap_s + tolerance:
+                return None
+            clipped = float(now)
         position = np.asarray([
             np.interp(clipped, self.times, self.positions[:, axis])
             for axis in range(3)
@@ -397,16 +433,17 @@ def draw_track(
     color: tuple[int, int, int],
 ) -> None:
     upto = int(np.searchsorted(track.times, now, side="right"))
-    if upto < 2:
-        return
-    draw_polyline(canvas, projector, track.positions[:upto], _dim(color), 2)
-    recent_start = max(0, int(np.searchsorted(track.times, now - 2.0)))
-    draw_polyline(canvas, projector, track.positions[recent_start:upto], color, 4)
-    for index in range(1, upto):
-        if "INTERPOLATED" in (track.states[index - 1], track.states[index]):
-            p0 = projector(track.positions[index - 1])
-            p1 = projector(track.positions[index])
-            cv2.line(canvas, p0, p1, _dim(color, 0.65), 2, cv2.LINE_AA)
+    for segment in track.segment_slices(upto):
+        draw_polyline(canvas, projector, track.positions[segment], _dim(color), 2)
+        indices = np.arange(segment.start, segment.stop)
+        recent = indices[track.times[indices] >= now - 2.0]
+        if len(recent):
+            draw_polyline(canvas, projector, track.positions[recent], color, 4)
+        for index in range(segment.start + 1, segment.stop):
+            if "INTERPOLATED" in (track.states[index - 1], track.states[index]):
+                p0 = projector(track.positions[index - 1])
+                p1 = projector(track.positions[index])
+                cv2.line(canvas, p0, p1, _dim(color, 0.65), 2, cv2.LINE_AA)
 
 
 def draw_camera(
@@ -500,8 +537,14 @@ def draw_sparkline(
     for axis, color in enumerate(palette):
         y_values = y + height - (values[:, axis] - low) / (high - low) * height
         points = np.c_[x_values, y_values].round().astype(np.int32)
-        cv2.polylines(canvas, [points], False, _dim(color, 0.32), 1, cv2.LINE_AA)
-        cv2.polylines(canvas, [points[:upto]], False, color, 1, cv2.LINE_AA)
+        for segment in track.segment_slices():
+            cv2.polylines(
+                canvas, [points[segment]], False, _dim(color, 0.32), 1, cv2.LINE_AA
+            )
+        for segment in track.segment_slices(upto):
+            cv2.polylines(
+                canvas, [points[segment]], False, color, 1, cv2.LINE_AA
+            )
     if low <= 0 <= high:
         zero_y = int(round(y + height - (0 - low) / (high - low) * height))
         cv2.line(canvas, (x, zero_y), (x + width, zero_y), GRID, 1, cv2.LINE_AA)
@@ -522,7 +565,7 @@ def draw_telemetry_card(
     label: str,
     color: tuple[int, int, int],
     track: Track,
-    sample: TrackSample,
+    sample: TrackSample | None,
     now: float,
     coordinate_frame: str,
     camera_frame: str,
@@ -532,30 +575,41 @@ def draw_telemetry_card(
     cv2.rectangle(canvas, (x, y), (x + width, y + height), _dim(color, 0.65), 1)
     cv2.circle(canvas, (x + 17, y + 20), 6, color, -1, cv2.LINE_AA)
     text(canvas, f"{label} CAMERA", (x + 30, y + 25), 0.50, WHITE, 2)
-    state_color = color if sample.state == "MEASURED" else WARNING
-    state_width = 92 if sample.state == "MEASURED" else 116
+    state = "UNTRUSTED" if sample is None else sample.state
+    state_color = color if state == "MEASURED" else WARNING
+    state_width = 92 if state == "MEASURED" else 116
     cv2.rectangle(canvas, (x + width - state_width - 10, y + 8),
                   (x + width - 10, y + 31), _dim(state_color, 0.40), -1)
-    text(canvas, sample.state, (x + width - state_width + 1, y + 24),
+    text(canvas, state, (x + width - state_width + 1, y + 24),
          0.33, state_color, 1)
 
     text(canvas, f"POSITION XYZ  [m] / {coordinate_frame}",
          (x + 12, y + 51), 0.35, MUTED)
-    text(canvas, "  ".join(
-        f"{axis} {value:+.3f}" for axis, value in zip("XYZ", sample.position)
-    ), (x + 12, y + 72), 0.43, WHITE, 1)
+    position_text = (
+        "X N/A  Y N/A  Z N/A"
+        if sample is None else "  ".join(
+            f"{axis} {value:+.3f}" for axis, value in zip("XYZ", sample.position)
+        )
+    )
+    text(canvas, position_text, (x + 12, y + 72), 0.43, WHITE, 1)
     camera_label = "CAMERA FLU RPY" if camera_frame == "CAMERA FLU" else "CAM RPY"
     text(canvas, f"{camera_label}  [deg, xyz] / {coordinate_frame}",
          (x + 12, y + 96), 0.35, MUTED)
-    text(canvas, "  ".join(
-        f"{axis} {value:+.1f}" for axis, value in zip("RPY", sample.rpy_deg)
-    ), (x + 12, y + 117), 0.43, WHITE, 1)
-    text(
-        canvas,
-        f"SPEED  {sample.linear_speed_m_s:5.2f} m/s     "
-        f"OMEGA  {sample.angular_speed_deg_s:5.1f} deg/s",
-        (x + 12, y + 142), 0.37, color, 1,
+    rpy_text = (
+        "R N/A  P N/A  Y N/A"
+        if sample is None else "  ".join(
+            f"{axis} {value:+.1f}" for axis, value in zip("RPY", sample.rpy_deg)
+        )
     )
+    text(canvas, rpy_text, (x + 12, y + 117), 0.43, WHITE, 1)
+    speed_text = (
+        "SPEED  N/A                  OMEGA  N/A"
+        if sample is None else (
+            f"SPEED  {sample.linear_speed_m_s:5.2f} m/s     "
+            f"OMEGA  {sample.angular_speed_deg_s:5.1f} deg/s"
+        )
+    )
+    text(canvas, speed_text, (x + 12, y + 142), 0.37, color, 1)
     text(canvas, "XYZ OVER FULL CLIP", (x + 12, y + 162), 0.30, MUTED)
     draw_sparkline(
         canvas, (x + 12, y + 168, width - 24, 57),
@@ -620,10 +674,16 @@ def main() -> int:
         newline="", encoding="utf-8"
     ) as handle:
         rows = list(csv.DictReader(handle))
-    left = Track(rows, "left")
-    right = Track(rows, "right")
-    world_map, tags = load_map(tracking / "session_world_map.json")
     report = json.loads((tracking / "report.json").read_text(encoding="utf-8"))
+    maximum_gap_s = float(
+        report.get("trajectories", {}).get("joint", {}).get(
+            "maximum_allowed_interpolation_gap_s",
+            MAXIMUM_TRUSTED_INTERPOLATION_GAP_S,
+        )
+    )
+    left = Track(rows, "left", maximum_gap_s=maximum_gap_s)
+    right = Track(rows, "right", maximum_gap_s=maximum_gap_s)
+    world_map, tags = load_map(tracking / "session_world_map.json")
     start = max(left.times[0], right.times[0])
     end = min(left.times[-1], right.times[-1])
     if args.duration > 0:
@@ -713,14 +773,16 @@ def main() -> int:
             right_sample = right.sample(now)
             draw_track(canvas, projector, left, now, LEFT)
             draw_track(canvas, projector, right, now, RIGHT)
-            draw_depth_to_reference_plane(
-                canvas, projector, left_sample.position, LEFT
-            )
-            draw_depth_to_reference_plane(
-                canvas, projector, right_sample.position, RIGHT
-            )
-            draw_camera(canvas, projector, left_sample, LEFT, "LEFT")
-            draw_camera(canvas, projector, right_sample, RIGHT, "RIGHT")
+            if left_sample is not None:
+                draw_depth_to_reference_plane(
+                    canvas, projector, left_sample.position, LEFT
+                )
+                draw_camera(canvas, projector, left_sample, LEFT, "LEFT")
+            if right_sample is not None:
+                draw_depth_to_reference_plane(
+                    canvas, projector, right_sample.position, RIGHT
+                )
+                draw_camera(canvas, projector, right_sample, RIGHT, "RIGHT")
             if args.view_preset == "flu-front-above":
                 view_note = "FIXED VIEW: IN FRONT OF + ABOVE BOTH GRIDS / DASH = X DEPTH"
             elif args.view_preset == "tag-map-front-above":
@@ -738,8 +800,8 @@ def main() -> int:
             )
             text(canvas, f"t = {now:6.3f} s", (1003, 1038), 0.62, WHITE, 2)
             text(canvas, "MEASURED = PnP observation", (1240, 1036), 0.38, MUTED)
-            text(canvas, "INTERPOLATED = between accepted observations", (1482, 1036),
-                 0.38, WARNING)
+            text(canvas, "UNTRUSTED >0.25s = hidden / trail break", (1482, 1036),
+                 0.36, WARNING)
             text(canvas, provenance_first, (22, 1015), 0.43, MUTED)
             text(canvas, provenance_second, (22, 1045), 0.40, WARNING)
             writer.write(canvas)
@@ -763,7 +825,7 @@ def main() -> int:
     _extract_frame(args.output, duration * 0.5, cover)
     _extract_frame(args.output, min(max(7.1 - start, 0.0), duration), jump_check)
     audit = {
-        "schema_version": "joint-four-mp4-trajectory-comparison/2.0",
+        "schema_version": "joint-four-mp4-trajectory-comparison/2.1",
         "output": str(args.output.resolve()),
         "cover": str(cover.resolve()),
         "jump_check_frame": str(jump_check.resolve()),
@@ -776,6 +838,10 @@ def main() -> int:
         "map_id": world_map["map_id"],
         "tracking_status": report["status"],
         "joint_valid_ratio": report["trajectories"]["joint"]["joint_valid_ratio"],
+        "untrusted_long_gap_frames": report["trajectories"]["joint"].get(
+            "untrusted_long_gap_frames", 0
+        ),
+        "maximum_trusted_interpolation_gap_s": maximum_gap_s,
         "view_preset": args.view_preset,
         "coordinate_frame": coordinate_frame,
         "camera_frame": camera_frame,

@@ -43,6 +43,7 @@ class Detection:
 STREAM0_FROM_HAND_FLU = Rotation.from_matrix(
     X5_STREAM0_OPENCV_FROM_HAND_CAMERA_FLU
 )
+MAXIMUM_TRUSTED_INTERPOLATION_GAP_S = 0.25
 
 
 def pose_to_hand_camera_flu(pose: Pose) -> Pose:
@@ -605,8 +606,17 @@ def write_joint_pose_csv(
     right_rows: list[dict[str, Any]],
     *,
     map_id: str,
+    maximum_interpolation_gap_s: float = MAXIMUM_TRUSTED_INTERPOLATION_GAP_S,
 ) -> dict[str, Any]:
     """Write synchronized left/right poses in one explicitly shared map."""
+    if (
+        not np.isfinite(maximum_interpolation_gap_s)
+        or maximum_interpolation_gap_s <= 0
+        or maximum_interpolation_gap_s > MAXIMUM_TRUSTED_INTERPOLATION_GAP_S
+    ):
+        raise ValueError(
+            "maximum_interpolation_gap_s must be positive and no greater than 0.25 s"
+        )
     by_side = {
         "left": {int(row["frame"]): row for row in left_rows},
         "right": {int(row["frame"]): row for row in right_rows},
@@ -632,7 +642,14 @@ def write_joint_pose_csv(
     output_rows = []
     joint_valid_count = 0
     joint_measured_count = 0
-    interpolation_gaps: dict[str, list[float]] = {"left": [], "right": []}
+    trusted_interpolation_gaps: dict[str, list[float]] = {
+        "left": [], "right": []
+    }
+    rejected_interpolation_gaps: dict[str, list[float]] = {
+        "left": [], "right": []
+    }
+    untrusted_side_frames = {"left": 0, "right": 0}
+    untrusted_joint_frames = 0
 
     valid_series = {}
     for side in ("left", "right"):
@@ -646,13 +663,16 @@ def write_joint_pose_csv(
             [float(row[key]) for key in ("camera_x_m", "camera_y_m", "camera_z_m")]
             for row in valid
         ])
-        series_rotations = Rotation.from_quat(np.asarray([
-            [float(row[key]) for key in ("qx", "qy", "qz", "qw")]
-            for row in valid
-        ]))
+        series_rotations = (
+            Rotation.from_quat(np.asarray([
+                [float(row[key]) for key in ("qx", "qy", "qz", "qw")]
+                for row in valid
+            ]))
+            if valid else None
+        )
         valid_series[side] = (
             series_times, series_positions, series_rotations,
-            Slerp(series_times, series_rotations),
+            Slerp(series_times, series_rotations) if len(valid) >= 2 else None,
         )
     for frame in frames:
         left = by_side["left"].get(frame)
@@ -676,19 +696,43 @@ def write_joint_pose_csv(
                 source["pose_state"] = "MEASURED"
                 resolved[side] = source
                 continue
+            if source is not None:
+                source = dict(source)
+                source["pose_state"] = "REJECTED"
+                resolved[side] = source
             series_times, series_positions, _, slerp = valid_series[side]
-            if not series_times[0] <= now_s <= series_times[-1]:
+            if len(series_times) < 2 or not series_times[0] < now_s < series_times[-1]:
                 continue
             upper = int(np.searchsorted(series_times, now_s, side="right"))
-            lower = max(0, upper - 1)
-            upper = min(upper, len(series_times) - 1)
+            lower = upper - 1
+            if lower < 0 or upper >= len(series_times):
+                continue
+            gap = float(series_times[upper] - series_times[lower])
+            if gap > maximum_interpolation_gap_s + 1e-12:
+                rejected_interpolation_gaps[side].append(gap)
+                untrusted_side_frames[side] += 1
+                source_status = (
+                    "missing" if source is None else str(source.get("quality_status", "rejected"))
+                )
+                resolved[side] = {
+                    **{key: "" for key in pose_keys},
+                    "quality_status": "interpolation_untrusted",
+                    "pose_state": "INTERPOLATED_UNTRUSTED",
+                    "angular_rmse_deg": "",
+                    "detected_tag_count": "",
+                    "inlier_tag_count": "",
+                    "measurement_source": (
+                        "temporal_interpolation_rejected_long_gap:"
+                        f"source={source_status}"
+                    ),
+                }
+                continue
             position = np.asarray([
                 np.interp(now_s, series_times, series_positions[:, axis])
                 for axis in range(3)
             ])
             quaternion = slerp([now_s]).as_quat()[0]
-            gap = float(series_times[upper] - series_times[lower])
-            interpolation_gaps[side].append(gap)
+            trusted_interpolation_gaps[side].append(gap)
             resolved[side] = {
                 "camera_x_m": f"{position[0]:.9f}",
                 "camera_y_m": f"{position[1]:.9f}",
@@ -704,6 +748,11 @@ def write_joint_pose_csv(
                 "inlier_tag_count": "",
                 "measurement_source": "temporal_interpolation_between_cached_bearing_poses",
             }
+        untrusted_joint_frames += int(any(
+            source is not None
+            and source.get("pose_state") == "INTERPOLATED_UNTRUSTED"
+            for source in resolved.values()
+        ))
         joint_valid = all(
             resolved[side] is not None
             and resolved[side].get("quality_status") in {"valid", "interpolated"}
@@ -721,12 +770,12 @@ def write_joint_pose_csv(
         }
         for side, source in resolved.items():
             for key in pose_keys:
-                item[f"{side}_{key}"] = "" if source is None else source[key]
+                item[f"{side}_{key}"] = "" if source is None else source.get(key, "")
             for key in (
                 "quality_status", "pose_state", "angular_rmse_deg", "detected_tag_count",
                 "inlier_tag_count", "measurement_source",
             ):
-                item[f"{side}_{key}"] = "" if source is None else source[key]
+                item[f"{side}_{key}"] = "" if source is None else source.get(key, "")
         output_rows.append(item)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -743,10 +792,17 @@ def write_joint_pose_csv(
         "joint_measured_ratio": (
             joint_measured_count / len(output_rows) if output_rows else 0.0
         ),
+        "maximum_allowed_interpolation_gap_s": maximum_interpolation_gap_s,
         "maximum_interpolation_gap_s": {
-            side: max(interpolation_gaps[side], default=0.0)
+            side: max(trusted_interpolation_gaps[side], default=0.0)
             for side in ("left", "right")
         },
+        "maximum_rejected_interpolation_gap_s": {
+            side: max(rejected_interpolation_gaps[side], default=0.0)
+            for side in ("left", "right")
+        },
+        "untrusted_long_gap_frames": untrusted_joint_frames,
+        "untrusted_long_gap_side_frames": untrusted_side_frames,
         "world_frame": "session_grid_A",
         "map_id": map_id,
     }

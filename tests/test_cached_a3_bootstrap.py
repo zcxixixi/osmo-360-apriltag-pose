@@ -5,6 +5,7 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
+import pytest
 from scipy.spatial.transform import Rotation
 
 from osmo360.localization import cached_a3_bootstrap
@@ -97,6 +98,41 @@ def test_joint_csv_interpolates_both_tracks_in_one_map(tmp_path: Path):
     assert rows[1]["left_pose_state"] == "INTERPOLATED"
     assert float(rows[1]["left_camera_x_m"]) == 1.0
     assert rows[1]["right_pose_state"] == "MEASURED"
+
+
+def test_joint_csv_rejects_interpolation_longer_than_quarter_second(tmp_path: Path):
+    left = [_row(0, 0.0, 0.0), _row(6, 0.2, None), _row(12, 0.4, 2.0)]
+    right = [_row(0, 0.0, 5.0), _row(6, 0.2, 6.0), _row(12, 0.4, 7.0)]
+    output = tmp_path / "joint.csv"
+
+    summary = write_joint_pose_csv(output, left, right, map_id="shared-map")
+    rows = list(csv.DictReader(output.open(newline="", encoding="utf-8")))
+
+    assert summary["joint_valid_frames"] == 2
+    assert summary["joint_valid_ratio"] == 2 / 3
+    assert summary["maximum_allowed_interpolation_gap_s"] == 0.25
+    assert summary["maximum_interpolation_gap_s"]["left"] == 0.0
+    assert summary["maximum_rejected_interpolation_gap_s"]["left"] == 0.4
+    assert summary["untrusted_long_gap_frames"] == 1
+    assert summary["untrusted_long_gap_side_frames"] == {"left": 1, "right": 0}
+    assert rows[1]["joint_valid"] == "false"
+    assert rows[1]["left_quality_status"] == "interpolation_untrusted"
+    assert rows[1]["left_pose_state"] == "INTERPOLATED_UNTRUSTED"
+    assert rows[1]["left_camera_x_m"] == ""
+    assert rows[1]["right_pose_state"] == "MEASURED"
+
+
+@pytest.mark.parametrize("gap", [0.0, -0.1, 0.251, float("inf")])
+def test_joint_csv_rejects_unsafe_interpolation_limit(tmp_path: Path, gap: float):
+    rows = [_row(0, 0.0, 0.0), _row(1, 0.1, 1.0)]
+    with pytest.raises(ValueError, match="0.25"):
+        write_joint_pose_csv(
+            tmp_path / "joint.csv",
+            rows,
+            rows,
+            map_id="shared-map",
+            maximum_interpolation_gap_s=gap,
+        )
 
 
 def test_explicit_h5_kb_model_matches_equivalent_x5_rear_record():
