@@ -21,14 +21,14 @@
 
 | 项目 | 当前证据 |
 |---|---|
-| 流水线 | `dual-x5-four-mp4-cpu-v4`，30 Hz，手部相机 FLU，`back = +X`，最大可信插值 0.25 s |
-| 本地算法提交 | `9865b92` (`fix: bound joint trajectory interpolation gaps`) |
-| 服务器等价算法提交 | `4bf7060` |
-| 服务器无缓存耗时 | 6.63 s 处理 10 s 四路视频；聚合 CPU 平均 950%/峰值 2167%，聚合峰值 RSS 1.31 GiB |
-| 输出 | 300 样本，268 帧联合可信（89.33%），266 帧双侧实测（88.67%），`SELF_CALIBRATED_PASS` |
-| 回归测试 | 本地和服务器均为 230 passed，7 skipped |
-| 一致性 | v3/v4 的共享地图、左右实测 pose CSV SHA-256 完全相同；v4 只改变长缺口联合轨迹语义 |
-| 最新已发视频 | v4 `processed_joint_trajectory_30hz_front_above_v4.mp4`，SHA-256 `73474b02...49e27` |
+| 流水线 | `dual-x5-four-mp4-cpu-v5`，30 Hz，手部相机 FLU，`back = +X`，每帧数值位姿与可信度解耦 |
+| 本地算法提交 | `72203d6` (`fix: retain a pose on every joint frame`) |
+| 服务器等价算法提交 | `b9f7803` |
+| 服务器无缓存耗时 | 6.49 s 处理 10 s 四路视频；`time -v` 平均 CPU 1164%，峰值 RSS 311,272 KiB |
+| 输出 | 300/300 帧具备双侧数值位姿；268 帧联合可信，266 帧双侧实测，`SELF_CALIBRATED_PASS` |
+| 回归测试 | 本地和服务器均为 232 passed，7 skipped |
+| 一致性 | v5 全部 300 帧数值位姿与撤回前 v3 逐项最大差值为 0；只额外保留长间隔不可信标记 |
+| 最新已发视频 | v5 `processed_joint_trajectory_30hz_front_above_v5.mp4`，SHA-256 `fef54acf...c9a7f7` |
 
 ## 问题清单
 
@@ -38,7 +38,7 @@
 |---|---:|---|---|---|
 | SEC-001 | 高 | RESOLVED | H5 `dataset_id` 和 JSON `pair_id` 未验证即参与缓存/最终目录拼接；worker 发布阶段对计算出的目标目录执行 `shutil.rmtree`。恶意 `../` 可造成路径穿越和越界删除。涉及 `instaumi.py`、`four_mp4.py`、`four_mp4_worker.py`、`dataset_worker.py`。 | 已实现标识白名单、发现/worker 双重验证、修订锁检查、解析后包含性检查与逐级符号链接拒绝；13 个恶意输入/发布场景、真实 dry-run、服务器完整发布均通过。提交 `80e0f7f`，服务器 `3f09e68`。 |
 | QUAL-001 | 高 | RESOLVED | `write_joint_pose_csv` 对所有处于首尾测量之间的缺失帧插值，不限制相邻测量间隔。当前左轨迹报告最大插值间隔约 0.634 s，违反 v50 最大可信间隔 0.25 s 约束。 | v4 长间隔输出 `INTERPOLATED_UNTRUSTED`、空位姿、联合无效；渲染隐藏相机并断开轨迹/趋势线。服务器无缓存结果：可信最大 0.0667 s，拒绝最大 0.6340 s，32 帧不可信，联合有效率 89.33%，全部门通过；7.1 秒视频人工检查通过。 |
-| QUAL-002 | 高 | IN_PROGRESS | v4 将长间隔的 XYZ/四元数置空，导致 32/300 帧不具备数值位姿，不符合当前“每帧都有位姿”的产品需求。 | v5 本地已改为每帧保留位姿：长段插值为 `INTERPOLATED_UNTRUSTED`，首尾为 `HELD_UNTRUSTED`，新增 `joint_has_pose`，但 `joint_valid` 仍只代表可信性。聚焦测试 28 passed，全量 232 passed/7 skipped；待服务器无缓存重跑与视频闭环。 |
+| QUAL-002 | 高 | RESOLVED | v4 将长间隔的 XYZ/四元数置空，导致 32/300 帧不具备数值位姿，不符合当前“每帧都有位姿”的产品需求。 | v5 每帧保留位姿：长段插值为 `INTERPOLATED_UNTRUSTED`，首尾为 `HELD_UNTRUSTED`，`joint_has_pose` 与 `joint_valid` 解耦。服务器逐行审计 300/300 非空且有限，四元数归一，v3/v5 数值差为 0；视频中 7.1 s 位姿持续显示。 |
 | REL-001 | 高 | RESOLVED | 结果发布采用“先删最终目录，再 copytree”。处理中断会丢失上一版已完成输出，且放大 SEC-001 的破坏面。 | 已改为同级临时目录完整复制后切换，旧目录先重命名为可恢复备份，切换成功后才删除；服务器真实发布成功且不存在 `.publish-*`/`.backup-*` 残留。 |
 | SEC-002 | 中 | OPEN | 服务器流水线以高权限 `ps` 用户运行；该用户属于 `sudo`、`docker`、`lxd`、`k3s-admin` 等组，项目代码的进程被攻破后影响面很大。 | 设计最小权限服务账户、只读代码/输入和独立可写缓存/输出；迁移前需用户授权，不能擅自改变现有组。 |
 | SEC-003 | 中 | OPEN | 服务器有 `0.0.0.0:8000`、`:7864`、`:7865`、`:7869` 等项目相关服务监听局域网，认证与写接口边界尚未逐项验证。 | 审查端点、认证、上传大小和路径处理；不需要外网/局域网访问的服务绑定 loopback；变更前确认业务用途。 |
@@ -83,13 +83,18 @@
 - 如果某一侧整段没有任何接受位姿，流水线明确失败，不凭空伪造整段轨迹。
 - 本地聚焦测试 `28 passed`，全量测试 `232 passed, 7 skipped`。
 - SEC-003 初步审计：`:7865` 可视化平台、`:7869` 审阅服务以及独立 `:8000` 处理服务存在局域网未认证写接口；`:7864` 仅静态 GET。待完成本次轨迹回滚闭环后优先修复当前仓库管理的 `:7865`。
+- v5 已提交 `72203d6`并以等价提交 `b9f7803` 部署服务器；本地/服务器全量测试均为 `232 passed, 7 skipped`。
+- 服务器无缓存运行 6.49 s；300/300 帧 `joint_has_pose=true`，无空值、无非有限值，四元数范数范围为 `0.9999999999992..1.0000000000008`，全部门通过。
+- v5 与 v3 的 300 帧双侧 XYZ/四元数逐项最大差值为 0；数值行为已撤回，但 32 帧长间隔仍可审计地标为 `INTERPOLATED_UNTRUSTED`。
+- 新视频 `processed_joint_trajectory_30hz_front_above_v5.mp4` 已检查封面和 7.1 s 帧，SHA-256 `fef54acf451a829a5b6ffd9b3c72625807b7c1b97886d99092fd4f36d1c9a7f7`。
+- 飞书文字消息 `om_x100b665fb13d9ca0c24c7d06359eea4`，视频消息 `om_x100b66584eb5b8a0df34a0f404b9605`，均发送成功。
 
 ## 最近一次算法改动验证
 
-- 改动：v4 有界联合轨迹插值与 fail-closed 渲染（QUAL-001）。
-- 提交：本地 `9865b92`，服务器等价 `4bf7060`。
-- 服务器输出：`/home/ps/instaumi-data/instaumi_000001/final/dual-x5-four-mp4-cpu-v4/`。
-- 本地报告：300 帧；联合可信 268（89.33%）；联合实测 266（88.67%）；长空洞 32 帧；最大可信/拒绝插值 0.066733/0.633966 s；全部门通过。
-- 服务器运行：6.63 s；平均/峰值进程树 CPU 950%/2167%；峰值 RSS 1.31 GiB。
-- 最终审阅视频：`reviews/processed_joint_trajectory_30hz_front_above_v4.mp4`，SHA-256 `73474b02...49e27`。
-- 飞书：文字与视频均发送成功，消息 ID 见 Cycle 001 日志。
+- 改动：v5 撤销长间隔空位姿/隐藏策略，保证每帧数值位姿，同时保留独立可信度（QUAL-002）。
+- 提交：本地 `72203d6`，服务器等价 `b9f7803`。
+- 服务器输出：`/home/ps/instaumi-data/instaumi_000001/final/dual-x5-four-mp4-cpu-v5/`。
+- 服务器报告：300/300 帧具备数值位姿；联合可信 268（89.33%）；联合实测 266（88.67%）；长间隔不可信 32 帧；全部门通过。
+- 服务器运行：6.49 s；`time -v` 平均 CPU 1164%；峰值 RSS 311,272 KiB；无 swap。
+- 最终审阅视频：`reviews/processed_joint_trajectory_30hz_front_above_v5.mp4`，SHA-256 `fef54acf...c9a7f7`。
+- 飞书：文字与视频均发送成功，消息 ID 见 Cycle 002 日志。
