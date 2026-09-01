@@ -135,7 +135,7 @@ dataset-root/
 
 ```bash
 sudo apt update
-sudo apt install -y ffmpeg gstreamer1.0-tools gstreamer1.0-libav \
+sudo apt install -y gstreamer1.0-tools gstreamer1.0-libav \
   gstreamer1.0-plugins-ugly
 
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -144,6 +144,8 @@ cd osmo-360-apriltag-pose
 
 # CPU 部署
 uv sync --extra test
+# 四 MP4 流水线再安装项目内锁定的离线运行时
+.venv/bin/python -m tools.install_ffmpeg_runtime --archive /path/to/ffmpeg-9.0.1-linux-x86_64.tar.xz
 
 # NVIDIA GPU 节点额外安装
 uv sync --extra test --extra gpu

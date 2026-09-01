@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from osmo360.ffmpeg_runtime import project_ffmpeg_runtime
+
 from .dataset_worker import estimate_audio_offset
 from .four_mp4 import PIPELINE_REVISION, chunk_ranges
 from .manifest import (
@@ -25,9 +27,6 @@ from .manifest import (
 
 
 PYTHON = ROOT / ".venv/bin/python"
-FFMPEG = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg"
-if not FFMPEG.is_file():
-    FFMPEG = Path("/usr/bin/ffmpeg")
 
 
 def parse_args() -> argparse.Namespace:
@@ -135,7 +134,8 @@ def extract_audio(
     output.parent.mkdir(parents=True, exist_ok=True)
     run(
         [
-            str(FFMPEG), "-y", "-t", str(duration_s), "-i", str(source),
+            str(project_ffmpeg_runtime().ffmpeg),
+            "-y", "-t", str(duration_s), "-i", str(source),
             "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "2000",
             "-c:a", "pcm_s16le", str(output),
         ],
