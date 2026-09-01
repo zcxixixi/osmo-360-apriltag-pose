@@ -55,7 +55,7 @@
 | EFF-002 | 中 | DEFERRED | FFmpeg 管道软件解码约 2.04 s，OpenCV 包装约 2.70 s；VAAPI 四路约 7.43 s。FFmpeg 像素输出与当前路径不完全一致，且缓存修复后解码已非主要瓶颈。 | 若后续解码占比重新升高，建立像素/检测回归门后再切换；当前不以小收益换算法输入变化。 |
 | EFF-003 | 中 | RESOLVED | 观察缓存已有 4×4 预算，但备用联合 pose-graph 的 8 个 Python worker 未限制 BLAS/OpenMP，存在 8×32 嵌套线程放大；不同任务之间也没有主机级并发门。 | 每任务最多 16 逻辑线程，小主机自动降配；OpenCV/FFmpeg/BLAS/OpenMP/BLIS/vecLib 全部继承限额，pose-graph 每 worker 1 个数学线程。默认同用户整机 1 个任务槽，可在总量不超过逻辑核时显式增加。双任务并发实测串行、无发布竞态；轨迹 SHA 不变。提交本地 `5dad620`/`e2400fb`，服务器 `5d550f6`/`449fde0`。 |
 | EFF-004 | 低 | RESOLVED | `:7869` 审核服务主要待机，却因 OpenCV/数学库默认线程池保持 63 个线程、RSS 103,004 KiB。 | systemd 环境将所有原生线程池限制为 1；重启后接口仍为 200、32 条记录可读，线程 63→1、RSS 103,004→68,804 KiB，systemd `MemoryCurrent` 约 62.2→33.8 MiB。 |
-| REL-002 | 低 | OPEN | 本机不带隔离环境变量运行 pytest 时会自动加载 ROS Humble 的 `launch_testing` 插件，并因跨 Python 环境缺少 `yaml` 在收集前失败。 | 维护命令统一设置 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`，或在项目 pytest 配置中只加载所需插件，避免宿主插件污染。 |
+| REL-002 | 低 | RESOLVED | 本机不带隔离环境变量运行 pytest 时会自动加载 ROS Humble 的 `launch_testing` 插件，并因跨 Python 环境缺少 `yaml` 在收集前失败。 | `pyproject.toml` 明确屏蔽 7 个宿主 ROS/ament pytest entry point；本地和服务器均以普通 `pytest -q` 得到 `247 passed, 7 skipped`。提交本地 `598175b`、服务器 `61c1d02`。 |
 | REL-003 | 低 | DEFERRED | CPU 服务器未安装 Chrome/Chromium，因此可选的服务器端 WebGL 离线渲染不可用；四 MP4 轨迹审阅使用 Python/OpenCV，不受影响，`:7865` 也只在客户端浏览器渲染。原实现硬编码 `/usr/bin/google-chrome`。 | 已支持 `--chrome`/`OSMO_CHROME_BINARY` 与常见路径探测，缺失时启动前明确失败；本地前后视频 SHA 完全相同。仅在确需服务器 WebGL 时再固定、校验并安装项目级 Chromium，避免当前无收益地增加体积和攻击面。提交本地 `29f91f4`、服务器 `78c734c`。 |
 
 ## 已完成的安全检查
@@ -127,6 +127,7 @@
 - 审核状态目录和现有 SQLite/WAL/SHM 从 `0775/0644` 收紧为 `0700/0600`，未来文件由 unit `UMask=0077` 约束。
 - `:7869` 认证仍未完成：源码没有 Authorization/令牌检查，POST 可改审核/分段/对齐，GET 暴露绝对路径和审核信息。不得因 unit 已硬化而关闭 SEC-006。
 - `:8000` 无认证 POST 可启动/取消流水线、修改配置/标记并调用 `shutil.rmtree` 清除结果；GET `/api/processing/status` 在只读探测中 10 秒未返回，说明还存在便宜触发的资源消耗面。该服务属于独立工程，未擅自停止或修改。
+- REL-002 已关闭：项目 pytest 配置在插件自动加载阶段屏蔽宿主 ROS/ament 的 `launch_testing`、`launch_ros` 和 5 个 ament lint entry point；不设置 `PYTEST_DISABLE_PLUGIN_AUTOLOAD` 时，本地/服务器仍稳定通过 `247 passed, 7 skipped`。
 
 ## 最近一次算法改动验证
 
