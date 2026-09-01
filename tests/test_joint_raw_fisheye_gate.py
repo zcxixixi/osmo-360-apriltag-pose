@@ -10,6 +10,8 @@ from tools.joint_dual_camera_pose_graph_cached import (
     anchored_cross_direction,
     basetag_pose_matches_expected,
     evaluate_anchored_cross_holdout,
+    direct_map,
+    load_initial_wall_transform,
     Transform,
     nearest_detection_frame,
     raw_fisheye_cache_audit,
@@ -22,6 +24,10 @@ from tools.joint_camera_correction_cached import nearest_detection_frame as near
 from tools.calibrate_basetag_reciprocal_cached import (
     load_both_wall_support_times,
     timestamp_supported,
+)
+from osmo360.localization.raw_fisheye_world_pose import (
+    make_x5_offset_ray_converter,
+    make_x5_rectified_maps,
 )
 
 
@@ -42,6 +48,78 @@ def write_cache_sidecar(tmp_path: Path, size=(3840, 3840), stream=1):
         "radial_model": "factory-polynomial",
     }))
     return cache
+
+
+def test_dual_x5_raw_cache_requires_both_traceable_lens_tracks(tmp_path):
+    videos = [tmp_path / "lens0.mp4", tmp_path / "lens1.mp4"]
+    for video in videos:
+        video.write_bytes(b"raw")
+    cache = tmp_path / "dual.npz"
+    cache.write_bytes(b"cache")
+    cache.with_suffix(".json").write_text(json.dumps({
+        "schema_version": "fisheye-apriltag-observation-cache/1.2-dual-lens",
+        "camera_serial": "X5-SERIAL",
+        "streams": [0, 1],
+        "source_videos": list(map(str, videos)),
+        "source_size": [2880, 2880],
+        "calibration": "embedded_x5_offset",
+        "calibration_sha256": ["sha"],
+        "x5_offset": "m2_offset",
+    }))
+
+    audit = raw_fisheye_cache_audit(cache)
+
+    assert audit["stream"] == [0, 1]
+    assert audit["stitching_used"] is False
+
+
+def test_a3_panel_transform_and_120_mm_map_are_accepted(tmp_path):
+    transform_path = tmp_path / "session-map.json"
+    transform_path.write_text(json.dumps({
+        "panel_transform": {
+            "translation_m": [0.56, 0.0, 0.0],
+            "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
+        }
+    }))
+    panel_path = tmp_path / "panel.json"
+    panel_path.write_text(json.dumps({
+        "tag_outer_size_m": 0.12,
+        "tags": [{"id": 200, "corners_m": [[0, 0, 0], [0.12, 0, 0], [0.12, 0.12, 0], [0, 0.12, 0]]}],
+    }))
+
+    transform = load_initial_wall_transform(transform_path)
+    points = direct_map(panel_path)
+
+    assert transform.p == pytest.approx([0.56, 0.0, 0.0])
+    assert points[200].shape == (4, 3)
+
+
+def test_x5_embedded_offset_maps_both_lens_centres_into_one_rig_frame():
+    offset = "m2_100_100_100_0_0_90_100_300_100_0_0_90_400_200_1"
+    front, front_metadata = make_x5_offset_ray_converter(
+        offset, stream=0, source_width=200, source_height=200
+    )
+    back, back_metadata = make_x5_offset_ray_converter(
+        offset, stream=1, source_width=200, source_height=200
+    )
+
+    assert front([[100, 100]])[0] == pytest.approx([0, 0, 1])
+    assert back([[100, 100]])[0] == pytest.approx([0, 0, -1])
+    assert front_metadata["ray_frame"] == back_metadata["ray_frame"]
+
+
+def test_x5_rectified_maps_stay_on_the_raw_lens_image():
+    offset = "m2_100_100_100_0_0_90_100_300_100_0_0_90_400_200_1"
+    maps = make_x5_rectified_maps(
+        offset, stream=0, source_width=200, source_height=200, view_size=20
+    )
+
+    assert len(maps) == 11
+    xmap, ymap = maps[0]
+    assert xmap.shape == (20, 20)
+    assert ymap.shape == (20, 20)
+    assert xmap[9:11, 9:11].mean() == pytest.approx(100.0, abs=5.0)
+    assert ymap[9:11, 9:11].mean() == pytest.approx(100.0, abs=5.0)
 
 
 def test_raw_square_fisheye_is_accepted(tmp_path):

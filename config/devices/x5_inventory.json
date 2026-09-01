@@ -44,11 +44,16 @@
     },
     "IAHEA2606KKUKF": {
       "serial": "IAHEA2606KKUKF",
+      "asset_label": "dual-x5-pair-01-right",
       "model": "Insta360 X5",
       "firmware": "v1.7.8",
       "identity_status": "SDK_VERIFIED",
       "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
-      "assignment": null
+      "assignment": {
+        "role": "physical_right",
+        "base_tag_id": 3,
+        "label": "dual-x5-pair-01-right"
+      }
     },
     "IAHEA2606KM43A": {
       "serial": "IAHEA2606KM43A",

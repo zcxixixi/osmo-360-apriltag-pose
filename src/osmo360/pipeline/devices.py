@@ -16,6 +16,7 @@ CAMERA_SDK_ROOT = ROOT / "work/insta360-sdk/camera-2.1.1"
 CAMERA_SDK_BINARY = CAMERA_SDK_ROOT / "bin/CameraSDKTest"
 CAMERA_SDK_LIBRARY = CAMERA_SDK_ROOT / "lib"
 DEFAULT_INVENTORY = ROOT / "config/devices/x5_inventory.json"
+DEFAULT_PAIRS = ROOT / "config/devices/x5_pairs.json"
 SDK_REVISION_ID = "insta360-linux-camera-2.1.1-media-3.1.1"
 DEFAULT_SERVER = os.environ.get("OSMO_VISUALIZATION_URL", "http://192.168.111.62:7865")
 DEVICE_PATTERN = re.compile(
@@ -70,6 +71,39 @@ def load_inventory(path: Path = DEFAULT_INVENTORY) -> dict[str, Any]:
     if not isinstance(data.get("devices"), dict):
         raise ManifestError("X5 device inventory devices must be an object")
     return data
+
+
+def load_device_pairs(path: Path = DEFAULT_PAIRS) -> dict[str, Any]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("schema_version") != "x5-device-pairs/1.0":
+        raise ManifestError("invalid X5 device-pairs schema")
+    pairs = data.get("pairs")
+    if not isinstance(pairs, dict):
+        raise ManifestError("X5 device pairs must be an object")
+    for pair_id, pair in pairs.items():
+        left, right = pair.get("left", {}), pair.get("right", {})
+        if left.get("role") != "physical_left" or left.get("base_tag_id") != 2:
+            raise ManifestError(f"{pair_id} has an invalid left assignment")
+        if right.get("role") != "physical_right" or right.get("base_tag_id") != 3:
+            raise ManifestError(f"{pair_id} has an invalid right assignment")
+        if left.get("serial") == right.get("serial"):
+            raise ManifestError(f"{pair_id} reuses one serial on both sides")
+    return data
+
+
+def resolve_device_pair(
+    serials: set[str], path: Path = DEFAULT_PAIRS,
+) -> tuple[str, dict[str, Any]]:
+    matches = []
+    for pair_id, pair in load_device_pairs(path)["pairs"].items():
+        expected = {pair["left"]["serial"], pair["right"]["serial"]}
+        if serials == expected:
+            matches.append((pair_id, pair))
+    if len(matches) != 1:
+        raise ManifestError(
+            f"expected exactly one device pair for serials {sorted(serials)}, found {len(matches)}"
+        )
+    return matches[0]
 
 
 def write_inventory(inventory: dict[str, Any], path: Path) -> None:

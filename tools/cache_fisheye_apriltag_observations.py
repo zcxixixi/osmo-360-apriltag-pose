@@ -16,14 +16,19 @@ from osmo360.localization.raw_fisheye_world_pose import (
     detect_rectified_tags,
     make_ray_converter,
     make_rectified_maps,
+    make_x5_offset_ray_converter,
+    make_x5_rectified_maps,
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("video", type=Path)
-    parser.add_argument("--calibration", type=Path, required=True)
-    parser.add_argument("--panoforge-root", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--calibration", type=Path)
+    source.add_argument("--x5-offset")
+    parser.add_argument("--camera-serial")
+    parser.add_argument("--panoforge-root", type=Path)
     parser.add_argument("--stream", type=int, default=1)
     parser.add_argument("--source-width", type=int, required=True)
     parser.add_argument("--source-height", type=int, required=True)
@@ -64,22 +69,49 @@ def main() -> int:
     if args.start_frame < 0 or (args.end_frame is not None and args.end_frame < args.start_frame):
         raise ValueError("invalid detection frame range")
     video = args.video.resolve(strict=True)
-    calibration = args.calibration.resolve(strict=True)
-    converter, scaled = make_ray_converter(SimpleNamespace(
-        calibration=calibration,
-        panoforge_root=args.panoforge_root,
-        source_width=args.source_width,
-        source_height=args.source_height,
-        stream=args.stream,
-        radial_model=args.radial_model,
-    ))
-    rectified_maps = make_rectified_maps(SimpleNamespace(
-        edge_rectification=args.rectified_detection,
-        panoforge_root=args.panoforge_root,
-        stream=args.stream,
-        rectified_view_size=args.rectified_view_size,
-        rectification_radial_model=args.rectification_radial_model,
-    ), scaled)
+    x5_offset_record = None
+    if args.calibration is not None:
+        if args.panoforge_root is None:
+            raise ValueError("--panoforge-root is required with --calibration")
+        calibration = args.calibration.resolve(strict=True)
+        converter, scaled = make_ray_converter(SimpleNamespace(
+            calibration=calibration,
+            panoforge_root=args.panoforge_root,
+            source_width=args.source_width,
+            source_height=args.source_height,
+            stream=args.stream,
+            radial_model=args.radial_model,
+        ))
+        rectified_maps = make_rectified_maps(SimpleNamespace(
+            edge_rectification=args.rectified_detection,
+            panoforge_root=args.panoforge_root,
+            stream=args.stream,
+            rectified_view_size=args.rectified_view_size,
+            rectification_radial_model=args.rectification_radial_model,
+        ), scaled)
+        calibration_source = str(calibration)
+        calibration_sha256 = sha256(calibration)
+    else:
+        converter, scaled = make_x5_offset_ray_converter(
+            args.x5_offset,
+            stream=args.stream,
+            source_width=args.source_width,
+            source_height=args.source_height,
+        )
+        rectified_maps = (
+            make_x5_rectified_maps(
+                args.x5_offset,
+                stream=args.stream,
+                source_width=args.source_width,
+                source_height=args.source_height,
+                view_size=args.rectified_view_size,
+            )
+            if args.rectified_detection
+            else []
+        )
+        x5_offset_record = args.x5_offset
+        calibration_source = "embedded_x5_offset"
+        calibration_sha256 = hashlib.sha256(args.x5_offset.encode()).hexdigest()
     dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
     parameters = cv2.aruco.DetectorParameters()
     parameters.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
@@ -174,9 +206,10 @@ def main() -> int:
         "schema_version": "fisheye-apriltag-observation-cache/1.0",
         "video": str(video),
         "video_sha256": sha256(video),
-        "calibration": str(calibration),
-        "calibration_sha256": sha256(calibration),
-        "camera_serial": scaled.get("serial"),
+        "calibration": calibration_source,
+        "calibration_sha256": calibration_sha256,
+        "x5_offset": x5_offset_record,
+        "camera_serial": args.camera_serial or scaled.get("serial"),
         "stream": args.stream,
         "source_size": [args.source_width, args.source_height],
         "fps": fps,
@@ -188,7 +221,9 @@ def main() -> int:
             "intercept_s": args.clock_intercept_s,
             "slope": args.clock_slope,
         },
-        "radial_model": args.radial_model,
+        "radial_model": (
+            args.radial_model if args.calibration is not None else "x5-offset-equidistant"
+        ),
         "rectified_detection": args.rectified_detection,
         "rectified_view_size": args.rectified_view_size if args.rectified_detection else None,
         "rectification_radial_model": (
@@ -200,7 +235,9 @@ def main() -> int:
             source: detection_sources.count(source) for source in sorted(set(detection_sources))
         },
         "corner_order": "opencv_aruco_apriltag_canonical",
-        "ray_frame": "fisheye optical centre, panorama OpenCV axes",
+        "ray_frame": scaled.get(
+            "ray_frame", "fisheye optical centre, panorama OpenCV axes"
+        ),
         "scan_policy": "every decoded frame exactly once; direct detector only",
         "cache": str(args.output.resolve()),
     }
