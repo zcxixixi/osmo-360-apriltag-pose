@@ -107,7 +107,7 @@ def trajectory_sample_stride(left_fps: float, right_fps: float) -> int:
 
 def cache_signature_matches(
     video: Path, record: dict[str, Any], stream: int, intercept_s: float,
-    output: Path,
+    output: Path, *, verify_video_hash: bool = True,
 ) -> bool:
     sidecar = output.with_suffix(".json")
     if not output.is_file() or not sidecar.is_file():
@@ -131,7 +131,13 @@ def cache_signature_matches(
         and clock.get("slope") == 1.0
         and math.isclose(float(clock.get("intercept_s", float("nan"))), intercept_s)
     )
-    return bool(expected and metadata.get("video_sha256") == sha256(video))
+    return bool(
+        expected
+        and (
+            not verify_video_hash
+            or metadata.get("video_sha256") == sha256(video)
+        )
+    )
 
 
 def cache_lens(video: Path, record: dict[str, Any], stream: int, intercept_s: float,
@@ -149,7 +155,9 @@ def cache_lens(video: Path, record: dict[str, Any], stream: int, intercept_s: fl
         "--frame-stride", str(stride), "--rectified-detection", "--rectified-view-size", "720",
         "--output", str(output),
     ], log)
-    if not cache_signature_matches(video, record, stream, intercept_s, output):
+    if not cache_signature_matches(
+        video, record, stream, intercept_s, output, verify_video_hash=False,
+    ):
         raise RuntimeError(f"generated cache failed signature validation: {output}")
 
 
