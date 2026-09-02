@@ -22,17 +22,17 @@
 
 | 项目 | 当前证据 |
 |---|---|
-| 流水线 | `dual-x5-four-mp4-cpu-v8`，30 Hz，锁定 FFmpeg 9.0.1 `gray8 rawvideo` 管道；保留 inlier `lens_stream` 并对超限主导镜头 handoff 降信任；手部相机 FLU、`back = +X`，每帧数值位姿与可信度解耦 |
-| 本地算法提交 | `505febb` (`fix: distrust implausible fisheye lens handoffs`) |
-| 服务器等价算法提交 | `73ba77d` |
+| 流水线 | `dual-x5-four-mp4-cpu-v10`，29.97 Hz，锁定 FFmpeg 9.0.1 灰度解码；通用绝对运动门+强几何重定位锁；可用时以每侧捕获内自标定陀螺仪做姿态门和间隙桥接；世界/手部相机均为显式 FLU，每帧数值位姿与可信度解耦 |
+| 本地算法提交 | `b839ea8` + `feb8d30` |
+| 服务器等价算法提交 | `6fdb554` + `35fee60` |
 | 运行时提交 | 本地 `0e0a2d4`，服务器等价 `45802c5` |
 | 审核网关提交 | 本地安全代码 `3e5a0b3`、unit `2fd08c3`；服务器等价 `a6f22f2`、`f0ffecd` |
-| 服务器无缓存耗时 | 空闲服务器 v8 为 5.87 s，平均 1268% CPU，峰值 RSS 261,348 KiB、无 swap；此前无竞争 v5 基线为 6.49 s |
-| 输出 | 300/300 帧具备双侧数值位姿；266 帧联合可信，263 帧双侧实测，34 帧长间隔不可信，`SELF_CALIBRATED_PASS` |
-| CSV 产品入口 | `bin/process_instaumi_dataset.sh DATASET_ROOT`；终端显示阶段、四路合计帧/块进度、百分比、ETA 与整条耗时；四文件原子发布到 `processed/{trajectory,gripper,processed,metadata}.csv`，其中全部相机位姿使用 `world_flu_aprilgrid_midpoint -> hand_camera_flu_back_x`，并在 metadata 保存原生地图到 FLU 的完整变换；保留 `time_alignment.csv`；成功发布后删除本次 v8 `final/` 工作制品，失败时保留供诊断；夹爪信号保持诊断级 `training_ready=0` |
-| 回归测试 | 当前本地/服务器完整测试均为 307 passed/8 skipped；新增世界 FLU 原点、右手轴、位置/四元数、地图和发布 metadata 回归；此前服务器启用正式 v7 缓存回归时 283 passed/7 skipped |
-| IMU 状态 | 当前 `dataset.h5` 共享 IMU 样本数为 0，左右独立流缺失；v8 明确 `UNAVAILABLE_NO_SAMPLES`，34 个长间隔帧回退视觉 `INTERPOLATED_UNTRUSTED`，不伪造 IMU |
-| 最新已发视频 | `instaumi_20260901_105442_trajectory_world_flu_front_above_feishu30m.mp4`，固定 `flu-front-above`，1280×720/30 FPS/317.5 s，SHA-256 `6fb8ca0a...02af`；服务器保留 1920×1080 高清原片 `cfe4c4b9...b72b` |
+| 服务器无缓存耗时 | 101.37 s 新数据 v10（四路视频+两次轨迹/自标定+发布）为 70.362 s；旧 10 s v8 基线为 5.87 s |
+| 输出 | 新数据 3,039/3,039 帧具备双侧数值位姿；2,895 帧联合可信，2,890 帧双侧实测，`SELF_CALIBRATED_PASS` + `VISUAL_SELF_CALIBRATED_PASS` |
+| CSV 产品入口 | `bin/process_instaumi_dataset.sh [--trajectory-only] DATASET_ROOT`；终端显示阶段、四路合计帧/块进度、百分比、ETA 与整条耗时；`--trajectory-only` 只原子发布 `processed/trajectory.csv`，默认模式仍发布四个 CSV；全部相机位姿使用 `world_flu_aprilgrid_midpoint -> hand_camera_flu_back_x`；保留既有 `processed/` 文件，成功后删除本次 v10 `final/` 工作制品，失败时保留诊断信息 |
+| 回归测试 | 当前本地/服务器完整测试均为 317 passed/7 skipped；`./umi verify` 为 `PASS` 且不再包含任何 `/home/cenxi` 外部验收 gate |
+| IMU 状态 | 新 H5 含左 101,985/右 100,991 个独立陀螺样本，但明确缺外参/偏置；v10 以高质量视觉旋转 fail-closed 自标定，自动估计左/右时差 -598/-6 ms，留出 p95 1.851/1.245°，两侧外参差 3.583°；149 个侧帧用陀螺桥接，位置不做加速度二次积分 |
+| 最新已发视频 | `instaumi_20260901_165007_trajectory_world_flu_front_above_feishu.mp4`，固定 `flu-front-above`，1280×720/30 FPS/101 s，SHA-256 `e282c68c...9051`；服务器高清原片 1920×1080/101.37 s，SHA-256 `fe19e27d...d079` |
 | 受管服务实际 unit | `osmo-visualization.service`、`osmo-alignment-review.service`（认证网关）、`osmo-alignment-review-backend.service`；三者均为 user unit，active/enabled、`NRestarts=0` |
 
 ## 问题清单
@@ -44,9 +44,9 @@
 | SEC-001 | 高 | RESOLVED | H5 `dataset_id` 和 JSON `pair_id` 未验证即参与缓存/最终目录拼接；worker 发布阶段对计算出的目标目录执行 `shutil.rmtree`。恶意 `../` 可造成路径穿越和越界删除。涉及 `instaumi.py`、`four_mp4.py`、`four_mp4_worker.py`、`dataset_worker.py`。 | 已实现标识白名单、发现/worker 双重验证、修订锁检查、解析后包含性检查与逐级符号链接拒绝；13 个恶意输入/发布场景、真实 dry-run、服务器完整发布均通过。提交 `80e0f7f`，服务器 `3f09e68`。 |
 | QUAL-001 | 高 | RESOLVED | `write_joint_pose_csv` 对所有处于首尾测量之间的缺失帧插值，不限制相邻测量间隔。当前左轨迹报告最大插值间隔约 0.634 s，违反 v50 最大可信间隔 0.25 s 约束。 | v4 长间隔输出 `INTERPOLATED_UNTRUSTED`、空位姿、联合无效；渲染隐藏相机并断开轨迹/趋势线。服务器无缓存结果：可信最大 0.0667 s，拒绝最大 0.6340 s，32 帧不可信，联合有效率 89.33%，全部门通过；7.1 秒视频人工检查通过。 |
 | QUAL-002 | 高 | RESOLVED | v4 将长间隔的 XYZ/四元数置空，导致 32/300 帧不具备数值位姿，不符合当前“每帧都有位姿”的产品需求。 | v5 每帧保留位姿：长段插值为 `INTERPOLATED_UNTRUSTED`，首尾为 `HELD_UNTRUSTED`，`joint_has_pose` 与 `joint_valid` 解耦。服务器逐行审计 300/300 非空且有限，四元数归一，v3/v5 数值差为 0；视频中 7.1 s 位姿持续显示。 |
-| QUAL-003 | 中 | IN_PROGRESS | v7 已实现低置信度内部间隔的陀螺仪姿态桥接，但当前样例 H5 只有空的共享 `/sensor/imu`，没有可安全绑定到两只独立手部相机的样本。 | 新数据集提供左右独立 IMU 时间戳/角速度/valid、`T_rig_imu_left/right`、`T_rig_camera_left/right` 和明确 `T_target_source` 语义后，无缓存复跑并检查样本覆盖、最大间隔、端点闭合量及视频；位置继续使用视觉端点插值，不做未经验证的加速度二次积分。 |
-| QUAL-004 | 高 | IN_PROGRESS | v8 已把强测量的镜头 handoff 纳入时间质量门：真实序列仅将左侧 frame 168/360/420 降信任，7.007 s 异常锚点不再标为实测；联合轨迹仍有 300/300 数值位姿，最大逐帧旋转 21.25°→11.16°。但完整数值轨迹最大平移单步仍为 86.1 mm，且在没有真值/完整镜头外参时不能证明所有同镜头或跨网格快速段都准确。 | 保留 v8 真实回归与每帧数值回退；新数据到位后以完整双镜头外参和广义相机解核对剩余 86.1 mm 单步，并再决定是否增加与镜头无关的跨网格候选一致性门，不能以任意低速度阈值误杀真实手部运动。 |
-| QUAL-005 | 高 | IN_PROGRESS | v8 已保留每个选中 inlier 的 `lens_stream`、输出主导镜头/计数，并对“主导镜头切换且速度超过 1.5 m/s 或角速度超过 180°/s”的首个几何有效候选降信任；观察镜头状态随后推进，避免连续误拒。正式样例左/右命中 3/0 帧，慢速 0.634 s handoff 保留，简单面积迟滞继续禁用。底层仍缺镜头光心平移、前镜头完整畸变和广义相机 PnP；CameraSDK/MediaSDK 公共 API 无法导出这些数据。 | 新数据必须显式提供每只 X5 两个镜头的完整投影、畸变和 `T_rig_lens0/1`（含平移），或先做独立可复现的双鱼眼离线标定，再改用带射线光心的非中心/广义相机求解。v8 是保守可信度补丁，不得宣称已修复几何模型，也不得把样例内约 15°旋转或 SDK 私有符号固化为通用标定。 |
+| QUAL-003 | 中 | RESOLVED | v10 支持明确标定的每侧 IMU；对本次只有 `range_only` 且左 IMU 仍有约 0.6 s 时差的 H5，先跑纯视觉，再自标定时差/轴向/偏置并以留出集、三轴激励和左右外参一致性 fail-closed。真实新数据两侧通过，149 个侧帧陀螺桥接，3,039/3,039 联合位姿有数值。 | 继续保留视觉位置插值，不对未标定加速度做二次积分；若新 capture 自标定门不通过必须回退视觉并显式审计。 |
+| QUAL-004 | 高 | RESOLVED | v10 用与镜头来源无关的通用绝对运动门拒绝 `>3 m/s` 或 `>540°/s` 候选，拒绝后只允许 `>=5 Tag` 且相对上一可信姿态 `<=1.5 m/s`、`<=180°/s` 的强几何解解除锁定；每帧数值位姿仍由显式不可信回退保留。旧 `105442` 在 63.8638 s 的错误同镜头 PnP 分支原为 326.6 mm/22.69°，回归后 63 s 窗最大 85.4 mm、全局最大 99.3 mm，9,516/9,516 帧仍有位姿。 | 已关闭已知 63 s 跳变；后续真实快速动作仍需以外部真值验证，阈值必须保持通用、可审计，不得以删帧或把不可信估计冒充测量来平滑。 |
+| QUAL-005 | 高 | IN_PROGRESS | v10 在 v8 镜头来源审计之上增加通用绝对运动门和 IMU 姿态一致性门，新数据左/右最大逐帧平移为 83.3/52.6 mm、最大旋转 7.86/10.47°；但底层仍缺镜头光心平移、前镜头完整畸变和广义相机 PnP，H5 也没有 camera-IMU 外参/偏置。 | 新数据必须显式提供每只 X5 两个镜头的完整投影、畸变和 `T_rig_lens0/1`（含平移），或先做独立可复现的双鱼眼离线标定，再改用带射线光心的非中心/广义相机求解；在此之前继续把物理准确度与“无明显跳变”分开表述。 |
 | REL-001 | 高 | RESOLVED | 结果发布采用“先删最终目录，再 copytree”。处理中断会丢失上一版已完成输出，且放大 SEC-001 的破坏面。 | 已改为同级临时目录完整复制后切换，旧目录先重命名为可恢复备份，切换成功后才删除；服务器真实发布成功且不存在 `.publish-*`/`.backup-*` 残留。 |
 | SEC-002 | 高 | OPEN | 服务器流水线以高权限 `ps` 用户运行。实测 `/var/run/docker.sock` 为 `root:docker 0660`，`ps` 属于 `docker` 组且无需 sudo 即可在关键 `gitlab` 容器中启动 `uid=0(root)` 进程；`ps` 还属于 `sudo`、`lxd`、`k3s-admin`。独立账户也不能直接复用当前 checkout：`/home/ps` 为 `0750`，项目 `.venv/bin/python` 最终指向 `/home/ps/.local/share/uv/.../python3.13`，而 `.local`/`.local/share` 均为 `0700`；仅把新账户加入 `ps` 组会重新扩大主目录访问面，不能作为修复。 | 已完成最小权限与回滚矩阵。待用户授权后，建立不含任何特权附加组的无登录 `osmo360-worker`，从 root 管理、只读、自包含的 `/opt/osmo360/releases/<commit>` 运行；输入只读，只开放精确 pipeline revision 的 cache/final 子树和专属 `/run` 任务槽，unit 禁网并限制文件系统、CPU、内存和任务数。先在精确限定的影子数据集 dry-run/无缓存复跑并对比轨迹，再切换调度；原 checkout、正式 v8 和现有服务保留回滚，不能直接删 `ps` 的组或覆盖基线。 |
 | SEC-003 | 中 | IN_PROGRESS | 服务器有 `0.0.0.0:8000`、`:7864`、`:7865`、`:7869` 等项目相关服务监听局域网。`:7865`、`:7869` 已认证；其余服务的归属与接口已完成只读审计并拆为 SEC-005/007。 | 当前最高风险为独立项目的 SEC-005；`:7864` 按 SEC-007 决定停用或迁移。 |
@@ -370,12 +370,24 @@
 - 飞书接口先拒绝 194.1 MiB 高清原片，并进一步以 `234006` 拒绝 86.6 MB 发送版，说明当前租户实际 media 限额低于 CLI 提示的 100 MB。最终保留 30 FPS/9,525 帧/317.5 s，编码 1280×720、25,575,931 B 的发送版，SHA-256 `6fb8ca0ad5ec9ba410c9b415837f18402e970a68809677caf2bb130e04e202af`；文字 `om_x100b6649430d44b4c0200ef4690683a`、视频 `om_x100b66495890f4a8c1cb94b68e14a2b` 已发送并回读，media 报告时长 318 s。两份本地发送副本与高清原片均保留在该数据集 `processed/`。
 - 新增/更新原点与轴向、位置/姿态、地图、CSV schema/metadata 及固定机位回归；本地和服务器完整测试均为 `307 passed, 8 skipped`，聚焦测试 20 passed，`git diff --check` 通过。功能提交为本地 `b7f350b`、服务器等价 `fae8ac8`；服务器既有未提交 `config/devices/x5_factory_lens_offsets.json` 保持原样且未纳入提交。下一步等待用户观看视频确认实际方向；若方向定义需调整，必须修改单一共享变换并重新生成 CSV/视频，不能在渲染层单独翻转造成产品与画面不一致。
 
+### 2026-09-02 / Cycle 025
+
+- 按用户明确要求删除仓库中所有依赖 `/home/cenxi/` 的历史/X5 外部验收门：两份残留 baseline lock、历史提交绑定、X5 one-sided verifier 及其注册、测试和文档引用均已移除。没有触碰或删除 `/home/cenxi/` 下的外部原始视频/数据；`./umi verify` 现在返回 `{"status":"PASS","baselines":[]}`，不再把某台机器上的外部文件作为运行环境 gate。
+- 修复 `instaumi_20260901_105442` 约 63 s 的轨迹突变。根因是同一镜头上的低 Tag 数错误 PnP 分支，不是可视化频率：旧轨迹 63.8638 s 单步为 326.6 mm/22.69°（9.789 m/s、679.9°/s）。v10 增加与镜头来源无关的绝对运动门和强几何重定位锁；用旧 v8 observation cache 回归后 9,516/9,516 帧仍有数值位姿，63 s 窗最大单步 85.4 mm，全局左/右最大 99.3/96.7 mm，`29.969730572 Hz`、`SELF_CALIBRATED_PASS`。
+- 新数据 `instaumi_20260901_165007` 为同事已做“时间对齐”的 H5：保留左首帧 `-0.5 ms`、右首帧 `0 ms` 及各自原始时间戳，不对左右流独立归零；3,039 对视频帧最大配对差为 5 ms，产品统一采用右 H5 的稳定 `29.969730572 Hz` 时间线。JSON `intrinsics:null` 时按已校验的相机序列号回退 factory 参数，不再因空内参崩溃或错绑旧全局 pair。
+- H5 有左 101,985/右 100,991 个 IMU 样本，但 camera-IMU 外参、陀螺偏置均缺失，标定状态只有 `range_only`。v10 先跑纯视觉，再用高质量视觉旋转对每侧陀螺做 capture-local 时差、轴向和偏置自标定；少于 200 对、速度相关 `<0.70`、三轴激励 `<0.10`、留出残差中位/95 分位 `>0.50/2.0°` 或两侧外参差 `>10°` 均 fail-closed 回退视觉。真实结果为左/右时差 `-598/-6 ms`、速度相关 `0.891/0.936`、留出 p95 `1.851/1.245°`、两侧外参差 `3.583°`，通过 `VISUAL_SELF_CALIBRATED_PASS`；这说明容器时间线已对齐，但左 IMU 相对视觉仍有可观测的约 0.6 s 残差，不覆写源时间戳。
+- IMU 只用于姿态质量门和低质量段桥接：本次左 117/右 32 个侧帧得到辅助，其中 5 帧是可信短间隔、144 帧保持长间隔不可信；位置继续使用视觉端点插值，绝不对未标定加速度二次积分。最终 3,039/3,039 帧双侧位姿均有限，2,895 帧联合可信、2,890 帧双侧实测；CSV 明确逐行标记 `world_flu_aprilgrid_midpoint -> hand_camera_flu_back_x`，schema 为 `instaumi-csv-v4-explicit-flu-frames`。
+- CPU 服务器真实无缓存 trajectory-only 入口 wall `70.362 s`（轨迹阶段 `69.706 s`），只发布原数据集 `processed/trajectory.csv`，不创建可见 `final/`；结果 SHA-256 `67a0e0c17e8caebb5979a9d67d6d76a56070ac25f1b1713944c14c41bd01b3e7`。101.37 s 视频左/右最大逐帧平移 `83.3/52.6 mm`、最大旋转 `7.86/10.47°`，最大配对时间差 5 ms；没有外部真值，不能把该连续性指标当作绝对精度证明。
+- 用固定 `flu-front-above`、`--reframe-world-flu`、不跟随/不自动旋转模板生成服务器高清轨迹视频：1920×1080/30 FPS/101.37 s，SHA-256 `fe19e27d6cfd811f34507c8d1183badbd4785b74441a43bcc0e39527d17cd079`，wall `2:38.28`、平均 CPU `344%`、峰值 RSS 1,300,456 KiB、无 swap；人工检查封面和 7.1 s，两块 AprilGrid 横排、从打印正面斜上俯拍，XYZ/RPY 面板可见。飞书 1280×720/30 FPS 发送版 SHA-256 `e282c68ca608925ba5272182dc7355f6f225653750c6e0e136cea8a56ca19051`；进度 `om_x100b664a5e7514a0c423d1d9f9746a8`、视频 `om_x100b664a5dc34ca0c02e04dcc6a8968` 已发送王浩并回读验证。
+- 功能提交为本地 `b839ea8`、`feb8d30`，服务器等价 `6fdb554`、`35fee60`；本地和服务器完整测试均为 `317 passed, 7 skipped`，compileall、bash 语法、`git diff --check` 与 `./umi verify` 均通过。正式源数据和已发布 `processed/` 结果均保留，临时回归目录已精确清理。
+
 ## 最近一次流水线版本变更验证
 
-- 改动：CSV 产品层和审阅渲染共用 `aprilgrid-midpoint-flu-back-x-v1`，把 v8 原生 Tag Map 轨迹刚体重表达为世界 FLU；检测、光流、PnP、时间线、可信度和每帧数值位姿策略未改变。
-- 提交：本地 `b7f350b`，服务器等价 `fae8ac8`。
-- 服务器输出：`.../instaumi_20260901_105442/processed/{trajectory,gripper,processed,metadata}.csv`；9,516/9,516 帧具备双侧数值位姿，`29.969730572 Hz`、`SELF_CALIBRATED_PASS`、`world_flu_aprilgrid_midpoint -> hand_camera_flu_back_x`。
-- 世界定义：两网格中心中点为零；`+X` 指向网格背面，`+Y` 向左，`+Z` 向上；位置、姿态和渲染地图使用同一变换，刚体距离保持误差 `<1.5e-9 m`。
-- 回归：本地/服务器完整测试均为 307 passed/8 skipped，真实热缓存发布 3.946 s。
-- 最终审阅视频：服务器高清 1920×1080/30 FPS/317.5 s 原片 SHA-256 `cfe4c4b9...b72b`；飞书 1280×720/30 FPS 发送版 SHA-256 `6fb8ca0a...02af`，固定 `flu-front-above`。
-- 飞书：文字 `om_x100b6649430d44b4c0200ef4690683a`、视频 `om_x100b66495890f4a8c1cb94b68e14a2b`，均已回读验证。
+- 改动：`dual-x5-four-mp4-cpu-v10` 增加通用绝对运动门、强几何重定位锁和 fail-closed 的每侧视觉/陀螺自标定；产品逐行显式输出世界/子 frame；仓库完全移除 `/home/cenxi` 外部验收 gate。
+- 提交：本地 `b839ea8`、`feb8d30`，服务器等价 `6fdb554`、`35fee60`。
+- 服务器输出：`.../instaumi_20260901_165007/processed/trajectory.csv`；3,039/3,039 帧具备双侧数值位姿，2,895 帧联合可信、2,890 帧双侧实测，`29.969730572 Hz`、`SELF_CALIBRATED_PASS`、`world_flu_aprilgrid_midpoint -> hand_camera_flu_back_x`。
+- 时间/IMU：H5 左右视频帧最大差 5 ms，产品沿用右侧稳定时间线；视觉自标定通过，估计左/右 IMU 时差 `-598/-6 ms`，留出 p95 `1.851/1.245°`，149 个侧帧使用陀螺辅助，位置不积分加速度。
+- 旧跳变回归：`105442` 原 63.8638 s 的 326.6 mm/22.69° 错误锚点被拒，63 s 窗最大逐帧平移降至 85.4 mm，同时保持 9,516/9,516 帧数值位姿。
+- 性能/回归：真实 101.37 s 数据 trajectory-only 无缓存 wall `70.362 s`；本地/服务器完整测试均为 `317 passed, 7 skipped`，`./umi verify` 均为 PASS/空 baseline。
+- 最终审阅视频：服务器高清 1920×1080/30 FPS/101.37 s 原片 SHA-256 `fe19e27d...d079`；飞书 1280×720/30 FPS 发送版 SHA-256 `e282c68c...9051`，固定 `flu-front-above`。
+- 飞书：进度 `om_x100b664a5e7514a0c423d1d9f9746a8`、视频 `om_x100b664a5dc34ca0c02e04dcc6a8968`，均已回读验证。
