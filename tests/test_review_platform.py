@@ -153,6 +153,8 @@ def test_keyframes_require_usable_video_and_export_requested_json(tmp_path: Path
     )
     assert start["frame"] == 53
     assert end["frame"] == 173
+    assert store.keyframes_path == tmp_path / "keyframes.json"
+    assert not (state / "keyframes.json").exists()
     exported = json.loads(store.keyframes_path.read_text())
     assert list(exported) == [pair_id]
     assert exported[pair_id] == [start, end]

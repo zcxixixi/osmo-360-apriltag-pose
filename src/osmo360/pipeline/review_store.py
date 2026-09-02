@@ -126,7 +126,9 @@ class ReviewStore:
         self.database = (database or review_root / "reviews.sqlite").resolve(); self.snapshot = review_root / "reviews.snapshot.sqlite"
         self.queue_path = review_root / "reprocess_queue.json"; self.export_path = review_root / "approved_segments.json"
         self.alignment_path = review_root / "alignment_adjustments.json"
-        self.keyframes_path = review_root / "keyframes.json"
+        # keyframes.json belongs beside the many reviewed video directories;
+        # SQLite, snapshots, and operational state remain outside the dataset.
+        self.keyframes_path = self.dataset_root / "keyframes.json"
         self._initialize()
 
     def connect(self) -> sqlite3.Connection:
