@@ -30,7 +30,7 @@
 | 服务器无缓存耗时 | 101.37 s 新数据 v12 trajectory-only（四路视频+轨迹+IMU 辅助+发布）为 67.497 s，平均 CPU 611%、峰值 RSS 274,552 KiB、无 swap；旧 10 s v8 基线为 5.87 s |
 | 输出 | 新数据 3,039/3,039 帧具备双侧数值位姿；2,890 帧联合可信，2,885 帧双侧 AprilTag 实测（94.93%），`SELF_CALIBRATED_PASS`；所有已接受的 Tag 位姿保持原值，IMU 不覆写 |
 | CSV 产品入口 | 项目内 `./bin/process_instaumi_dataset.sh [--trajectory-only] DATASET_ROOT`（不是系统 `/bin`）；终端显示阶段、四路合计帧/块进度、百分比、ETA 与整条耗时；`--trajectory-only` 只原子发布 `processed/trajectory.csv`，默认模式发布四个 CSV。默认夹爪 r4 将数据集相机序列号作为溯源而非检测 gate，固定 ROI/物理左右夹爪标定的来源序列号另写入 metadata，跨序列号结果保持 `training_ready=0`；全部相机位姿使用 `world_flu_aprilgrid_midpoint -> hand_camera_flu_back_x`；保留既有 `processed/` 文件，成功后删除本次 v12 `final/` 工作制品，失败时保留诊断信息 |
-| 回归测试 | 当前本地完整测试为 323 passed/7 skipped，服务器（含独立自动导入扩展）为 331 passed/7 skipped；夹爪聚焦测试 15 passed；`./umi verify` 为 `PASS` 且不包含任何 `/home/cenxi` 外部验收 gate |
+| 回归测试 | 当前本地/服务器完整测试均为 334 passed/7 skipped；夹爪聚焦测试 15 passed；`./umi verify` 为 `PASS` 且不包含任何 `/home/cenxi` 外部验收 gate |
 | IMU 状态 | 修订 `x5-kmdgp-kmurq-visual-gyro-20260902-r1` 按左右序列号锁定旋转 baseline；显式非单位 `calibration_full` 永远优先，单位/空占位才回退 baseline，未知序列号 fail-closed。严格使用 H5 原始 `timestamp_ns` 和共同 `dataset_start` 插值，不保存捕获内 -598/-6 ms 调参；陀螺+加速度共辅助 116 个侧帧，加速度仅在视觉双端点间做去均值、端点闭合、最大 0.15 m 偏离的形状桥接，绝不外推尾段；本次最大偏离左/右 70.259/31.241 mm |
 | 最新已发视频 | `instaumi_20260901_165007_trajectory_world_flu_front_above_v12_feishu.mp4`，固定 `flu-front-above --reframe-world-flu`，1280×720/30 FPS/101 s，SHA-256 `6bd9ff57...9e37`；服务器高清原片 1920×1080/101.37 s，SHA-256 `021897f2...29c` |
 | 受管服务实际 unit | `osmo-visualization.service`、`osmo-alignment-review.service`（认证网关）、`osmo-alignment-review-backend.service`；三者均为 user unit，active/enabled、`NRestarts=0` |
@@ -400,7 +400,8 @@
 - CSV 产品 schema 升为 `instaumi-processed-csv/5.0-gripper-serial-provenance`。`metadata.csv` 分别记录数据集实际相机、标定来源相机、identity policy 和每侧 transfer status；CLI 明确打印 transfer 信息，跨序列号结果继续为诊断级 `training_ready=0`，不把相机身份当成精度证据。
 - CPU 服务器在刚才失败保留的正式数据上重新执行完全相同的默认 shell 命令成功：wall `47.55 s`、平均 CPU `824%`、峰值 RSS 275,124 KiB、无 swap；原子发布 `processed/{trajectory,gripper,processed,metadata}.csv` 后清理本次可见 `final/`。四个产品分别为 3,039 行（metadata 一行）；轨迹 SHA-256 仍为 `637be6c7...eec4`，证明定位数值未改变。
 - 真实夹爪覆盖：左侧直接/单侧低置信测量 3,006 帧、短缺口恢复 33 帧，右侧直接测量 3,025 帧、短缺口恢复 14 帧；两侧最终均为 3,039/3,039 有值。左开合角范围 0–30.096°、宽度 0–0.056419 m；右角度 0–36.056°、宽度 0–0.068744 m。覆盖率良好只证明检测器在该视频可工作，不构成跨设备物理精度真值。
-- 本地夹爪聚焦测试 15 passed、完整测试 `323 passed, 7 skipped`；服务器聚焦 15 passed、完整测试（包含服务器新增自动导入扩展）`331 passed, 7 skipped`；两端 `./umi verify`、compileall、bash 语法和 `git diff --check` 通过。功能提交本地 `594347c`、服务器等价 `3e0d8a6`。
+- 本地/服务器夹爪聚焦测试均为 15 passed、完整测试均为 `334 passed, 7 skipped`；两端 `./umi verify`、compileall、bash 语法和 `git diff --check` 通过。功能提交本地 `594347c`、服务器等价 `3e0d8a6`。
+- 同期服务器新增的自动导入流程最初仍按旧 r3 精确序列号决定是否只导出轨迹；后续提交 `d1ff874`、`eb711f7` 将其改为识别 r4 `provenance_only` 并执行完整导出，`3a430a3` 忽略不带录制时间戳的 INSV 别名。上述自动入口连同初始 `da7330f` 已等价整合进本地当前分支提交 `0c8f188`、`0091398`、`0f2837b`、`31df8d4`，避免手动入口修好而自动入口仍退化为 trajectory-only。
 
 ## 最近一次流水线版本变更验证
 
