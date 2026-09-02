@@ -389,12 +389,17 @@ def _full_export_available(episode: Path) -> bool:
     )
 
 
-def _process_complete(episode: Path) -> bool:
+def _full_outputs_complete(episode: Path) -> bool:
     processed = episode / "processed"
-    if all(
+    return all(
         (processed / name).is_file()
         for name in ("trajectory.csv", "gripper.csv", "processed.csv", "metadata.csv")
-    ):
+    )
+
+
+def _process_complete(episode: Path) -> bool:
+    processed = episode / "processed"
+    if _full_outputs_complete(episode):
         return True
     status_path = processed / "automation_status.json"
     if not (processed / "trajectory.csv").is_file() or not status_path.is_file():
@@ -572,6 +577,7 @@ def scan_once(
             "sources": {},
             "pairs": {},
         })
+        state["revision"] = AUTOMATION_REVISION
         pairs = discover_pairs(data_root, collectors)
         if episode_name is not None:
             pairs = [pair for pair in pairs if pair.episode_name == episode_name]
@@ -581,12 +587,17 @@ def scan_once(
             episode = pair.collector_root / pair.episode_name
             pair_status = _pair_status(state, pair)
             if _process_complete(episode):
+                mode = "full" if _full_outputs_complete(episode) else "trajectory_only"
                 pair_status.update({
                     "status": "COMPLETE",
+                    "stage": "complete",
+                    "mode": mode,
                     "episode": str(episode),
                     "updated_at_utc": _utc_now(),
                 })
-                skipped.append({"pair": pair.key, "reason": "complete"})
+                pair_status.pop("error", None)
+                pair_status.pop("next_retry_unix_s", None)
+                skipped.append({"pair": pair.key, "reason": "complete", "mode": mode})
                 continue
             if float(pair_status.get("next_retry_unix_s", 0)) > time.time():
                 skipped.append({"pair": pair.key, "reason": "retry_backoff"})
