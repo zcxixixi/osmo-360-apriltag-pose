@@ -178,23 +178,29 @@ product entry point is:
 ./bin/process_instaumi_dataset.sh /absolute/path/to/dataset-root
 ```
 
-For a dataset whose camera serials do not yet have a registered gripper
-calibration, publish only the joint trajectory without weakening that identity
-gate:
+To publish only the joint trajectory and skip gripper analysis:
 
 ```bash
 ./bin/process_instaumi_dataset.sh --trajectory-only /absolute/path/to/dataset-root
 ```
 
-This mode writes `processed/trajectory.csv`, preserves unrelated existing files
-under `processed/`, and never invents a gripper signal for unknown hardware.
+This mode writes `processed/trajectory.csv` and preserves unrelated existing files
+under `processed/`.
 
-It first runs or resumes the v10 shared-map trajectory pipeline, then reads the
-H5 serials/timestamps and the two registered 1920x1920 `*_back.mp4` gripper
-views. The H5 timeline is the bounded processing range: a source MP4 may retain
+The default full export first runs or resumes the v12 shared-map trajectory
+pipeline, then reads the H5 serials/timestamps and the two 1920x1920
+`*_back.mp4` gripper views. Camera serial numbers are output provenance rather
+than a detector gate: the yellow-dot detector measures the image on every
+capture, while the opening-width calibration is bound to the physical
+left/right gripper and BaseTag role. `metadata.csv` records both the actual
+dataset camera serial and the source camera used to establish the diagnostic
+calibration. A cross-serial result remains `training_ready=0`; detector coverage
+must be audited rather than treating camera identity as accuracy evidence.
+
+The H5 timeline is the bounded processing range: a source MP4 may retain
 verified trailing encoded frames, but missing source frames or any request past
 the H5 endpoint remains an error. The
-serial/BaseTag/mount-bound jaw calibration produces angle and calibrated jaw
+role/BaseTag/mount-bound jaw calibration produces angle and calibrated jaw
 width while preserving direct, low-confidence one-sided, short-gap recovered,
 and unavailable states.  It never derives a zero from each input episode.
 
@@ -202,9 +208,9 @@ The atomically published CSV product is written directly under the dataset:
 
 ```text
 processed/
-├── trajectory.csv  # v10 joint trajectory re-expressed in world FLU
+├── trajectory.csv  # v12 joint trajectory re-expressed in world FLU
 ├── gripper.csv     # synchronized left/right opening angle, width and state
-├── processed.csv   # trajectory and gripper columns joined at v10 timestamps
+├── processed.csv   # trajectory and gripper columns joined at v12 timestamps
 ├── metadata.csv    # revisions, source/target frames, rate and quality status
 └── time_alignment.csv  # preserved when already present
 ```

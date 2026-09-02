@@ -22,15 +22,22 @@ def _touch_inputs(root: Path) -> None:
             (root / "video" / f"{side}_{lens}.mp4").write_bytes(b"mp4")
 
 
-def test_signal_profile_is_hash_and_serial_bound() -> None:
+def test_signal_profile_is_hash_bound_and_camera_serial_is_provenance() -> None:
     payload, profiles = export.load_profile()
 
-    assert payload["revision_id"] == "instaumi-pair01-gripper-signal-20260902-r3"
+    assert payload["revision_id"] == (
+        "instaumi-gripper-signal-20260902-r4-role-bound-serial-provenance"
+    )
+    assert payload["camera_identity_policy"]["mode"] == "provenance_only"
     assert payload["prefer_h5_preview"] is False
     assert payload["prefer_fused_trajectory_marker_cache"] is True
     assert payload["processing_width_px"] == 1920
-    assert profiles["left"].camera_serial == "IAHEA2606M5WSK"
-    assert profiles["right"].camera_serial == "IAHEA2606KKUKF"
+    assert (
+        profiles["left"].calibration_source_camera_serial == "IAHEA2606M5WSK"
+    )
+    assert (
+        profiles["right"].calibration_source_camera_serial == "IAHEA2606KKUKF"
+    )
     assert profiles["left"].base_tag_id == 2
     assert profiles["right"].base_tag_id == 3
     assert profiles["right"].included_angle_range == (0.0, 80.0)
@@ -241,8 +248,8 @@ def test_export_writes_synchronized_csv_revision_without_removing_existing_files
         lambda _root: {
             "pair_id": "instaumi_example_000001",
             "cameras": {
-                "left": {"serial": "IAHEA2606M5WSK"},
-                "right": {"serial": "IAHEA2606KKUKF"},
+                "left": {"serial": "IAHEA2606KMDGP"},
+                "right": {"serial": "IAHEA2606KMURQ"},
             },
         },
     )
@@ -316,7 +323,45 @@ def test_export_writes_synchronized_csv_revision_without_removing_existing_files
     assert metadata["world_frame"] == "world_flu_aprilgrid_midpoint"
     assert metadata["world_frame_convention"] == "FLU"
     assert metadata["world_x_positive_definition"] == "AprilGrid_back"
+    assert metadata["gripper_camera_identity_policy"] == "provenance_only"
+    assert metadata["left_camera_serial"] == "IAHEA2606KMDGP"
+    assert metadata["right_camera_serial"] == "IAHEA2606KMURQ"
+    assert metadata["left_calibration_source_camera_serial"] == "IAHEA2606M5WSK"
+    assert metadata["right_calibration_source_camera_serial"] == "IAHEA2606KKUKF"
+    assert (
+        metadata["left_calibration_transfer_status"]
+        == "ROLE_BOUND_FIXED_ROI_SERIAL_TRANSFER"
+    )
+    assert (
+        metadata["right_calibration_transfer_status"]
+        == "ROLE_BOUND_FIXED_ROI_SERIAL_TRANSFER"
+    )
     assert not list(processed.glob(".instaumi-csv-v2-direct-*"))
+
+
+def test_explicit_legacy_profile_retains_exact_serial_gate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _touch_inputs(tmp_path)
+    monkeypatch.setattr(
+        export,
+        "load_instaumi_config",
+        lambda _root: {
+            "pair_id": "different-cameras",
+            "cameras": {
+                "left": {"serial": "IAHEA2606KMDGP"},
+                "right": {"serial": "IAHEA2606KMURQ"},
+            },
+        },
+    )
+    legacy_profile = (
+        Path(__file__).parents[1]
+        / "config/rig_revisions/instaumi_pair01_gripper_signal_20260902_r3.json"
+    )
+
+    with pytest.raises(ManifestError, match="does not match gripper profile"):
+        export.export_processed_dataset(tmp_path, profile_path=legacy_profile)
 
 
 def test_export_rejects_processed_symlink(
