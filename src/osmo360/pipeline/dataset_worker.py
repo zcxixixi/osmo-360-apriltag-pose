@@ -22,6 +22,7 @@ from .instaumi_format import (
     sha256,
     write_dataset_h5,
 )
+from .insta360_telemetry import extract_x5_imu
 from .manifest import ManifestError, ROOT
 
 PYTHON = ROOT / ".venv/bin/python"
@@ -345,12 +346,34 @@ def process_pair(root: Path, pair: dict[str, Any], scratch: Path) -> int:
             start_s=0.0, duration_s=common_duration, stream=0, output_size=1024,
             log=logs / f"aligned-{side.lower()}-1024.log",
         )
+    imu = {
+        "left": extract_x5_imu(
+            left_source,
+            scratch / "telemetry/left",
+            source_start_s=left_start,
+            duration_s=common_duration,
+            expected_serial=pair["left"]["serial"],
+        ),
+        "right": extract_x5_imu(
+            right_source,
+            scratch / "telemetry/right",
+            source_start_s=right_start,
+            duration_s=common_duration,
+            expected_serial=pair["right"]["serial"],
+        ),
+    }
+    status_update(
+        status, "imu", "PASS",
+        sample_count={side: int(len(samples.timestamp_ns)) for side, samples in imu.items()},
+        source={"left": "left_x5_insv", "right": "right_x5_insv"},
+    )
     metadata = write_dataset_h5(
         output_root / "dataset.h5", dataset_id=pair["dataset_id"],
         left_video=video_dir / "Left.mp4", right_video=video_dir / "Right.mp4",
         left_source=left_source, right_source=right_source,
         left_start_s=left_start, right_start_s=right_start, sync=sync,
         ffprobe=FFPROBE, source_records={"left": pair["left"], "right": pair["right"]},
+        imu=imu,
     )
     (processed / "review.json").write_text(json.dumps({
         "schema_version": "instaumi-alignment-review/1.0",
