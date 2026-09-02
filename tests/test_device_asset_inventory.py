@@ -81,6 +81,32 @@ def test_dual_gripper_pair_is_serial_bound_and_resolvable():
     assert resolved == pair
 
 
+def test_user_verified_kmdgp_kmurq_pair_is_serial_bound_and_resolvable():
+    inventory = json.loads(
+        (ROOT / "config/devices/x5_inventory.json").read_text(encoding="utf-8")
+    )["devices"]
+    assert inventory["IAHEA2606KMDGP"]["assignment"] == {
+        "role": "physical_left",
+        "base_tag_id": 2,
+        "label": "left-gripper-basetag2",
+    }
+    assert inventory["IAHEA2606KMURQ"]["assignment"] == {
+        "role": "physical_right",
+        "base_tag_id": 3,
+        "label": "right-gripper-basetag3",
+    }
+
+    pair_id, pair = resolve_device_pair(
+        {"IAHEA2606KMURQ", "IAHEA2606KMDGP"}
+    )
+    assert pair_id == "dual-x5-gripper-pair-02"
+    assert pair["left"]["serial"] == "IAHEA2606KMDGP"
+    assert pair["right"]["serial"] == "IAHEA2606KMURQ"
+    assert pair["verification"]["method"] == (
+        "user identification of serial-bound INSV stream-0 frames"
+    )
+
+
 def test_unknown_serial_combination_is_rejected():
     with pytest.raises(ManifestError, match="exactly one device pair"):
         resolve_device_pair({"IAHEA2606M5WSK", "UNKNOWN"})
