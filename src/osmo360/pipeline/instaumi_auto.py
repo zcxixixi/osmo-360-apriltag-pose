@@ -27,7 +27,7 @@ from .insta360_telemetry import extract_x5_imu
 from .instaumi_format import common_window, write_dataset_h5
 from .manifest import ManifestError, ROOT
 
-AUTOMATION_REVISION = "instaumi-auto-v2"
+AUTOMATION_REVISION = "instaumi-auto-v3"
 TARGET_FPS = "30000/1001"
 TARGET_FPS_FLOAT = 30000 / 1001
 SERIAL_PATTERN = re.compile(rb"IAHE[A-Z0-9]{10}")
@@ -38,7 +38,11 @@ GRIPPER_PROFILE = (
     ROOT / "config/rig_revisions/instaumi_gripper_signal_20260902_r4.json"
 )
 FFMPEG = Path(os.environ.get("INSTAUMI_AUTO_FFMPEG", "/usr/bin/ffmpeg"))
-FFPROBE = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffprobe"
+FFPROBE = Path(os.environ.get(
+    "INSTAUMI_AUTO_FFPROBE",
+    str(ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffprobe"),
+))
+VIDEO_ENCODER = os.environ.get("INSTAUMI_AUTO_VIDEO_ENCODER", "libx265")
 
 
 @dataclass(frozen=True)
@@ -324,6 +328,20 @@ def _audio_offset(left_path: Path, right_path: Path, approximate_s: float) -> di
     }
 
 
+def _video_encoder_args() -> list[str]:
+    if VIDEO_ENCODER == "libx265":
+        return [
+            "-c:v", "libx265", "-preset", "ultrafast",
+            "-x265-params", "pools=4:frame-threads=2", "-crf", "24",
+        ]
+    if VIDEO_ENCODER == "hevc_nvenc":
+        return [
+            "-c:v", "hevc_nvenc", "-preset", "p2", "-tune", "hq",
+            "-rc", "vbr", "-cq", "24", "-b:v", "0",
+        ]
+    raise PipelineFailure(f"unsupported video encoder: {VIDEO_ENCODER}")
+
+
 def _encode_lens(
     source: Path,
     output: Path,
@@ -336,15 +354,15 @@ def _encode_lens(
 ) -> None:
     temporary = output.with_name(output.stem + ".partial.mp4")
     temporary.unlink(missing_ok=True)
-    _run([
+    command = [
         str(FFMPEG), "-v", "error", "-y", "-ss", f"{start_s:.9f}",
         "-i", str(source), "-map", f"0:v:{stream}", "-an", "-vf",
         f"fps={TARGET_FPS},scale={size}:{size}:flags=lanczos", "-frames:v",
-        str(frame_count), "-c:v", "libx265", "-preset", "ultrafast",
-        "-x265-params", "pools=4:frame-threads=2", "-crf", "24",
+        str(frame_count), *_video_encoder_args(),
         "-pix_fmt", "yuv420p", "-tag:v", "hvc1",
         "-bf", "0", "-g", "30", "-movflags", "+faststart", str(temporary),
-    ], log)
+    ]
+    _run(command, log)
     temporary.replace(output)
 
 
@@ -552,21 +570,31 @@ def _record_failure(automation_root: Path, state: dict[str, Any], pair: Pair, er
     })
 
 
+def _pair_shard(pair: Pair, shard_count: int) -> int:
+    digest = hashlib.sha256(pair.key.encode()).digest()
+    return int.from_bytes(digest[:8], "big") % shard_count
+
+
 def scan_once(
     data_root: Path,
     process_script: Path,
     *,
     collectors: set[str] | None = None,
     episode_name: str | None = None,
+    shard_count: int = 1,
+    shard_index: int = 0,
     max_pairs: int = 1,
     dry_run: bool = False,
 ) -> dict[str, Any]:
+    if shard_count <= 0 or not 0 <= shard_index < shard_count:
+        raise ValueError("shard index must be within the positive shard count")
     data_root = data_root.resolve(strict=True)
     process_script = process_script.resolve(strict=True)
     automation_root = data_root / "_automation"
     automation_root.mkdir(exist_ok=True)
-    state_path = automation_root / "state.json"
-    lock_path = automation_root / "scan.lock"
+    suffix = "" if shard_count == 1 else f"-{shard_index}-of-{shard_count}"
+    state_path = automation_root / f"state{suffix}.json"
+    lock_path = automation_root / f"scan{suffix}.lock"
     with lock_path.open("a+") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -582,6 +610,11 @@ def scan_once(
         pairs = discover_pairs(data_root, collectors)
         if episode_name is not None:
             pairs = [pair for pair in pairs if pair.episode_name == episode_name]
+        if shard_count > 1:
+            pairs = [
+                pair for pair in pairs
+                if _pair_shard(pair, shard_count) == shard_index
+            ]
         processed_pairs = []
         skipped = []
         for pair in pairs:
@@ -690,6 +723,7 @@ def scan_once(
         return {
             "status": "COMPLETE",
             "revision": AUTOMATION_REVISION,
+            "shard": {"index": shard_index, "count": shard_count},
             "discovered_pairs": len(pairs),
             "processed": processed_pairs,
             "skipped_count": len(skipped),
@@ -711,6 +745,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--collector", action="append", default=[])
     parser.add_argument("--episode")
     parser.add_argument("--max-pairs", type=int, default=1)
+    parser.add_argument("--shard-count", type=int, default=1)
+    parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -719,12 +755,16 @@ def main() -> int:
     args = parse_args()
     if args.max_pairs <= 0:
         raise SystemExit("--max-pairs must be positive")
+    if args.shard_count <= 0 or not 0 <= args.shard_index < args.shard_count:
+        raise SystemExit("--shard-index must be within --shard-count")
     result = scan_once(
         args.data_root,
         args.process_script,
         collectors=set(args.collector) or None,
         episode_name=args.episode,
         max_pairs=args.max_pairs,
+        shard_count=args.shard_count,
+        shard_index=args.shard_index,
         dry_run=args.dry_run,
     )
     print(json.dumps(result, indent=2))

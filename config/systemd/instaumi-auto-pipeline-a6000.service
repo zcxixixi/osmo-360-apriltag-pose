@@ -1,0 +1,26 @@
+[Unit]
+Description=Process the A6000 shard of uploaded InstaUMI recordings
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/osmo-360-apriltag-pose
+Environment=PYTHONPATH=%h/osmo-360-apriltag-pose/src
+Environment=OSMO_FFMPEG_BIN=/usr/bin
+Environment=INSTAUMI_AUTO_FFMPEG=/usr/bin/ffmpeg
+Environment=INSTAUMI_AUTO_FFPROBE=/usr/bin/ffprobe
+Environment=INSTAUMI_AUTO_VIDEO_ENCODER=hevc_nvenc
+ExecStart=%h/osmo-360-apriltag-pose/.venv/bin/python -m osmo360.pipeline.instaumi_auto --data-root %h/nas-data-2/total_annotation/umi_insta360 --process-script %h/osmo-360-apriltag-pose/bin/process_instaumi_dataset.sh --max-pairs 1 --shard-count 2 --shard-index 1
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+UMask=0027
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ReadWritePaths=%h/nas-data-2/total_annotation/umi_insta360 %h/osmo-360-apriltag-pose/work
+TimeoutStartSec=infinity
+
+[Install]
+WantedBy=default.target
