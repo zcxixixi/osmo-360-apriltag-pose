@@ -135,6 +135,57 @@ def test_encoder_forces_common_frame_rate_and_count(tmp_path: Path, monkeypatch)
     assert command[command.index("-frames:v") + 1] == "3039"
 
 
+def test_encoder_supports_a6000_nvenc(monkeypatch) -> None:
+    monkeypatch.setattr(auto, "VIDEO_ENCODER", "hevc_nvenc")
+
+    arguments = auto._video_encoder_args()
+
+    assert arguments[arguments.index("-c:v") + 1] == "hevc_nvenc"
+    assert arguments[arguments.index("-preset") + 1] == "p2"
+
+
+def test_two_shards_are_disjoint_and_cover_every_pair(tmp_path: Path) -> None:
+    collector = tmp_path / "0901_instaumi_sort_blocks_qsb"
+    entries = []
+    for index in range(6):
+        left = write_raw(
+            collector,
+            "left",
+            f"VID_20260901_12{index:02d}00_00_{index:03d}.insv",
+        )
+        right = write_raw(
+            collector,
+            "right",
+            f"VID_20260901_12{index:02d}01_00_{index:03d}.insv",
+        )
+        entries.extend(((f"left/{left.name}", left), (f"right/{right.name}", right)))
+    write_sha(collector, entries)
+    script = tmp_path / "process.sh"
+    script.write_text("#!/bin/sh\n")
+    all_pairs = {pair.key for pair in auto.discover_pairs(tmp_path)}
+
+    shard_results = [
+        auto.scan_once(
+            tmp_path,
+            script,
+            max_pairs=10,
+            shard_count=2,
+            shard_index=index,
+            dry_run=True,
+        )
+        for index in (0, 1)
+    ]
+    shard_pairs = [
+        {item["pair"] for item in result["processed"]}
+        for result in shard_results
+    ]
+
+    assert shard_pairs[0].isdisjoint(shard_pairs[1])
+    assert shard_pairs[0] | shard_pairs[1] == all_pairs
+    assert (tmp_path / "_automation/state-0-of-2.json").is_file()
+    assert (tmp_path / "_automation/state-1-of-2.json").is_file()
+
+
 def test_full_export_requires_matching_gripper_profile(
     tmp_path: Path,
     monkeypatch,
