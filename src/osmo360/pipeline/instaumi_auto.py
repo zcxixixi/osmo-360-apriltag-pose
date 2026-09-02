@@ -290,8 +290,14 @@ def _probe_source(source: Source) -> dict[str, Any]:
 
 def _run(command: list[str], log: Path) -> None:
     log.parent.mkdir(parents=True, exist_ok=True)
-    process = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    log.write_text(process.stdout, encoding="utf-8")
+    with log.open("w", encoding="utf-8") as output:
+        process = subprocess.run(
+            command,
+            cwd=ROOT,
+            text=True,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+        )
     if process.returncode:
         raise PipelineFailure(
             f"command failed ({process.returncode}): {' '.join(command)}; log={log}"
@@ -354,13 +360,16 @@ def _encode_lens(
 ) -> None:
     temporary = output.with_name(output.stem + ".partial.mp4")
     temporary.unlink(missing_ok=True)
+    progress = log.with_suffix(".progress")
+    progress.unlink(missing_ok=True)
     command = [
         str(FFMPEG), "-v", "error", "-y", "-ss", f"{start_s:.9f}",
         "-i", str(source), "-map", f"0:v:{stream}", "-an", "-vf",
         f"fps={TARGET_FPS},scale={size}:{size}:flags=lanczos", "-frames:v",
         str(frame_count), *_video_encoder_args(),
         "-pix_fmt", "yuv420p", "-tag:v", "hvc1",
-        "-bf", "0", "-g", "30", "-movflags", "+faststart", str(temporary),
+        "-bf", "0", "-g", "30", "-progress", str(progress), "-nostats",
+        "-movflags", "+faststart", str(temporary),
     ]
     _run(command, log)
     temporary.replace(output)
@@ -447,6 +456,10 @@ def format_pair(pair: Pair, automation_root: Path) -> Path:
     shutil.rmtree(scratch, ignore_errors=True)
     scratch.mkdir(parents=True)
     logs = automation_root / "logs" / pair.collector_root.name / pair.episode_name
+    _atomic_json(logs / "format_status.json", {
+        "stage": "audio",
+        "updated_at_utc": _utc_now(),
+    })
 
     left_record, right_record = _probe_source(pair.left), _probe_source(pair.right)
     audio = scratch / "audio"
@@ -464,6 +477,12 @@ def format_pair(pair: Pair, automation_root: Path) -> Path:
         left_record["duration_s"], right_record["duration_s"], sync["offset_s"]
     )
     frame_count = max(1, int(round(duration * TARGET_FPS_FLOAT)))
+    _atomic_json(logs / "format_status.json", {
+        "stage": "video",
+        "frame_count_per_video": frame_count,
+        "video_count": 6,
+        "updated_at_utc": _utc_now(),
+    })
 
     jobs = []
     for side, source, start in (
@@ -498,6 +517,12 @@ def format_pair(pair: Pair, automation_root: Path) -> Path:
         ]
         for future in futures:
             future.result()
+    _atomic_json(logs / "format_status.json", {
+        "stage": "imu",
+        "frame_count_per_video": frame_count,
+        "video_count": 6,
+        "updated_at_utc": _utc_now(),
+    })
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         imu_futures = {
@@ -513,6 +538,12 @@ def format_pair(pair: Pair, automation_root: Path) -> Path:
             ),
         }
         imu = {side: future.result() for side, future in imu_futures.items()}
+    _atomic_json(logs / "format_status.json", {
+        "stage": "hdf5",
+        "frame_count_per_video": frame_count,
+        "video_count": 6,
+        "updated_at_utc": _utc_now(),
+    })
 
     write_dataset_h5(
         staging / "dataset.h5",
@@ -542,6 +573,12 @@ def format_pair(pair: Pair, automation_root: Path) -> Path:
         },
         "frame_rate": TARGET_FPS,
         "frame_count": frame_count,
+    })
+    _atomic_json(logs / "format_status.json", {
+        "stage": "complete",
+        "frame_count_per_video": frame_count,
+        "video_count": 6,
+        "updated_at_utc": _utc_now(),
     })
     staging.replace(episode)
     shutil.rmtree(scratch, ignore_errors=True)
@@ -607,6 +644,7 @@ def scan_once(
             "pairs": {},
         })
         state["revision"] = AUTOMATION_REVISION
+        state["node"] = os.uname().nodename
         pairs = discover_pairs(data_root, collectors)
         if episode_name is not None:
             pairs = [pair for pair in pairs if pair.episode_name == episode_name]
@@ -658,6 +696,7 @@ def scan_once(
                 pair_status.update({
                     "status": "RUNNING",
                     "stage": "format",
+                    "node": os.uname().nodename,
                     "updated_at_utc": _utc_now(),
                 })
                 _atomic_json(state_path, state)
@@ -666,6 +705,7 @@ def scan_once(
                 pair_status.update({
                     "status": "RUNNING",
                     "stage": "trajectory",
+                    "node": os.uname().nodename,
                     "mode": mode,
                     "episode": str(episode),
                     "updated_at_utc": _utc_now(),
@@ -690,6 +730,7 @@ def scan_once(
                 pair_status.update({
                     "status": "COMPLETE",
                     "stage": "complete",
+                    "node": os.uname().nodename,
                     "mode": mode,
                     "episode": str(episode),
                     "updated_at_utc": _utc_now(),
