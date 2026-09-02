@@ -24,7 +24,9 @@ def _touch_inputs(root: Path) -> None:
 def test_signal_profile_is_hash_and_serial_bound() -> None:
     payload, profiles = export.load_profile()
 
-    assert payload["revision_id"] == "instaumi-pair01-gripper-signal-20260902-r1"
+    assert payload["revision_id"] == "instaumi-pair01-gripper-signal-20260902-r2"
+    assert payload["prefer_h5_preview"] is False
+    assert payload["processing_width_px"] == 1920
     assert profiles["left"].camera_serial == "IAHEA2606M5WSK"
     assert profiles["right"].camera_serial == "IAHEA2606KKUKF"
     assert profiles["left"].base_tag_id == 2
@@ -68,6 +70,35 @@ def test_h5_preview_missing_falls_back_to_required_back_videos(tmp_path: Path) -
     assert inputs["right"].video == (tmp_path / "video/Right_back.mp4").resolve()
     assert inputs["left"].video_kind == "four_mp4_back_fallback"
     assert inputs["right"].timestamp_s.tolist() == [0.0, 0.1]
+
+
+def test_profile_can_force_full_resolution_back_videos(tmp_path: Path) -> None:
+    _touch_inputs(tmp_path)
+    for side in ("Left", "Right"):
+        (tmp_path / "video" / f"{side}.mp4").write_bytes(b"preview")
+    metadata = {
+        "video": {
+            "left": {"path": "video/Left.mp4", "sha256": "0" * 64},
+            "right": {"path": "video/Right.mp4", "sha256": "0" * 64},
+        }
+    }
+    with h5py.File(tmp_path / "dataset.h5", "w") as handle:
+        handle.require_group("metadata").create_dataset(
+            "dataset.json", data=json.dumps(metadata)
+        )
+        camera = handle.require_group("sensor/camera")
+        for side in ("left", "right"):
+            group = camera.require_group(side)
+            group.create_dataset("timestamp_ns", data=np.asarray([0, 100_000_000]))
+            group.create_dataset("video_path", data=f"video/{side.title()}.mp4")
+
+    inputs = export.load_side_inputs(
+        tmp_path, {"prefer_h5_preview": False, "input_lens": "back"}
+    )
+
+    assert inputs["left"].video == (tmp_path / "video/Left_back.mp4").resolve()
+    assert inputs["right"].video == (tmp_path / "video/Right_back.mp4").resolve()
+    assert inputs["left"].video_kind == "four_mp4_back_fallback"
 
 
 def test_export_writes_synchronized_csv_revision_without_removing_existing_files(

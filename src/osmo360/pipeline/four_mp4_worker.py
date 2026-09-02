@@ -319,6 +319,14 @@ def build_chunk_tasks(
         for lens in camera["lenses"]:
             stream = int(lens["stream"])
             video = root / lens["path"]
+            processing_frame_count = int(
+                camera.get("timeline", {}).get("frame_count", lens["frame_count"])
+            )
+            if processing_frame_count > int(lens["frame_count"]):
+                raise ManifestError(
+                    f"{side} stream {stream} has fewer video frames than its H5 timeline: "
+                    f"{lens['frame_count']} < {processing_frame_count}"
+                )
             use_h5_rear_calibration = bool(
                 stream == 0 and camera.get("rear_calibration")
             )
@@ -342,7 +350,7 @@ def build_chunk_tasks(
             chunk_root = cache_root / "observations" / side / f"lens-{stream}" / "chunks"
             for index, (start, end) in enumerate(
                 chunk_ranges(
-                    int(lens["frame_count"]),
+                    processing_frame_count,
                     float(lens["fps"]),
                     float(budget["cache_chunk_duration_s"]),
                     alignment=stride,

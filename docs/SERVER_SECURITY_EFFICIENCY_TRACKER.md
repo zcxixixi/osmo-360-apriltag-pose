@@ -322,6 +322,15 @@
 - 聚焦回归 41 passed 后补齐 H5 预览缺失→四 MP4 back 回退测试；最终本地和服务器完整测试均为 `288 passed, 8 skipped`，compileall/bash 语法检查通过，当前环境没有 ShellCheck。变更前后本地和服务器 `./umi verify` 都只因已知外部冻结时间线 `/home/cenxi/.../dual_gripper_claw_to_claw_action_v50_fixed_timeline.json` 缺失而失败，按用户既有授权忽略环境 gate；受保护 v50 文件未修改。
 - 功能提交为本地 `a620094`/`7a92685`，服务器等价 `3cf0029`/`f48a3ec`。正式 v8 视频 SHA 仍为 `fb12d2439c59b7573f07b98e4734aa24bab62d28e576083a6f68046d66bc9a48`，本轮未改坐标、轨迹算法或 19:03 渲染模板，因此不重复出片。下一步等新数据到位后先验证相同序列号/安装修订与右侧 7 帧遮挡分布；硬件或安装变化必须新增夹爪 signal revision，不能静默复用当前标定。
 
+### 2026-09-02 / Cycle 019
+
+- 新数据 `/home/ps/current-robotics-data-2/umi_insta360/0901_instaumi_sort_blocks/pair_M5WSK_KKUKF/final/instaumi_20260901_103308` 的 H5 左右时间轴和 1024 预览均为 7,767 帧/约 259.16 s；只有右侧两条 1920 原视频为 7,783 帧，多出 16 帧/约 0.534 s。画面相关性实测预览 frame 0→原视频 frame 0 为 `0.999899`，预览 frame 7766→原视频 frame 7766 为 `0.999814`，证明差异是编码尾帧而非开头错位。
+- 轨迹切块和缓存读取现以 H5 的显式时间轴长度为处理上限。仅当命令带有有界 `--end-frame/--stop-after-end-frame` 且终点完全落在 H5 内时，才允许忽略 MP4 尾部额外帧；视频少于 H5、无界读取或请求越过 H5 仍 fail-closed。缓存 sidecar 记录 `frame_count=7783`、`timeline_frame_count=7767` 和 `ignored_trailing_video_frames=16`，chunk merge 以 timeline 而不是编码尾部验收完整性。
+- 按用户要求新增夹爪信号修订 `instaumi-pair01-gripper-signal-20260902-r2`：不再读取 H5 的 1024 预览，固定使用 `Left_back.mp4`/`Right_back.mp4` 的 1920×1920 原视频；旧 r1 保持不变。夹爪解码同样在第 7,767 个 H5 帧停止，不读取右侧 16 个编码尾帧。
+- CPU 服务器续跑成功，最终 `processed/instaumi-csv-v1` 含 7,767 行、`29.969730572 Hz`；轨迹为 `SELF_CALIBRATED_PASS`、7,767/7,767 行 `joint_has_pose=true`、世界 `session_grid_A`、子坐标 `hand_camera_flu_back_x`。夹爪 r2 左侧可用 6,770/7,767、右侧 2,682/7,767；长遮挡分别保留 997/5,085 个 `UNAVAILABLE` 空值，不伪造开合。
+- 在轨迹 observation cache 已生成的情况下，完整入口实测 wall `3:44.01`、平均 CPU `685%`、峰值 RSS `853,712 KiB`、无 swap；其中轨迹合并/求解约 2 分钟，1920 夹爪约 1 分 44 秒。完全冷启动预计约 5–6 分钟，需以后续精确无缓存基准替换估算。此前两次失败运行分别暴露并验证了 worker 切块仍按源帧数、merge 仍按源尾帧验收的边界，均未覆盖正式输入或删除已完成缓存。
+- 新增有界尾帧、缺帧/越界拒绝、H5 timeline 切块、timeline-aware chunk merge、强制 1920 back 源等回归。聚焦测试服务器/本地均为 28 passed，完整测试两端均为 `294 passed, 8 skipped`，compileall 和 `git diff --check` 通过。两端 `./umi verify` 仍只因用户已授权忽略的 `/home/cenxi/.../dual_gripper_claw_to_claw_action_v50_fixed_timeline.json` 外部冻结文件缺失而失败，v50 受保护文件未修改。`final/dual-x5-four-mp4-cpu-v8` 是可恢复轨迹的 manifest/status/tracking 工作制品，用户 CSV 仍只发布到 `processed/instaumi-csv-v1`，本轮未自动删除正式中间制品。
+
 ## 最近一次流水线版本变更验证
 
 - 改动：v8 保留 inlier 镜头来源，对超过既有运动上限的主导镜头 handoff 首帧降信任；仍保留每帧数值位姿，渲染语义和 19:03 固定视角不变。
