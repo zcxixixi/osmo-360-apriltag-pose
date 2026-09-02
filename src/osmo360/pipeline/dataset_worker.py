@@ -346,16 +346,26 @@ def process_pair(root: Path, pair: dict[str, Any], scratch: Path) -> int:
             start_s=0.0, duration_s=common_duration, stream=0, output_size=1024,
             log=logs / f"aligned-{side.lower()}-1024.log",
         )
-    imu = extract_x5_imu(
-        left_source,
-        scratch / "telemetry/left",
-        source_start_s=left_start,
-        duration_s=common_duration,
-        expected_serial=pair["left"]["serial"],
-    )
+    imu = {
+        "left": extract_x5_imu(
+            left_source,
+            scratch / "telemetry/left",
+            source_start_s=left_start,
+            duration_s=common_duration,
+            expected_serial=pair["left"]["serial"],
+        ),
+        "right": extract_x5_imu(
+            right_source,
+            scratch / "telemetry/right",
+            source_start_s=right_start,
+            duration_s=common_duration,
+            expected_serial=pair["right"]["serial"],
+        ),
+    }
     status_update(
-        status, "imu", "PASS", sample_count=int(len(imu.timestamp_ns)),
-        source="left_x5_insv",
+        status, "imu", "PASS",
+        sample_count={side: int(len(samples.timestamp_ns)) for side, samples in imu.items()},
+        source={"left": "left_x5_insv", "right": "right_x5_insv"},
     )
     metadata = write_dataset_h5(
         output_root / "dataset.h5", dataset_id=pair["dataset_id"],

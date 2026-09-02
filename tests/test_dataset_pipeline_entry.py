@@ -170,13 +170,21 @@ def test_instaumi_h5_references_aligned_mp4(monkeypatch, tmp_path: Path) -> None
             "2653.083_8069.790_2689.460_0.386_0.193_90.228_10752_5376_11378"
         ),
     }
-    imu = ImuSamples(
+    imu_left = ImuSamples(
         timestamp_ns=np.asarray([0, 1_000_000], dtype=np.int64),
         source_timestamp_ns=np.asarray([10_000_000, 11_000_000], dtype=np.int64),
         angular_velocity=np.asarray([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]),
         linear_acceleration=np.asarray([[0.0, 0.0, 9.81], [0.1, 0.0, 9.80]]),
         valid=np.ones(2, dtype=np.uint8),
         provenance={"firmware_version": "v1.7.8", "camera_serial": LEFT_SERIAL},
+    )
+    imu_right = ImuSamples(
+        timestamp_ns=np.asarray([0, 1_000_000, 2_000_000], dtype=np.int64),
+        source_timestamp_ns=np.asarray([20_000_000, 21_000_000, 22_000_000], dtype=np.int64),
+        angular_velocity=np.asarray([[0.7, 0.8, 0.9]] * 3),
+        linear_acceleration=np.asarray([[0.0, 9.81, 0.0]] * 3),
+        valid=np.ones(3, dtype=np.uint8),
+        provenance={"firmware_version": "v1.7.8", "camera_serial": RIGHT_SERIAL},
     )
     output = tmp_path / "dataset.h5"
     write_dataset_h5(
@@ -185,15 +193,18 @@ def test_instaumi_h5_references_aligned_mp4(monkeypatch, tmp_path: Path) -> None
         left_start_s=0, right_start_s=.02,
         sync={"offset_s": .02, "uncertainty_s": .0005}, ffprobe=Path("ffprobe"),
         source_records={"left": source, "right": {**source, "serial": RIGHT_SERIAL}},
-        imu=imu,
+        imu={"left": imu_left, "right": imu_right},
     )
     with h5py.File(output) as handle:
         assert handle.attrs["schema_name"] == "instaumi"
         assert handle["sensor/camera/left/video_path"][()].decode() == "video/Left.mp4"
         assert handle["sensor/camera/right/frame_index"].shape == (2,)
-        assert handle["sensor/imu/angular_velocity"].shape == (2, 3)
-        assert handle["sensor/imu/source_timestamp_ns"][:].tolist() == [10_000_000, 11_000_000]
-        assert handle["sensor/imu/linear_acceleration"][0, 2] == pytest.approx(9.81)
+        assert handle["sensor/imu/left/angular_velocity"].shape == (2, 3)
+        assert handle["sensor/imu/right/angular_velocity"].shape == (3, 3)
+        assert handle["sensor/imu/left/source_timestamp_ns"][:].tolist() == [10_000_000, 11_000_000]
+        assert handle["sensor/imu/right/source_timestamp_ns"][:].tolist() == [20_000_000, 21_000_000, 22_000_000]
+        assert handle["sensor/imu/left/linear_acceleration"][0, 2] == pytest.approx(9.81)
+        assert handle["sensor/imu/right/linear_acceleration"][0, 1] == pytest.approx(9.81)
         calibration = json.loads(handle["calib/calibration_full.json"][()].decode())
         intrinsics = calibration["cameras"]["left"]["intrinsics"]
         assert intrinsics["fx"] == pytest.approx(328.3, abs=0.2)

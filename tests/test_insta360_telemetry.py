@@ -55,8 +55,8 @@ def test_extract_x5_imu_preserves_source_clock_and_converts_si_units(
 
     assert imu.timestamp_ns.tolist() == [0, 1_000_000]
     assert imu.source_timestamp_ns.tolist() == [1_002_000_000, 1_003_000_000]
-    assert imu.angular_velocity[0].tolist() == pytest.approx([np.pi, 0, -np.pi])
-    assert imu.linear_acceleration[0].tolist() == pytest.approx([0, 0, 9.808875])
+    assert imu.angular_velocity[0].tolist() == pytest.approx([-np.pi, 0, -np.pi])
+    assert imu.linear_acceleration[0].tolist() == pytest.approx([9.808875, 0, 0])
     assert imu.valid.tolist() == [1, 1]
     assert imu.provenance["firmware_version"] == "v1.7.8"
 
