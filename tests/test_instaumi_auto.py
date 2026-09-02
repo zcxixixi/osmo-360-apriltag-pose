@@ -32,6 +32,15 @@ def test_discovery_requires_sha_entries_for_both_sources(tmp_path: Path) -> None
     assert auto.discover_pairs(tmp_path) == []
 
 
+def test_discovery_ignores_non_timestamped_insv_aliases(tmp_path: Path) -> None:
+    collector = tmp_path / "0831_instaumi_sort_blocks_lyw"
+    left = write_raw(collector, "left", "left.insv")
+    right = write_raw(collector, "right", "right.insv")
+    write_sha(collector, [(f"left/{left.name}", left), (f"right/{right.name}", right)])
+
+    assert auto.discover_pairs(tmp_path) == []
+
+
 def test_approved_mapping_pairs_large_start_delta(tmp_path: Path) -> None:
     collector = tmp_path / "0901_instaumi_sort_blocks_sc"
     left = write_raw(collector, "left", "VID_20260901_171010_00_013.insv")

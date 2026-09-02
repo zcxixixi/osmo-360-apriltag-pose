@@ -124,6 +124,8 @@ def _sources_with_sha(collector_root: Path, side: str) -> dict[str, Source]:
         return {}
     result = {}
     for path in sorted(directory.glob("*.insv")):
+        if TIME_PATTERN.search(path.name) is None:
+            continue
         relative = f"{side}/{path.name}"
         expected = registry.get(relative)
         if expected is None:
