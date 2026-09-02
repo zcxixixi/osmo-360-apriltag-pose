@@ -95,6 +95,7 @@ def test_instaumi_aligned_videos_are_reviewable(tmp_path: Path) -> None:
     assert "数据能用吗？" in PAGE
     assert "采集人员（选填）" in PAGE
     assert "localStorage.collector=" not in PAGE
+    assert "localStorage.reviewer=" not in PAGE
     assert "左右对齐微调" in PAGE
 
 
