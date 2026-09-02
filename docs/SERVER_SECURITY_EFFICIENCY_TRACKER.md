@@ -29,8 +29,8 @@
 | 审核网关提交 | 本地安全代码 `3e5a0b3`、unit `2fd08c3`；服务器等价 `a6f22f2`、`f0ffecd` |
 | 服务器无缓存耗时 | 空闲服务器 v8 为 5.87 s，平均 1268% CPU，峰值 RSS 261,348 KiB、无 swap；此前无竞争 v5 基线为 6.49 s |
 | 输出 | 300/300 帧具备双侧数值位姿；266 帧联合可信，263 帧双侧实测，34 帧长间隔不可信，`SELF_CALIBRATED_PASS` |
-| CSV 产品入口 | `bin/process_instaumi_dataset.sh DATASET_ROOT`；四文件原子发布到 `processed/{trajectory,gripper,processed,metadata}.csv`，保留 `time_alignment.csv`，夹爪信号保持诊断级 `training_ready=0` |
-| 回归测试 | 当前本地/服务器完整测试均为 298 passed/8 skipped；此前服务器启用正式 v7 缓存回归时 283 passed/7 skipped，严格验证左侧仅 frame 168/360/420 命中 handoff 门、右侧 0、300/300 数值位姿 |
+| CSV 产品入口 | `bin/process_instaumi_dataset.sh DATASET_ROOT`；四文件原子发布到 `processed/{trajectory,gripper,processed,metadata}.csv`，保留 `time_alignment.csv`；成功发布后删除本次 v8 `final/` 工作制品，失败时保留供诊断；夹爪信号保持诊断级 `training_ready=0` |
+| 回归测试 | 当前本地/服务器完整测试均为 301 passed/8 skipped；此前服务器启用正式 v7 缓存回归时 283 passed/7 skipped，严格验证左侧仅 frame 168/360/420 命中 handoff 门、右侧 0、300/300 数值位姿 |
 | IMU 状态 | 当前 `dataset.h5` 共享 IMU 样本数为 0，左右独立流缺失；v8 明确 `UNAVAILABLE_NO_SAMPLES`，34 个长间隔帧回退视觉 `INTERPOLATED_UNTRUSTED`，不伪造 IMU |
 | 最新已发视频 | v8 `processed_joint_trajectory_30hz_tag_map_front_above_v8.mp4`，固定 `tag-map-front-above`，SHA-256 `fb12d243...c9a48` |
 | 受管服务实际 unit | `osmo-visualization.service`、`osmo-alignment-review.service`（认证网关）、`osmo-alignment-review-backend.service`；三者均为 user unit，active/enabled、`NRestarts=0` |
@@ -341,6 +341,13 @@
 - CSV 改为直接原子发布到原数据集 `processed/{trajectory,gripper,processed,metadata}.csv`，保留已有 `time_alignment.csv`；仅在旧 `processed/instaumi-csv-v1` 内部严格只含四个已知生成文件时清理旧重复目录。正式目录现有五个文件，旧子目录不存在；7,767 行全部 `joint_has_pose=true` 且双侧位姿值有限，`29.969730572 Hz`、`SELF_CALIBRATED_PASS`。
 - 本地/服务器完整测试均为 `298 passed, 8 skipped`，聚焦回归 33 passed，真实 full-range Y 精确回归、合成 YUV 三联、marker chunk merge、缓存导出不打开视频、直接发布/保留既有文件均通过。两次失败或中间基准目录均按精确路径清理；用户澄清应保留的是原数据集 `processed/`，最终又在原目录热发布一次并保留，独立 benchmark 目录已清理。`./umi verify` 仍只因用户已授权忽略的外部 v50 冻结文件缺失而失败，受保护文件未修改。
 - 功能提交为本地 `f13d57b`、服务器等价 `a2f56ec`；本轮没有改变轨迹数值、坐标或 19:03 固定机位渲染模板，因此正式轨迹视频不需要重新生成。
+
+### 2026-09-02 / Cycle 021
+
+- 按用户要求把单参数入口收敛为 `processed/` 单一可见产品目录。`bin/process_instaumi_dataset.sh` 仅在四个 CSV 已原子发布成功后清理本次 `final/dual-x5-four-mp4-cpu-v8`；先核验无符号链接、`manifest.lock.json` 的 revision 和顶层生成项白名单，外层 `final/` 仅在为空时删除。处理或导出失败时不执行清理，其他 revision/未知内容不删除；隐藏 `.osmo-cache` 保留以支持快速重跑。
+- 本地及 CPU 服务器完整回归均为 `301 passed, 8 skipped`，bash 语法与 `git diff --check` 通过。新增测试覆盖精确 revision 删除、空 `final/` 删除、兄弟目录保留、未知内容 fail-closed，以及最终 shell 入口必带清理开关。
+- 在 260 s 正式数据 `/home/ps/current-robotics-data-2/total_annotation/umi_insta360/0901_instaumi_sort_blocks/pair_M5WSK_KKUKF/final/instaumi_20260901_103308` 连续热运行两次：第一次 wall `2.90 s`、平均 `500% CPU`、峰值 RSS `171,276 KiB`，第二次从已无 `final/` 的状态重建并再次清理，wall `2.83 s`、`500% CPU`、峰值 RSS `170,084 KiB`。两次均无 swap且最终 `final/` 不存在。
+- 正式 `processed/` 保留 `trajectory.csv`、`gripper.csv`、`processed.csv`、`metadata.csv` 和既有 `time_alignment.csv`；前三个产品 CSV 均为 7,767 行，元数据复核为 `SELF_CALIBRATED_PASS`、`29.969730572 Hz`、`hand_camera_flu_back_x`。原始 `dataset.h5`、四 MP4 与隐藏缓存均未改动或删除。
 
 ## 最近一次流水线版本变更验证
 
