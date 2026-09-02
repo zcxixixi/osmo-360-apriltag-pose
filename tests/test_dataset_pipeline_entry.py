@@ -18,6 +18,7 @@ from osmo360.pipeline.dataset_worker import (
 )
 from osmo360.pipeline.insta360_telemetry import ImuSamples
 from osmo360.pipeline.instaumi_format import (
+    _imu_calibration,
     common_window,
     packet_timeline,
     write_dataset_h5,
@@ -188,6 +189,32 @@ def test_fisheye_cache_reuse_requires_complete_matching_signature(tmp_path: Path
     assert not cache_signature_matches(video, record, 0, 0.0, cache)
 
 
+@pytest.mark.parametrize(
+    "gyro_config",
+    [
+        None,
+        {"acc_range": 32},
+        {"acc_range": 32, "gyro_range": 0},
+    ],
+)
+def test_imu_calibration_rejects_missing_or_invalid_ranges(gyro_config) -> None:
+    samples = ImuSamples(
+        timestamp_ns=np.empty(0, dtype=np.int64),
+        source_timestamp_ns=np.empty(0, dtype=np.int64),
+        angular_velocity=np.empty((0, 3)),
+        linear_acceleration=np.empty((0, 3)),
+        valid=np.empty(0, dtype=np.uint8),
+        provenance=(
+            {}
+            if gyro_config is None
+            else {"gyro_config": gyro_config}
+        ),
+    )
+
+    with pytest.raises(ManifestError, match="gyro_config"):
+        _imu_calibration(samples)
+
+
 def test_instaumi_h5_references_aligned_mp4(monkeypatch, tmp_path: Path) -> None:
     import h5py
     import osmo360.pipeline.instaumi_format as fmt
@@ -224,7 +251,14 @@ def test_instaumi_h5_references_aligned_mp4(monkeypatch, tmp_path: Path) -> None
         angular_velocity=np.asarray([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]),
         linear_acceleration=np.asarray([[0.0, 0.0, 9.81], [0.1, 0.0, 9.80]]),
         valid=np.ones(2, dtype=np.uint8),
-        provenance={"firmware_version": "v1.7.8", "camera_serial": LEFT_SERIAL},
+        provenance={
+            "firmware_version": "v1.7.8",
+            "camera_serial": LEFT_SERIAL,
+            "gyro_config": {
+                "acc_range": 32,
+                "gyro_range": 2000,
+            },
+        },
     )
     imu_right = ImuSamples(
         timestamp_ns=np.asarray([0, 1_000_000, 2_000_000], dtype=np.int64),
@@ -232,7 +266,14 @@ def test_instaumi_h5_references_aligned_mp4(monkeypatch, tmp_path: Path) -> None
         angular_velocity=np.asarray([[0.7, 0.8, 0.9]] * 3),
         linear_acceleration=np.asarray([[0.0, 9.81, 0.0]] * 3),
         valid=np.ones(3, dtype=np.uint8),
-        provenance={"firmware_version": "v1.7.8", "camera_serial": RIGHT_SERIAL},
+        provenance={
+            "firmware_version": "v1.7.8",
+            "camera_serial": RIGHT_SERIAL,
+            "gyro_config": {
+                "acc_range": 32,
+                "gyro_range": 2000,
+            },
+        },
     )
     output = tmp_path / "dataset.h5"
     write_dataset_h5(
@@ -253,7 +294,13 @@ def test_instaumi_h5_references_aligned_mp4(monkeypatch, tmp_path: Path) -> None
         assert handle["sensor/imu/right/source_timestamp_ns"][:].tolist() == [20_000_000, 21_000_000, 22_000_000]
         assert handle["sensor/imu/left/linear_acceleration"][0, 2] == pytest.approx(9.81)
         assert handle["sensor/imu/right/linear_acceleration"][0, 1] == pytest.approx(9.81)
-        calibration = json.loads(handle["calib/calibration_full.json"][()].decode())
+        calibration_json = handle["calib/calibration_full.json"][()].decode()
+        metadata_json = handle["metadata/dataset.json"][()].decode()
+        assert calibration_json.startswith('{\n  "schema_version": "1.0.0",\n')
+        assert '\n  "coordinate_system": {\n' in calibration_json
+        assert metadata_json.startswith('{\n  "schema_version": "1.0.0",\n')
+        assert '\n  "time": {\n' in metadata_json
+        calibration = json.loads(calibration_json)
         intrinsics = calibration["cameras"]["left"]["intrinsics"]
         assert intrinsics["fx"] == pytest.approx(328.3, abs=0.2)
         assert intrinsics["fy"] == intrinsics["fx"]
@@ -261,7 +308,37 @@ def test_instaumi_h5_references_aligned_mp4(monkeypatch, tmp_path: Path) -> None
         assert intrinsics["cy"] == pytest.approx(513.4, abs=0.1)
         assert calibration["cameras"]["left"]["distortion"]["coefficients"] == [0.0] * 4
         assert calibration["extrinsics"]["T_rig_camera_left"] != np.eye(4).tolist()
-        metadata = json.loads(handle["metadata/dataset.json"][()].decode())
+        identity = np.eye(4).tolist()
+        extrinsics = calibration["extrinsics"]
+        assert extrinsics["transform_convention"] == "T_target_source"
+        assert extrinsics["T_rig_imu_left"] == identity
+        assert extrinsics["T_rig_imu_right"] == identity
+        assert extrinsics["T_right_left"] == identity
+        for side in ("left", "right"):
+            imu_calibration = calibration["imu_calibration"][side]
+            assert imu_calibration["gyroscope_bias_rad_s"] == [0, 0, 0]
+            assert imu_calibration["accelerometer_bias_m_s2"] == [0, 0, 0]
+            assert imu_calibration["gyroscope_scale"] == [1, 1, 1]
+            assert imu_calibration["accelerometer_scale"] == [1, 1, 1]
+            assert imu_calibration["gyroscope_range_rad_s"] == pytest.approx(
+                np.deg2rad(2000)
+            )
+            assert imu_calibration["accelerometer_range_m_s2"] == pytest.approx(
+                32 * 9.80665
+            )
+            assert None not in imu_calibration.values()
+        metadata = json.loads(metadata_json)
+        assert "null" not in calibration_json
+        for side in ("left", "right"):
+            range_provenance = metadata["imu"]["calibration_provenance"][side]
+            assert range_provenance == {
+                "range_source": "embedded_insv.gyro_cfg_info",
+                "gyro_config": {
+                    "acc_range": 32,
+                    "gyro_range": 2000,
+                },
+                "bias_scale": "identity_after_parser_normalization",
+            }
         dataset_start = metadata["time"]["dataset_start_source_timestamp_ns"]
         for kind in ("camera", "imu"):
             for side in ("left", "right"):
