@@ -340,6 +340,7 @@
 - 最终 CPU 服务器无缓存完整入口（四路轨迹 + 夹爪 + 四 CSV）为 `2:30.69`，user/system `1004.64/133.12 s`、平均 CPU `755%`、峰值 RSS `275,216 KiB`、20 major faults、无 swap；热缓存正式入口为 `3.60 s`、平均 CPU `529%`、峰值 RSS `169,936 KiB`。因此 260 s 视频的可靠预算约 151 s，而不是旧流程的 224 s；四路并行，不按 4×260 s 累加。
 - CSV 改为直接原子发布到原数据集 `processed/{trajectory,gripper,processed,metadata}.csv`，保留已有 `time_alignment.csv`；仅在旧 `processed/instaumi-csv-v1` 内部严格只含四个已知生成文件时清理旧重复目录。正式目录现有五个文件，旧子目录不存在；7,767 行全部 `joint_has_pose=true` 且双侧位姿值有限，`29.969730572 Hz`、`SELF_CALIBRATED_PASS`。
 - 本地/服务器完整测试均为 `298 passed, 8 skipped`，聚焦回归 33 passed，真实 full-range Y 精确回归、合成 YUV 三联、marker chunk merge、缓存导出不打开视频、直接发布/保留既有文件均通过。两次失败或中间基准目录均按精确路径清理；用户澄清应保留的是原数据集 `processed/`，最终又在原目录热发布一次并保留，独立 benchmark 目录已清理。`./umi verify` 仍只因用户已授权忽略的外部 v50 冻结文件缺失而失败，受保护文件未修改。
+- 功能提交为本地 `f13d57b`、服务器等价 `a2f56ec`；本轮没有改变轨迹数值、坐标或 19:03 固定机位渲染模板，因此正式轨迹视频不需要重新生成。
 
 ## 最近一次流水线版本变更验证
 
