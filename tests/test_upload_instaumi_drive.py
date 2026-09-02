@@ -40,7 +40,9 @@ def test_upload_publishes_sha_only_after_raw_rsync(
     result = upload.upload_collector(collector, "nas", "/data/instaumi")
 
     assert result["file_count"] == 2
-    assert commands[0][:5] == ["ssh", "-o", "BatchMode=yes", "nas", "mkdir"]
+    assert commands[0][:7] == [
+        "ssh", "-F", "/dev/null", "-o", "BatchMode=yes", "nas", "mkdir",
+    ]
     assert "--exclude=sha256.txt" in commands[1]
     assert commands[1][-1].endswith("/0902_instaumi_sort_blocks_qsb/raw/")
     assert commands[2][-1].endswith("/raw/sha256.txt")

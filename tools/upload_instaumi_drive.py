@@ -54,7 +54,10 @@ def run(command: list[str]) -> None:
 
 def upload_collector(collector: Path, host: str, destination_root: str) -> dict[str, Any]:
     destination = f"{destination_root.rstrip('/')}/{collector.name}/raw"
-    run(["ssh", "-o", "BatchMode=yes", host, "mkdir", "-p", destination])
+    run([
+        "ssh", "-F", "/dev/null", "-o", "BatchMode=yes",
+        host, "mkdir", "-p", destination,
+    ])
     run([
         "rsync",
         "-a",
@@ -63,6 +66,8 @@ def upload_collector(collector: Path, host: str, destination_root: str) -> dict[
         "--human-readable",
         "--info=progress2",
         "--exclude=sha256.txt",
+        "-e",
+        "ssh -F /dev/null -o BatchMode=yes",
         f"{collector / 'raw'}/",
         f"{host}:{destination}/",
     ])
@@ -79,6 +84,8 @@ def upload_collector(collector: Path, host: str, destination_root: str) -> dict[
             "rsync",
             "-a",
             "--delay-updates",
+            "-e",
+            "ssh -F /dev/null -o BatchMode=yes",
             str(checksum),
             f"{host}:{destination}/sha256.txt",
         ])
