@@ -35,7 +35,7 @@ from osmo360.visualization.render_gripper_force_angle_demo import (
 EXPORT_REVISION = "instaumi-csv-v1"
 PROFILE_PATH = (
     ROOT
-    / "config/rig_revisions/instaumi_pair01_gripper_signal_20260902_r1.json"
+    / "config/rig_revisions/instaumi_pair01_gripper_signal_20260902_r2.json"
 )
 SIDES = ("left", "right")
 
@@ -258,7 +258,7 @@ def _analyze_side(
             f"{source.side} gripper video/H5 rate mismatch: {fps} != {expected_fps}"
         )
     observations: list[FrameObservation] = []
-    while True:
+    while len(observations) < len(source.timestamp_s):
         ok, image = capture.read()
         if not ok:
             break

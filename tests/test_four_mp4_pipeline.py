@@ -11,12 +11,44 @@ from osmo360.pipeline import dataset, four_mp4
 from osmo360.pipeline.four_mp4_worker import _worker_environment, build_chunk_tasks
 from osmo360.pipeline.manifest import ManifestError
 from tools.merge_fisheye_observation_chunks import merge_chunks
-from tools.cache_fisheye_apriltag_observations import should_run_rectified
+from tools.cache_fisheye_apriltag_observations import (
+    ignored_trailing_video_frames,
+    should_run_rectified,
+)
 
 
 LEFT_SERIAL = "IAHEA2606M5WSK"
 RIGHT_SERIAL = "IAHEA2606KKUKF"
 OFFSET = "m2_100_100_100_0_0_90_100_300_100_0_0_90_400_200_1"
+
+
+def test_bounded_h5_timeline_ignores_only_encoded_video_tail() -> None:
+    assert ignored_trailing_video_frames(
+        timestamp_count=7767,
+        video_frame_count=7783,
+        end_frame=7766,
+        stop_after_end_frame=True,
+    ) == 16
+
+
+@pytest.mark.parametrize(
+    ("video_frames", "end_frame", "bounded"),
+    [
+        (7766, 7765, True),
+        (7783, 7767, True),
+        (7783, 7766, False),
+    ],
+)
+def test_h5_timeline_rejects_missing_or_unbounded_video_frames(
+    video_frames: int, end_frame: int, bounded: bool
+) -> None:
+    with pytest.raises(RuntimeError, match="timestamp/video frame count mismatch"):
+        ignored_trailing_video_frames(
+            timestamp_count=7767,
+            video_frame_count=video_frames,
+            end_frame=end_frame,
+            stop_after_end_frame=bounded,
+        )
 
 
 def _make_dataset(
@@ -185,6 +217,18 @@ def test_instaumi_h5_is_native_four_mp4_input(monkeypatch, tmp_path: Path):
     assert all(task.expected["frame_stride"] == 1 for task in tasks)
     assert all(task.expected["decode_stride"] == 1 for task in tasks)
     assert all(task.expected["timestamp_source"].startswith("instaumi_h5:") for task in tasks)
+
+    for lens in pair["right"]["lenses"]:
+        lens["frame_count"] = 316
+    bounded_tasks = build_chunk_tasks(
+        root,
+        pair,
+        tmp_path / "bounded-cache",
+        {lens["path"]: "a" * 64 for side in ("left", "right") for lens in pair[side]["lenses"]},
+        pair["sync"],
+        lock["resource_budget"],
+    )
+    assert max(task.end for task in bounded_tasks if task.side == "right") == 299
 
 
 def test_resource_budget_bounds_host_aggregate_threads(monkeypatch):
@@ -404,6 +448,34 @@ def test_chunk_merge_reconstructs_one_monotonic_cache(tmp_path: Path):
         assert cache["frame_index"].tolist() == [0, 2]
     assert report["chunk_count"] == 2
     assert report["decoded_frame_count"] == 4
+
+
+def test_chunk_merge_uses_bounded_h5_timeline_instead_of_encoded_tail(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "chunk-0.npz"
+    second = tmp_path / "chunk-1.npz"
+    output = tmp_path / "lens.npz"
+    _write_chunk(first, 0, 1)
+    _write_chunk(second, 2, 3)
+    for path in (first, second):
+        metadata_path = path.with_suffix(".json")
+        metadata = json.loads(metadata_path.read_text())
+        metadata.update(
+            {
+                "frame_count": 20,
+                "timeline_frame_count": 4,
+                "ignored_trailing_video_frames": 16,
+            }
+        )
+        metadata_path.write_text(json.dumps(metadata))
+
+    report = merge_chunks([first, second], output)
+
+    assert report["frame_count"] == 20
+    assert report["timeline_frame_count"] == 4
+    assert report["ignored_trailing_video_frames"] == 16
+    assert report["decoded_frame_range"] == [0, 3]
 
 
 def test_temporal_chunk_merge_aggregates_flow_audit(tmp_path: Path):

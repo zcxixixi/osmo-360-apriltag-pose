@@ -156,7 +156,10 @@ product entry point is:
 ```
 
 It first runs or resumes the v8 shared-map trajectory pipeline, then reads the
-H5 serials/timestamps and the two registered rear-facing gripper views.  The
+H5 serials/timestamps and the two registered 1920x1920 `*_back.mp4` gripper
+views. The H5 timeline is the bounded processing range: a source MP4 may retain
+verified trailing encoded frames, but missing source frames or any request past
+the H5 endpoint remains an error. The
 serial/BaseTag/mount-bound jaw calibration produces angle and calibrated jaw
 width while preserving direct, low-confidence one-sided, short-gap recovered,
 and unavailable states.  It never derives a zero from each input episode.

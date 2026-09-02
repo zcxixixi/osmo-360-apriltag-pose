@@ -187,6 +187,40 @@ def should_run_rectified(
     return len(direct_ids) < minimum_direct_tags or not required_ids.issubset(direct_ids)
 
 
+def ignored_trailing_video_frames(
+    *,
+    timestamp_count: int,
+    video_frame_count: int,
+    end_frame: int | None,
+    stop_after_end_frame: bool,
+) -> int:
+    """Validate H5 coverage and return safely ignored trailing video frames.
+
+    An aligned InstaUMI export can retain a short encoded tail in its raw lens
+    MP4 while the H5 timeline and preview stop at the intended common range.
+    Chunked processing is safe in that case only when its explicit inclusive
+    end frame is covered by the H5 timestamps. Missing video frames and any
+    unbounded decode remain hard failures.
+    """
+    if timestamp_count == video_frame_count:
+        return 0
+    if video_frame_count < timestamp_count:
+        raise RuntimeError(
+            "InstaUMI timestamp/video frame count mismatch: "
+            f"{timestamp_count} != {video_frame_count}"
+        )
+    if (
+        not stop_after_end_frame
+        or end_frame is None
+        or end_frame >= timestamp_count
+    ):
+        raise RuntimeError(
+            "InstaUMI timestamp/video frame count mismatch outside the bounded "
+            f"H5 timeline: {timestamp_count} != {video_frame_count}"
+        )
+    return video_frame_count - timestamp_count
+
+
 def merge_temporal_detections(
     current: dict[int, tuple[np.ndarray, int, str]],
     decoded: dict[int, np.ndarray],
@@ -399,6 +433,7 @@ def main() -> int:
     if fps <= 0 or source_frame_count <= 0:
         raise RuntimeError(f"invalid video timing metadata: fps={fps}, frames={source_frame_count}")
     exact_timestamp_s: np.ndarray | None = None
+    ignored_video_tail_frames = 0
     if args.timeline_h5 is not None:
         timeline_h5 = args.timeline_h5.resolve(strict=True)
         with h5py.File(timeline_h5, "r") as handle:
@@ -406,11 +441,12 @@ def main() -> int:
             if key not in handle:
                 raise RuntimeError(f"InstaUMI timestamp dataset is missing: {key}")
             exact_timestamp_s = np.asarray(handle[key], dtype=np.float64) / 1e9
-        if len(exact_timestamp_s) != source_frame_count:
-            raise RuntimeError(
-                "InstaUMI timestamp/video frame count mismatch: "
-                f"{len(exact_timestamp_s)} != {source_frame_count}"
-            )
+        ignored_video_tail_frames = ignored_trailing_video_frames(
+            timestamp_count=len(exact_timestamp_s),
+            video_frame_count=source_frame_count,
+            end_frame=args.end_frame,
+            stop_after_end_frame=args.stop_after_end_frame,
+        )
         if exact_timestamp_s[0] != 0 or np.any(np.diff(exact_timestamp_s) <= 0):
             raise RuntimeError("InstaUMI timestamps must start at zero and increase")
     frame = 0
@@ -766,6 +802,10 @@ def main() -> int:
         "source_size": [args.source_width, args.source_height],
         "fps": fps,
         "frame_count": source_frame_count,
+        "timeline_frame_count": (
+            len(exact_timestamp_s) if exact_timestamp_s is not None else source_frame_count
+        ),
+        "ignored_trailing_video_frames": ignored_video_tail_frames,
         "decoded_frame_count": len(timeline_frame),
         "retrieved_image_frame_count": retrieved_frame_count,
         "decoded_frame_range": [first_decoded_frame, last_decoded_frame],

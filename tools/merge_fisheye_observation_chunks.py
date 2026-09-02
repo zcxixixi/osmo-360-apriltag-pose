@@ -75,6 +75,8 @@ def merge_chunks(paths: list[Path], output: Path) -> dict[str, Any]:
         "source_size",
         "fps",
         "frame_count",
+        "timeline_frame_count",
+        "ignored_trailing_video_frames",
         "clock_mapping",
         "radial_model",
         "rectified_detection",
@@ -113,10 +115,14 @@ def merge_chunks(paths: list[Path], output: Path) -> dict[str, Any]:
         if end < start:
             raise ValueError(f"empty/reversed chunk range: {path}")
         previous_end = end
-    expected_last = int(pairs[0][1]["frame_count"]) - 1
+    expected_frame_count = int(
+        pairs[0][1].get("timeline_frame_count") or pairs[0][1]["frame_count"]
+    )
+    expected_last = expected_frame_count - 1
     if previous_end != expected_last:
         raise ValueError(
-            f"chunks stop at frame {previous_end}; source ends at {expected_last}"
+            f"chunks stop at frame {previous_end}; processing timeline ends at "
+            f"{expected_last}"
         )
 
     caches = [np.load(path) for path, _ in pairs]
@@ -159,6 +165,8 @@ def merge_chunks(paths: list[Path], output: Path) -> dict[str, Any]:
             "source_size",
             "fps",
             "frame_count",
+            "timeline_frame_count",
+            "ignored_trailing_video_frames",
             "clock_mapping",
             "radial_model",
             "rectified_detection",

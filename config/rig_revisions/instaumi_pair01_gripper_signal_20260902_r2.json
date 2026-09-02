@@ -1,0 +1,52 @@
+{
+  "schema_version": "instaumi-gripper-signal-revision/1.0",
+  "revision_id": "instaumi-pair01-gripper-signal-20260902-r2",
+  "status": "DIAGNOSTIC_SERIAL_BASETAG_MOUNT_AND_FULL_RESOLUTION_BOUND",
+  "training_ready": false,
+  "input_lens": "back",
+  "prefer_h5_preview": false,
+  "processing_width_px": 1920,
+  "maximum_recovery_gap_s": 0.25,
+  "measurement_policy": {
+    "bilateral_measurement_preferred": true,
+    "one_sided_fallback_is_low_confidence": true,
+    "long_gap_behavior": "preserve empty CSV values with available=0",
+    "per_capture_percentile_zero_forbidden": true
+  },
+  "sides": {
+    "left": {
+      "camera_serial": "IAHEA2606M5WSK",
+      "hardware_role": "physical_left",
+      "base_tag_id": 2,
+      "mount_revision": "X5-ID2-20260831-left1-r1-reused-block-sorting",
+      "angle_revision": {
+        "path": "config/rig_revisions/x5_jaw_angle_yellow_dots_left1_20260831_r1.json",
+        "sha256": "d2d6c527732e4f879dc7d8a2042c7c542ce40d3b7d5e8ab8ddd329783eb864e8"
+      },
+      "angle_hardware_key": "physical_left",
+      "width_calibration": {
+        "path": "config/rig_revisions/x5_left1_basetag2_hardware_20260831_r1.json",
+        "sha256": "8701160b2486ab1fda5b768c00177670b921d3c81e5c54d0ee5fb0d6ad48df12",
+        "robot_role": "left"
+      },
+      "calibration_transfer": "exact registered left-1 camera, physical-left gripper, BaseTag2 and reused mount revision"
+    },
+    "right": {
+      "camera_serial": "IAHEA2606KKUKF",
+      "hardware_role": "physical_right",
+      "base_tag_id": 3,
+      "mount_revision": "X5-ID3-20260828-r1-reused-block-sorting",
+      "angle_revision": {
+        "path": "config/rig_revisions/x5_jaw_angle_yellow_dots_20260829_r2.json",
+        "sha256": "e3853bea959a7b54139bbbe4564d369e9ee88ca6922443e085d411c3e4f9b3a1"
+      },
+      "angle_hardware_key": "physical_right",
+      "width_calibration": {
+        "path": "config/rig_revisions/x5_right_basetag3_hardware_20260829_r3.json",
+        "sha256": "cabb3fbb3e8bc6875709d1fb7bb2600a9526ae0d17bcdd84b294508ce9d2729b",
+        "robot_role": "right"
+      },
+      "calibration_transfer": "same registered physical-right gripper and BaseTag3 with the pair registry's reused X5-ID3 mount revision"
+    }
+  }
+}
