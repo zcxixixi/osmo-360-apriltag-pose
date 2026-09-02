@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Estimate the rigid panorama-camera -> gripper-base transform from its BaseTag.
 
-The four tag corners are measured in raw Osmo stream 1. Factory fisheye
+The four tag corners are measured in a raw Insta360 X5 fisheye stream. Factory
 calibration converts those pixels to panorama-frame bearing rays; a bearing
 PnP fit then recovers the metric tag pose. The authoritative hardware file's
 ``base_to_tag`` transform finishes the camera-to-gripper chain. No tag offset,
@@ -30,12 +30,8 @@ import numpy as np
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
-from osmo360.localization.coordinate_frames import DJI_BODY_TO_PANORAMA_OPENCV
+from osmo360.localization.camera_frames import BODY_TO_PANORAMA_OPENCV
 
-# Backwards-compatible public name. The value itself is defined once and is
-# shared with the visual/IMU solver so mount calibration cannot silently use a
-# different panorama frame.
-BODY_TO_PANORAMA_OPENCV = DJI_BODY_TO_PANORAMA_OPENCV
 
 
 def parse_args() -> argparse.Namespace:

@@ -1,7 +1,7 @@
 import numpy as np
 
-from tools.osmo_apriltag_demo import Grid
-from tools.osmo_360_offline import Pose, View, choose_scout_base
+from tools.apriltag_geometry import Grid
+from tools.insta360_offline import Pose, View, choose_scout_base
 
 
 def test_wall_panel_row_major_ids_advance_left_to_right():

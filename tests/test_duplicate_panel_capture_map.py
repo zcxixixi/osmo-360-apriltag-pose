@@ -3,7 +3,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from tools.osmo_360_offline import (
+from tools.insta360_offline import (
     View,
     load_capture_duplicate_tag_map,
     load_tag_map,

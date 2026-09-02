@@ -98,7 +98,7 @@ def copy_input(source: Path, directory: Path) -> Path:
 
 def vision_command(args: argparse.Namespace, video: Path, paths: PipelinePaths, backend: str) -> list[str]:
     return [
-        sys.executable, "-m", "tools.osmo_360_offline", str(video),
+        sys.executable, "-m", "tools.insta360_offline", str(video),
         "--tag-map", str(args.tag_map), "--sample-fps", str(args.sample_fps),
         "--min-tags", "2", "--max-rmse-px", str(args.max_rmse_px),
         "--view-size", str(args.view_size), "--pnp-points", "corners",

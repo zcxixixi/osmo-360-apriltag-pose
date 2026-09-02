@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from tools import camera_to_dataset
 from tools.export_trajectory_dataset import relative_pose
@@ -17,9 +16,9 @@ def video_probe(width=3000, height=3000, count=2, encoder=""):
     }
 
 
-def test_camera_detection_uses_raw_container_extensions(monkeypatch, tmp_path: Path):
+def test_camera_detection_accepts_only_insta_raw_containers(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(camera_to_dataset, "ffprobe", lambda _path: video_probe())
-    assert camera_to_dataset.detect_source(tmp_path / "clip.OSV")[0] == "dji"
+    assert camera_to_dataset.detect_source(tmp_path / "clip.OSV")[0] == "unsupported"
     assert camera_to_dataset.detect_source(tmp_path / "clip.insv")[0] == "insta360"
 
 
@@ -54,12 +53,6 @@ def test_first_pose_coordinate_frame_is_identity():
     assert np.allclose(rotation.as_quat(), [0.0, 0.0, 0.0, 1.0], atol=1e-12)
 
 
-def test_packaged_dji_entrypoints_and_panoforge_exist():
-    assert (camera_to_dataset.ROOT / "bin/camera-to-dataset").is_file()
-    assert (camera_to_dataset.ROOT / "tools/dji_osv_stitch.py").is_file()
-    if not (camera_to_dataset.PANOFORGE_ROOT / "app/core/maps.py").is_file():
-        pytest.skip("external PanoForge checkout is not present on this host")
-    assert (camera_to_dataset.PANOFORGE_ROOT / "app/core/maps.py").is_file()
 
 
 def test_official_insta360_stitch_adapter_exists():

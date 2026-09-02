@@ -536,11 +536,9 @@ def extract_rgb(video: Path, query_time: np.ndarray, output_hw: tuple[int, int],
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         projection = str(view.get("projection", "equirectangular_perspective")).strip().lower()
         if projection == "raw_resize":
-            # Keep the source camera pixels as the observation.  This is the
-            # required path for DJI stream1 fisheye input: applying e2p to a
-            # square fisheye image silently introduces a second, invalid lens
-            # projection and makes the exported RGB disagree with the metric
-            # raw-fisheye pose solver.
+            # Keep source fisheye pixels as the observation. Applying e2p to a
+            # square X5 lens image introduces a second invalid projection and
+            # makes exported RGB disagree with the metric raw-fisheye solver.
             resized = cv2.resize(
                 rgb, (int(output_hw[1]), int(output_hw[0])),
                 interpolation=cv2.INTER_AREA,
@@ -813,10 +811,8 @@ def build_episode(spec_path: Path, output_dir: Path, skip_rgb: bool = False,
         audit_role = str(metric_pose_audit.get("weak_role", ""))
         if metric_pose_audit_valid and name == audit_role:
             # The asymmetric raw-fisheye solver publishes position from the
-            # physical opposite BaseTag and attitude from the calibrated DJI
-            # IMU bridge.  It is intentionally not mislabeled as a full direct
-            # PnP pose; its audited visual-anchor coverage is the appropriate
-            # refresh metric for this robot.
+            # opposite physical BaseTag and attitude from the calibrated camera
+            # IMU bridge. Keep its visual-anchor coverage explicit.
             refresh_success = max(
                 refresh_success,
                 float(metric_pose_audit.get("coverage", {}).get("weak_ratio", 0.0)),

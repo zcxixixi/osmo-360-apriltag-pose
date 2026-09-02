@@ -1,7 +1,7 @@
 [project]
-name = "osmo-apriltag-demo"
+name = "instaumi-x5-pipeline"
 version = "0.1.0"
-description = "Offline Osmo 360 panorama AprilGrid pose processor with legacy RTMP demo"
+description = "Insta360 X5 to InstaUMI processing and review pipeline"
 requires-python = ">=3.11,<3.14"
 dependencies = [
   "flask>=3.1.3",

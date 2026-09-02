@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from osmo360.localization.fuse_asymmetric_gripper_world_pose import camera_to_base
+from osmo360.localization.gripper_transforms import camera_to_base
 from osmo360.visualization.render_single_gripper_motion_demo import (
     compose_base_track,
     fill_for_display,
@@ -38,7 +38,7 @@ FFMPEG = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg"
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("front_video", type=Path)
-    parser.add_argument("--source-osv", type=Path, required=True)
+    parser.add_argument("--source-insv", type=Path, required=True)
     parser.add_argument("--calibration", type=Path, required=True)
     parser.add_argument("--camera-pose-csv", type=Path)
     parser.add_argument("--camera-pose-summary", type=Path)
@@ -59,8 +59,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--camera-hardware-model",
-        choices=("dji-osmo-360", "insta360-x5"),
-        default="dji-osmo-360",
+        choices=("insta360-x5",),
+        default="insta360-x5",
     )
     parser.add_argument("--right-base-pose-csv", type=Path)
     parser.add_argument(
@@ -80,9 +80,9 @@ def run(command: list[str]) -> None:
     subprocess.run(command, check=True)
 
 
-def single_capture_id(source_osv: Path, fps: float) -> str:
+def single_capture_id(source_insv: Path, fps: float) -> str:
     fps_label = f"{fps:.6f}".rstrip("0").rstrip(".")
-    return f"{source_osv.stem}-single-{fps_label}fps"
+    return f"{source_insv.stem}-single-{fps_label}fps"
 
 
 def force_measurement_available(
@@ -119,7 +119,7 @@ def main() -> int:
     args = parse_args()
     required_names = (
         "front_video",
-        "source_osv",
+        "source_insv",
         "calibration",
         "force_angle_csv",
         "force_angle_audit",
@@ -219,8 +219,6 @@ def main() -> int:
     fps = float(capture.get(cv2.CAP_PROP_FPS))
     frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
     capture.release()
-    if args.camera_hardware_model == "dji-osmo-360" and abs(fps - 100.0) > 1e-6:
-        raise ValueError(f"expected the complete 100 FPS stream, got {fps}")
     if args.max_frames > 0:
         frame_count = min(frame_count, args.max_frames)
     frame_times = np.arange(frame_count, dtype=float) / fps
@@ -477,27 +475,19 @@ def main() -> int:
         "operator_eye_elevation_factor": 0.10,
         "camera_serial": serial,
         "operator_tag_look_fraction": 0.40,
-        "capture_pair_id": single_capture_id(paths["source_osv"], fps),
+        "capture_pair_id": single_capture_id(paths["source_insv"], fps),
         "camera_hardware_model": args.camera_hardware_model,
         "mounted_camera": {
             "model": args.camera_hardware_model,
             "serial": serial,
-            "body_size_m": (
-                [0.0382, 0.046, 0.1245]
-                if args.camera_hardware_model == "insta360-x5"
-                else [0.075, 0.052, 0.040]
-            ),
+            "body_size_m": [0.0382, 0.046, 0.1245],
             "T_base_camera": {
                 "translation_m": base_camera.p.tolist(),
                 "quaternion_xyzw": base_camera.r.as_quat().tolist(),
             },
             "geometry_status": (
-                (
-                    f"official X5 body dimensions; BaseTag{base_tag_id}-fitted "
-                    "camera-to-base mount"
-                )
-                if args.camera_hardware_model == "insta360-x5"
-                else "legacy display-only Osmo model"
+                f"official X5 body dimensions; BaseTag{base_tag_id}-fitted "
+                "camera-to-base mount"
             ),
         },
         "layout_calibration_id": (
@@ -699,7 +689,7 @@ def main() -> int:
             "-i",
             str(paths["front_video"]),
             "-i",
-            str(paths["source_osv"]),
+            str(paths["source_insv"]),
             "-filter_complex",
             "[1:v]scale=160:160:flags=lanczos,pad=320:160:80:0:black[c0];"
             "[0:v][c0]overlay=1210:56:shortest=1[v]",
@@ -738,8 +728,8 @@ def main() -> int:
         "schema_version": "single-gripper-webgl-audit/1.0",
         "status": "DIAGNOSTIC",
         "source": {
-            "osv": str(paths["source_osv"]),
-            "osv_sha256": sha256(paths["source_osv"]),
+            "insv": str(paths["source_insv"]),
+            "insv_sha256": sha256(paths["source_insv"]),
             "front_lens": str(paths["front_video"]),
             "front_lens_sha256": sha256(paths["front_video"]),
             "camera_serial": serial,

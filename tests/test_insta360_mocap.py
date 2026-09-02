@@ -14,7 +14,7 @@ from tools.evaluate_insta360_mocap import (
     pose_matrices,
     trajectory_errors,
 )
-from tools.osmo_360_offline import View, load_tag_map, perspective_intrinsics, solve_view
+from tools.insta360_offline import View, load_tag_map, perspective_intrinsics, solve_view
 
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 from tools._root import ROOT
 
 
-DEFAULT_SERVER = os.environ.get("OSMO_VISUALIZATION_URL", "http://192.168.111.62:7865")
+DEFAULT_SERVER = os.environ.get("INSTAUMI_VISUALIZATION_URL", "http://192.168.111.62:7865")
 DEFAULT_SCENE = ROOT / "dual_gripper_3d/single_gripper_scene.html"
 
 

@@ -18,7 +18,7 @@ CAMERA_SDK_LIBRARY = CAMERA_SDK_ROOT / "lib"
 DEFAULT_INVENTORY = ROOT / "config/devices/x5_inventory.json"
 DEFAULT_PAIRS = ROOT / "config/devices/x5_pairs.json"
 SDK_REVISION_ID = "insta360-linux-camera-2.1.1-media-3.1.1"
-DEFAULT_SERVER = os.environ.get("OSMO_VISUALIZATION_URL", "http://192.168.111.62:7865")
+DEFAULT_SERVER = os.environ.get("INSTAUMI_VISUALIZATION_URL", "http://192.168.111.62:7865")
 DEVICE_PATTERN = re.compile(
     r"serial:(?P<serial>[A-Z0-9]+)\s*;camera type:(?P<model>[^;]+?)\s*;fw version:(?P<firmware>[^;\r\n]+)"
 )

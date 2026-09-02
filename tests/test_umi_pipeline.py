@@ -85,7 +85,7 @@ def _write_outputs(manifest_path: Path) -> None:
     audit = {
         "status": "DIAGNOSTIC",
         "source": {
-            "osv_sha256": manifest.data["inputs"]["raw_video"]["sha256"],
+            "insv_sha256": manifest.data["inputs"]["raw_video"]["sha256"],
             "base_tag_id": 3,
             "camera_serial": manifest.data["camera"]["serial"],
         },

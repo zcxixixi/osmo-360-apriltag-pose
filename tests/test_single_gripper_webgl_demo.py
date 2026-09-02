@@ -6,14 +6,14 @@ from osmo360.visualization.render_single_gripper_webgl_demo import (
 )
 
 
-def test_single_capture_id_comes_from_source_osv_name():
-    source = Path("/captures/CAM_20260828101530_0064_D.OSV")
+def test_single_capture_id_comes_from_source_insv_name():
+    source = Path("/captures/VID_20260901_155528_00_003.insv")
 
-    assert single_capture_id(source, 100.0) == "CAM_20260828101530_0064_D-single-100fps"
+    assert single_capture_id(source, 30.0) == "VID_20260901_155528_00_003-single-30fps"
 
 
 def test_single_capture_id_preserves_non_integer_frame_rate():
-    source = Path("capture.OSV")
+    source = Path("capture.insv")
 
     assert single_capture_id(source, 59.94) == "capture-single-59.94fps"
 

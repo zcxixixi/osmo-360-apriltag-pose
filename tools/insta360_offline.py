@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Offline AprilGrid pose estimation for stitched 2:1 equirectangular video.
-
-This deliberately does not implement DJI's private OSV stitching.  Feed it a
-DJI Studio export, or an independently validated OSV conversion.
-"""
+"""Offline AprilGrid pose estimation for Insta360 stitched panorama video."""
 
 from __future__ import annotations
 
@@ -35,57 +31,46 @@ import matplotlib.pyplot as plt
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
-from osmo360.localization.coordinate_frames import DJI_BODY_TO_PANORAMA_OPENCV
-from tools.osmo_apriltag_demo import Grid, rotation_to_rpy
+from osmo360.localization.camera_frames import BODY_TO_PANORAMA_OPENCV
+from tools.apriltag_geometry import Grid, rotation_to_rpy
 from tools.projection_backends import ProjectionRequest, make_projection_backend
 from osmo360.localization.world_frames import RigidTransform, canonical_sha256, compile_world_tag_map
 
-LOG = logging.getLogger("osmo360.offline")
+LOG = logging.getLogger("insta360.offline")
 STOP = False
 
 
-CAMERA_MODELS = ("auto", "dji-osmo-360", "insta360-x5", "generic")
+CAMERA_MODELS = ("auto", "insta360-x5", "generic")
 
 
 def infer_camera_model(path: Path, width: int, height: int, requested: str) -> str:
-    """Choose a conservative processing profile from the export name and size."""
+    """Choose an Insta360 processing profile from the export name and size."""
     if requested != "auto":
         return requested
     name = path.name.lower()
-    if "insta360" in name or "_no_flowstate" in name or (
-        name.startswith("vid_") and width >= 6000
+    if (
+        "insta360" in name
+        or name.startswith("vid_")
+        or (width >= 6000 and width == 2 * height)
     ):
         return "insta360-x5"
-    if "osmo" in name or name.startswith("cam_") or path.suffix.lower() == ".osv":
-        return "dji-osmo-360"
-    if width >= 7000 and width == 2 * height:
-        return "insta360-x5"
-    if width <= 4096 and width == 2 * height:
-        return "dji-osmo-360"
     return "generic"
 
 
 def resolve_decoder(requested: str, camera_model: str) -> str:
-    """Resolve decoding independently from projection acceleration.
-
-    Downloading NVDEC frames back to BGR is slower than OpenCV/FFmpeg CPU
-    decoding on the validated DJI 3K and Insta360 X5 8K exports. Keep NVDEC as
-    an explicit experiment until a zero-copy detector path is available.
-    """
+    """Use CPU decode until the AprilTag path supports zero-copy NVDEC."""
     if requested != "auto":
         return requested
-    if camera_model in ("dji-osmo-360", "insta360-x5", "generic"):
+    if camera_model in ("insta360-x5", "generic"):
         return "cpu"
     raise ValueError(f"unknown camera model: {camera_model}")
 
 
 def resolve_projection(requested: str, camera_model: str, width: int) -> str:
-    """Select the measured fastest projection path for the input profile."""
+    """Select CPU for ordinary inputs and CUDA for high-resolution X5 panoramas."""
     if requested != "auto":
         return requested
-    if camera_model == "dji-osmo-360" and width <= 4096:
-        return "cpu"
-    return "cuda"
+    return "cuda" if camera_model == "insta360-x5" and width > 4096 else "cpu"
 
 
 class VideoReader:
@@ -222,10 +207,8 @@ class View:
     roll: float = 0.0
 
 
-# PanoForge's factory-calibrated DJI convention, converted to this module's
-# OpenCV panorama axes (x right, y down, z forward). This exact bridge is also
-# used by the ID2 camera->gripper calibration.
-_BODY_TO_PANORAMA = DJI_BODY_TO_PANORAMA_OPENCV
+# Fixed body-to-panorama OpenCV basis shared with X5 mount calibration.
+_BODY_TO_PANORAMA = BODY_TO_PANORAMA_OPENCV
 
 
 def project_to_so3(matrix: np.ndarray) -> np.ndarray:
@@ -240,7 +223,7 @@ def project_to_so3(matrix: np.ndarray) -> np.ndarray:
 
 
 def default_panorama_to_body_rotation() -> np.ndarray:
-    """Return the canonical panorama-camera to DJI-body rotation."""
+    """Return the canonical panorama-camera to body rotation."""
     return _BODY_TO_PANORAMA.T
 
 
@@ -248,9 +231,8 @@ def default_panorama_to_body_rotation() -> np.ndarray:
 class ImuPanoramaBridgeEstimate:
     """Fixed per-camera bridge in ``R_parent_camera = A R_world_body X``.
 
-    ``X`` maps panorama-camera vectors into DJI's IMU body frame. ``A`` maps
-    the arbitrary DJI attitude world into the visual tag-map parent frame.
-    Both are proper rotations; only ``X`` is a physical per-camera constant.
+    ``X`` maps panorama-camera vectors into the camera IMU body frame. ``A``
+    maps the arbitrary attitude world into the visual tag-map parent frame.
     """
 
     panorama_to_body: np.ndarray
@@ -293,12 +275,12 @@ def estimate_imu_panorama_bridge(
     """Robustly calibrate the fixed IMU-body to panorama-camera rotation.
 
     For each trustworthy directly decoded multi-Tag visual attitude ``V_i``
-    and synchronous DJI body attitude ``I_i`` the model is::
+    and synchronous body attitude ``I_i`` the model is::
 
         V_i = A I_i X
 
     where ``X`` is the fixed panorama-camera-to-body bridge and ``A`` absorbs
-    the arbitrary DJI world heading into the tag-map parent frame.  Relative
+    arbitrary IMU world heading into the tag-map parent frame. Relative
     rotations eliminate ``A``::
 
         V_i.T V_j = X.T (I_i.T I_j) X
@@ -591,7 +573,7 @@ def is_imu_attitude_source(source: str) -> bool:
 
 
 def quaternion_to_rotation(quaternion: np.ndarray) -> np.ndarray:
-    """Return a body-to-world rotation for a DJI [w, x, y, z] quaternion."""
+    """Return a body-to-world rotation for a ``[w, x, y, z]`` quaternion."""
     q = np.asarray(quaternion, dtype=np.float64).reshape(4)
     norm = float(np.linalg.norm(q))
     if not math.isfinite(norm) or norm < 1e-12:
@@ -647,13 +629,10 @@ def predict_camera_to_parent_rotation(
     current_quaternion: np.ndarray,
     panorama_to_body: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Propagate a camera-to-parent attitude with DJI IMU relative rotation.
+    """Propagate a camera-to-parent attitude with relative IMU rotation.
 
-    DJI quaternions are absolute body-to-world rotations in ``[w, x, y, z]``
-    order.  Only their relative rotation is used, so the arbitrary DJI world
-    heading cancels. ``panorama_to_body`` is the calibrated per-camera bridge;
-    when omitted, the legacy axis convention used by
-    :func:`propagate_view_with_imu` remains backward compatible.
+    Only relative body rotation is used, so arbitrary IMU world heading
+    cancels. ``panorama_to_body`` is the calibrated per-camera bridge.
     """
     previous = np.asarray(previous_camera_to_parent, dtype=np.float64).reshape(3, 3)
     body_to_world_previous = quaternion_to_rotation(previous_quaternion)
@@ -680,14 +659,10 @@ def predict_camera_to_parent_rotation_hypotheses(
     current_quaternion: np.ndarray,
     panorama_to_body: np.ndarray | None = None,
 ) -> tuple[tuple[str, np.ndarray], tuple[str, np.ndarray]]:
-    """Return the nominal and inverse-relative DJI attitude hypotheses.
+    """Return nominal and inverse-relative attitude hypotheses.
 
-    DJI's quaternion convention is known, but legacy/factory panorama exports
-    in this project do not all share the same body-to-panorama alignment. The
-    nominal hypothesis remains the one used by
-    :func:`predict_camera_to_parent_rotation`.  The inverse-relative hypothesis
-    is *only* a recovery candidate: decoded tag corners must independently
-    validate it by a fixed-attitude translation solve before it can be used.
+    The inverse-relative hypothesis is recovery-only: decoded Tag corners must
+    independently validate it before use.
     """
     nominal = predict_camera_to_parent_rotation(
         previous_camera_to_parent,
@@ -726,7 +701,7 @@ def rotation_residual_deg(actual: np.ndarray, expected: np.ndarray) -> float:
 
 
 def load_imu_quaternions(path: Path | None) -> dict[int, np.ndarray]:
-    """Load PanoForge's per-source-frame DJI quaternion export."""
+    """Load per-source-frame camera IMU quaternion export."""
     if path is None:
         return {}
     result: dict[int, np.ndarray] = {}
@@ -2198,7 +2173,7 @@ def generate_plot(session: Path, summary: dict) -> None:
     fig = plt.figure(figsize=(16, 10), facecolor="#0b0d10")
     ratio = summary["valid_pose_ratio"] * 100
     fig.suptitle(
-        f"Osmo 360 AprilGrid trajectory · valid {ratio:.1f}% · coverage {summary['tag_coverage_ratio'] * 100:.1f}%",
+        f"Insta360 AprilGrid trajectory · valid {ratio:.1f}% · coverage {summary['tag_coverage_ratio'] * 100:.1f}%",
         fontsize=17,
     )
     if points:
@@ -2325,8 +2300,8 @@ def parse_args() -> argparse.Namespace:
         "--imu-csv",
         type=Path,
         help=(
-            "PanoForge imu_perframe.csv; guides the tracked view and disambiguates "
-            "visual attitude during rotation"
+            "optional camera IMU quaternion CSV; guides the tracked view and "
+            "disambiguates visual attitude during rotation"
         ),
     )
     p.add_argument(
@@ -2474,7 +2449,7 @@ def parse_args() -> argparse.Namespace:
         "--projection-backend",
         choices=("auto", "cpu", "cuda"),
         default="auto",
-        help="projection backend (auto: DJI 3K CPU; X5/high-resolution CUDA)",
+        help="projection backend (auto: high-resolution X5 uses CUDA)",
     )
     p.add_argument(
         "--decoder", choices=("auto", "cpu", "nvdec"), default="auto",
@@ -2482,7 +2457,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--camera-model", choices=CAMERA_MODELS, default="auto",
-        help="processing profile; auto infers DJI Osmo 360, Insta360 X5, or generic",
+        help="processing profile; auto infers Insta360 X5 or generic panorama",
     )
     p.add_argument(
         "--ffmpeg-bin", type=Path,
@@ -2501,7 +2476,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--official-stitched",
         action="store_true",
-        help="input was exported by DJI Studio",
+        help="input is an official stitched panorama",
     )
     p.add_argument("--session-name")
     p.add_argument("--status-file", type=Path)

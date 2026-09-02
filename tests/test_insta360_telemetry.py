@@ -46,7 +46,7 @@ def test_extract_x5_imu_preserves_source_clock_and_converts_si_units(
         telemetry, "TELEMETRY_PARSER_SHA256",
         hashlib.sha256(parser.read_bytes()).hexdigest(),
     )
-    monkeypatch.setenv("OSMO_X5_TELEMETRY_PARSER", str(parser))
+    monkeypatch.setenv("INSTAUMI_X5_TELEMETRY_PARSER", str(parser))
 
     imu = extract_x5_imu(
         source, tmp_path / "scratch", source_start_s=0.0,
@@ -69,7 +69,7 @@ def test_extract_x5_imu_rejects_wrong_camera_serial(monkeypatch, tmp_path: Path)
         telemetry, "TELEMETRY_PARSER_SHA256",
         hashlib.sha256(parser.read_bytes()).hexdigest(),
     )
-    monkeypatch.setenv("OSMO_X5_TELEMETRY_PARSER", str(parser))
+    monkeypatch.setenv("INSTAUMI_X5_TELEMETRY_PARSER", str(parser))
 
     with pytest.raises(ValueError, match="serial mismatch"):
         extract_x5_imu(

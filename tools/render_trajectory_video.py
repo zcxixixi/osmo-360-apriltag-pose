@@ -83,7 +83,7 @@ def main() -> int:
     ax.view_init(elev=25, azim=-58)
     ax.grid(alpha=0.20)
     ax.set_box_aspect(np.maximum(high - low, 0.1))
-    fig.suptitle("Osmo 360 · AprilGrid 三维动作轨迹", fontsize=20, color="#f5f7fa")
+    fig.suptitle("Insta360 X5 · AprilGrid 三维动作轨迹", fontsize=20, color="#f5f7fa")
 
     raw_lines = []
     smooth_lines = []
