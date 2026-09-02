@@ -29,8 +29,8 @@
 | 审核网关提交 | 本地安全代码 `3e5a0b3`、unit `2fd08c3`；服务器等价 `a6f22f2`、`f0ffecd` |
 | 服务器无缓存耗时 | 101.37 s 新数据 v12 trajectory-only（四路视频+轨迹+IMU 辅助+发布）为 67.497 s，平均 CPU 611%、峰值 RSS 274,552 KiB、无 swap；旧 10 s v8 基线为 5.87 s |
 | 输出 | 新数据 3,039/3,039 帧具备双侧数值位姿；2,890 帧联合可信，2,885 帧双侧 AprilTag 实测（94.93%），`SELF_CALIBRATED_PASS`；所有已接受的 Tag 位姿保持原值，IMU 不覆写 |
-| CSV 产品入口 | 项目内 `./bin/process_instaumi_dataset.sh [--trajectory-only] DATASET_ROOT`（不是系统 `/bin`）；终端显示阶段、四路合计帧/块进度、百分比、ETA 与整条耗时；`--trajectory-only` 只原子发布 `processed/trajectory.csv`，默认模式仍发布四个 CSV；全部相机位姿使用 `world_flu_aprilgrid_midpoint -> hand_camera_flu_back_x`；保留既有 `processed/` 文件，成功后删除本次 v12 `final/` 工作制品，失败时保留诊断信息 |
-| 回归测试 | 当前本地/服务器完整测试均为 322 passed/7 skipped；聚焦测试 52 passed/1 skipped；`./umi verify` 为 `PASS` 且不包含任何 `/home/cenxi` 外部验收 gate |
+| CSV 产品入口 | 项目内 `./bin/process_instaumi_dataset.sh [--trajectory-only] DATASET_ROOT`（不是系统 `/bin`）；终端显示阶段、四路合计帧/块进度、百分比、ETA 与整条耗时；`--trajectory-only` 只原子发布 `processed/trajectory.csv`，默认模式发布四个 CSV。默认夹爪 r4 将数据集相机序列号作为溯源而非检测 gate，固定 ROI/物理左右夹爪标定的来源序列号另写入 metadata，跨序列号结果保持 `training_ready=0`；全部相机位姿使用 `world_flu_aprilgrid_midpoint -> hand_camera_flu_back_x`；保留既有 `processed/` 文件，成功后删除本次 v12 `final/` 工作制品，失败时保留诊断信息 |
+| 回归测试 | 当前本地完整测试为 323 passed/7 skipped，服务器（含独立自动导入扩展）为 331 passed/7 skipped；夹爪聚焦测试 15 passed；`./umi verify` 为 `PASS` 且不包含任何 `/home/cenxi` 外部验收 gate |
 | IMU 状态 | 修订 `x5-kmdgp-kmurq-visual-gyro-20260902-r1` 按左右序列号锁定旋转 baseline；显式非单位 `calibration_full` 永远优先，单位/空占位才回退 baseline，未知序列号 fail-closed。严格使用 H5 原始 `timestamp_ns` 和共同 `dataset_start` 插值，不保存捕获内 -598/-6 ms 调参；陀螺+加速度共辅助 116 个侧帧，加速度仅在视觉双端点间做去均值、端点闭合、最大 0.15 m 偏离的形状桥接，绝不外推尾段；本次最大偏离左/右 70.259/31.241 mm |
 | 最新已发视频 | `instaumi_20260901_165007_trajectory_world_flu_front_above_v12_feishu.mp4`，固定 `flu-front-above --reframe-world-flu`，1280×720/30 FPS/101 s，SHA-256 `6bd9ff57...9e37`；服务器高清原片 1920×1080/101.37 s，SHA-256 `021897f2...29c` |
 | 受管服务实际 unit | `osmo-visualization.service`、`osmo-alignment-review.service`（认证网关）、`osmo-alignment-review-backend.service`；三者均为 user unit，active/enabled、`NRestarts=0` |
@@ -393,6 +393,15 @@
 - 用固定 `flu-front-above --reframe-world-flu`、不跟随/不自动旋转的当前世界 FLU 审阅模板生成高清原片 `instaumi_20260901_165007_trajectory_world_flu_front_above_v12.mp4`：1920×1080/30 FPS/101.37 s/3,041 帧，SHA-256 `021897f2037bf6422ce9a33dac0f91f04ee6672625fbf40b079e243c7a49629c`；人工检查封面和 7.1 s，两网格横排、打印正面斜上俯拍、XYZ/RPY 可见。飞书发送版 1280×720/101 s，SHA-256 `6bd9ff57021e94d4add2793cf0e3580f8daf70ed3b9ca83b65315d4254039e37`；进度消息 `om_x100b664aeaee78a4c371af9a210b517`、视频消息 `om_x100b664ae8a15ca4c28086e0d535b01` 已发王浩并回读验证。
 - 剩余风险不隐藏：该 baseline 来自同一真实 capture 的视觉/陀螺自标定，只有旋转且没有外部真值；加速度去均值只能安全补内部短缺口，不是完整 VIO，也不能证明绝对尺度精度。以后 H5 给出明确 `calibration_full` SE(3)、bias/scale 时必须覆盖 baseline，并重新做同样的无缓存与轨迹质量闭环。
 
+### 2026-09-02 / Cycle 027
+
+- 用户在服务器对 `instaumi_20260901_165007` 运行默认 `./bin/process_instaumi_dataset.sh` 时，轨迹阶段 47.319 s 成功，夹爪导出却报左相机 `IAHEA2606KMDGP` 与 profile 中旧样例相机 `IAHEA2606M5WSK` 不同。`git blame` 确认这不是 SDK/H5 限制，而是提交 `a620094` 初建通用 shell 入口时加入的精确相机序列号 gate；它把旧 pair 的 profile 错误地当成所有同格式数据集的默认设备身份。
+- 没有删除或改写不可变 r3。新增默认夹爪修订 `instaumi-gripper-signal-20260902-r4-role-bound-serial-provenance`：固定 1920×1920 后视、ROI、黄点三联检测和物理左右夹爪/BaseTag 宽度标定保持不变；数据集相机序列号改为结果溯源而不是检测阻断。旧 r3 若由 `--profile` 明确选择仍执行精确序列号 gate。
+- CSV 产品 schema 升为 `instaumi-processed-csv/5.0-gripper-serial-provenance`。`metadata.csv` 分别记录数据集实际相机、标定来源相机、identity policy 和每侧 transfer status；CLI 明确打印 transfer 信息，跨序列号结果继续为诊断级 `training_ready=0`，不把相机身份当成精度证据。
+- CPU 服务器在刚才失败保留的正式数据上重新执行完全相同的默认 shell 命令成功：wall `47.55 s`、平均 CPU `824%`、峰值 RSS 275,124 KiB、无 swap；原子发布 `processed/{trajectory,gripper,processed,metadata}.csv` 后清理本次可见 `final/`。四个产品分别为 3,039 行（metadata 一行）；轨迹 SHA-256 仍为 `637be6c7...eec4`，证明定位数值未改变。
+- 真实夹爪覆盖：左侧直接/单侧低置信测量 3,006 帧、短缺口恢复 33 帧，右侧直接测量 3,025 帧、短缺口恢复 14 帧；两侧最终均为 3,039/3,039 有值。左开合角范围 0–30.096°、宽度 0–0.056419 m；右角度 0–36.056°、宽度 0–0.068744 m。覆盖率良好只证明检测器在该视频可工作，不构成跨设备物理精度真值。
+- 本地夹爪聚焦测试 15 passed、完整测试 `323 passed, 7 skipped`；服务器聚焦 15 passed、完整测试（包含服务器新增自动导入扩展）`331 passed, 7 skipped`；两端 `./umi verify`、compileall、bash 语法和 `git diff --check` 通过。功能提交本地 `594347c`、服务器等价 `3e0d8a6`。
+
 ## 最近一次流水线版本变更验证
 
 - 改动：`dual-x5-four-mp4-cpu-v12` 将经过审计、按相机序列号绑定的 IMU 旋转固化为 runtime baseline；明确 `calibration_full` 优先；视觉/IMU 严格按 H5 纳秒时间戳对齐；AprilTag 始终为主观测，陀螺和加速度只做有界辅助。
@@ -402,3 +411,4 @@
 - 性能/回归：真实 101.37 s 数据 trajectory-only 无缓存 wall `67.497 s`、平均 CPU 611%、峰值 RSS 274,552 KiB；本地/服务器完整测试均为 `322 passed, 7 skipped`，聚焦测试 `52 passed, 1 skipped`，`./umi verify` 均为 PASS/空 acceptance baseline。
 - 最终审阅视频：服务器高清 1920×1080/30 FPS/101.37 s 原片 SHA-256 `021897f2...29c`；飞书 1280×720/30 FPS 发送版 SHA-256 `6bd9ff57...9e37`，固定 `flu-front-above --reframe-world-flu`。
 - 飞书：进度 `om_x100b664aeaee78a4c371af9a210b517`、视频 `om_x100b664ae8a15ca4c28086e0d535b01`，均已回读验证。
+- CSV/夹爪出口修复：默认 r4 不再用相机序列号阻断逐帧黄点检测，实际与标定来源序列号分别写入 metadata；同一真实输入默认 shell 已在 47.55 s 内发布四个 CSV，两侧 3,039/3,039 开合有值，轨迹 SHA 保持 `637be6c7...eec4`。功能提交本地 `594347c`、服务器 `3e0d8a6`。
