@@ -134,6 +134,12 @@ def test_fisheye_cache_reuse_requires_complete_matching_signature(tmp_path: Path
     cache.with_suffix(".json").write_text(json.dumps(metadata))
 
     assert cache_signature_matches(video, record, 0, 0.0, cache)
+    video.write_bytes(b"changed-after-cache")
+    assert not cache_signature_matches(video, record, 0, 0.0, cache)
+    assert cache_signature_matches(
+        video, record, 0, 0.0, cache, verify_video_hash=False,
+    )
+    video.write_bytes(b"aligned-hevc")
 
     metadata["rectified_view_size"] = 960
     cache.with_suffix(".json").write_text(json.dumps(metadata))
