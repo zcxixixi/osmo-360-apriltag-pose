@@ -11,7 +11,7 @@ Environment=OSMO_FFMPEG_BIN=/usr/bin
 Environment=INSTAUMI_AUTO_FFMPEG=/usr/bin/ffmpeg
 Environment=INSTAUMI_AUTO_FFPROBE=/usr/bin/ffprobe
 Environment=INSTAUMI_AUTO_VIDEO_ENCODER=hevc_nvenc
-ExecStart=%h/osmo-360-apriltag-pose/.venv/bin/python -m osmo360.pipeline.instaumi_auto --data-root %h/nas-data-2/total_annotation/umi_insta360 --process-script %h/osmo-360-apriltag-pose/bin/process_instaumi_dataset.sh --max-pairs 1 --shard-count 2 --shard-index 1
+ExecStart=%h/osmo-360-apriltag-pose/.venv/bin/python -m osmo360.pipeline.instaumi_auto --data-root %h/nas-data-2/total_annotation/umi_insta360 --process-script %h/osmo-360-apriltag-pose/bin/process_instaumi_dataset.sh --max-pairs 1 --shard-count 4 --shard-index 3
 Nice=5
 IOSchedulingClass=best-effort
 IOSchedulingPriority=6
