@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import h5py
 from osmo360.pipeline import instaumi_auto as auto
 
 
@@ -123,6 +124,68 @@ def test_encoder_forces_common_frame_rate_and_count(tmp_path: Path, monkeypatch)
     command = captured[0]
     assert f"fps={auto.TARGET_FPS},scale=1920:1920:flags=lanczos" in command
     assert command[command.index("-frames:v") + 1] == "3039"
+
+
+def test_full_export_requires_matching_gripper_profile(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    episode = tmp_path / "instaumi_20260901_120000"
+    video = episode / "video"
+    processed = episode / "processed"
+    video.mkdir(parents=True)
+    processed.mkdir()
+    for name in (
+        "Left.mp4",
+        "Right.mp4",
+        "Left_back.mp4",
+        "Left_forward.mp4",
+        "Right_back.mp4",
+        "Right_forward.mp4",
+    ):
+        (video / name).write_bytes(b"video")
+    (processed / "time_alignment.csv").write_text("header\\n")
+    string = h5py.string_dtype(encoding="utf-8")
+    with h5py.File(episode / "dataset.h5", "w") as handle:
+        handle.create_dataset(
+            "metadata/dataset.json",
+            data=json.dumps({
+                "devices": {
+                    "left": {"serial_number": "LEFT"},
+                    "right": {"serial_number": "RIGHT"},
+                },
+            }),
+            dtype=string,
+        )
+    profile = tmp_path / "profile.json"
+    profile.write_text(json.dumps({
+        "sides": {
+            "left": {"camera_serial": "LEFT"},
+            "right": {"camera_serial": "RIGHT"},
+        },
+    }))
+    monkeypatch.setattr(auto, "GRIPPER_PROFILE", profile)
+
+    assert auto._full_export_available(episode)
+    profile.write_text(json.dumps({
+        "sides": {
+            "left": {"camera_serial": "OTHER"},
+            "right": {"camera_serial": "RIGHT"},
+        },
+    }))
+    assert not auto._full_export_available(episode)
+
+
+def test_trajectory_only_completion_is_explicit(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    processed.mkdir()
+    (processed / "trajectory.csv").write_text("trajectory")
+    auto._atomic_json(processed / "automation_status.json", {
+        "status": "COMPLETE",
+        "mode": "trajectory_only",
+    })
+
+    assert auto._process_complete(tmp_path)
 
 
 def test_dry_run_skips_complete_episode(tmp_path: Path) -> None:

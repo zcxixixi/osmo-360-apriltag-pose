@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import h5py
 import numpy as np
 from scipy.io import wavfile
 from scipy.signal import correlate, correlation_lags
@@ -26,13 +27,16 @@ from .insta360_telemetry import extract_x5_imu
 from .instaumi_format import common_window, write_dataset_h5
 from .manifest import ManifestError, ROOT
 
-AUTOMATION_REVISION = "instaumi-auto-v1"
+AUTOMATION_REVISION = "instaumi-auto-v2"
 TARGET_FPS = "30000/1001"
 TARGET_FPS_FLOAT = 30000 / 1001
 SERIAL_PATTERN = re.compile(rb"IAHE[A-Z0-9]{10}")
 OFFSET_PATTERN = re.compile(rb"[mn]2(?:_-?\d+(?:\.\d+)?){15}")
 TIME_PATTERN = re.compile(r"VID_(\d{8})_(\d{6})_")
 COLLECTOR_PATTERN = re.compile(r"^\d{4}_instaumi_[a-z0-9_]+$")
+GRIPPER_PROFILE = (
+    ROOT / "config/rig_revisions/instaumi_pair01_gripper_signal_20260902_r3.json"
+)
 FFMPEG = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg"
 FFPROBE = FFMPEG.with_name("ffprobe")
 
@@ -367,10 +371,34 @@ def _format_complete(episode: Path) -> bool:
     )
 
 
-def _process_complete(episode: Path) -> bool:
+def _full_export_available(episode: Path) -> bool:
+    if not _format_complete(episode) or not GRIPPER_PROFILE.is_file():
+        return False
+    with h5py.File(episode / "dataset.h5", "r") as handle:
+        raw = handle["metadata/dataset.json"][()]
+    metadata = json.loads(raw.decode() if isinstance(raw, bytes) else str(raw))
+    profile = json.loads(GRIPPER_PROFILE.read_text(encoding="utf-8"))
     return all(
-        (episode / "processed" / name).is_file()
+        metadata.get("devices", {}).get(side, {}).get("serial_number")
+        == profile.get("sides", {}).get(side, {}).get("camera_serial")
+        for side in ("left", "right")
+    )
+
+
+def _process_complete(episode: Path) -> bool:
+    processed = episode / "processed"
+    if all(
+        (processed / name).is_file()
         for name in ("trajectory.csv", "gripper.csv", "processed.csv", "metadata.csv")
+    ):
+        return True
+    status_path = processed / "automation_status.json"
+    if not (processed / "trajectory.csv").is_file() or not status_path.is_file():
+        return False
+    status = _load_json(status_path, {})
+    return (
+        status.get("status") == "COMPLETE"
+        and status.get("mode") == "trajectory_only"
     )
 
 
@@ -560,10 +588,17 @@ def scan_once(
                 skipped.append({"pair": pair.key, "reason": "retry_backoff"})
                 continue
             if dry_run:
+                formatted = _format_complete(episode)
+                mode = (
+                    "full"
+                    if formatted and _full_export_available(episode)
+                    else "trajectory_only"
+                )
                 processed_pairs.append({
                     "pair": pair.key,
                     "episode": str(episode),
-                    "action": "process" if _format_complete(episode) else "format_then_process",
+                    "action": "process" if formatted else "format_then_process",
+                    "mode": mode,
                 })
                 if len(processed_pairs) >= max_pairs:
                     break
@@ -578,20 +613,35 @@ def scan_once(
                 })
                 _atomic_json(state_path, state)
                 episode = format_pair(pair, automation_root)
+                mode = "full" if _full_export_available(episode) else "trajectory_only"
                 pair_status.update({
                     "status": "RUNNING",
                     "stage": "trajectory",
+                    "mode": mode,
                     "episode": str(episode),
                     "updated_at_utc": _utc_now(),
                 })
                 _atomic_json(state_path, state)
                 log = automation_root / "logs" / pair.collector_root.name / pair.episode_name / "process.log"
-                _run([str(process_script), str(episode)], log)
-                if not _process_complete(episode):
+                command = [str(process_script)]
+                if mode == "trajectory_only":
+                    command.append("--trajectory-only")
+                command.append(str(episode))
+                _run(command, log)
+                if not _process_complete(episode) and not (
+                    mode == "trajectory_only"
+                    and (episode / "processed/trajectory.csv").is_file()
+                ):
                     raise PipelineFailure(f"downstream outputs are incomplete: {episode / 'processed'}")
+                outputs = (
+                    ["trajectory.csv", "gripper.csv", "processed.csv", "metadata.csv"]
+                    if mode == "full"
+                    else ["trajectory.csv"]
+                )
                 pair_status.update({
                     "status": "COMPLETE",
                     "stage": "complete",
+                    "mode": mode,
                     "episode": str(episode),
                     "updated_at_utc": _utc_now(),
                     "attempts": int(pair_status.get("attempts", 0)),
@@ -602,13 +652,17 @@ def scan_once(
                     "schema_version": "instaumi-automation-status/1.0",
                     "revision": AUTOMATION_REVISION,
                     "status": "COMPLETE",
+                    "mode": mode,
                     "updated_at_utc": _utc_now(),
                     "source_pair": pair.key,
-                    "outputs": [
-                        "trajectory.csv", "gripper.csv", "processed.csv", "metadata.csv",
-                    ],
+                    "outputs": outputs,
                 })
-                processed_pairs.append({"pair": pair.key, "episode": str(episode), "action": "complete"})
+                processed_pairs.append({
+                    "pair": pair.key,
+                    "episode": str(episode),
+                    "action": "complete",
+                    "mode": mode,
+                })
             except Exception as error:
                 _record_failure(automation_root, state, pair, error)
                 processed_pairs.append({"pair": pair.key, "action": "failed", "error": str(error)})
