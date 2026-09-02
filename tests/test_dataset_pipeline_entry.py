@@ -106,29 +106,46 @@ def test_common_window_trims_the_leading_side() -> None:
     assert common_window(10.0, 12.0, -0.25) == pytest.approx((0.25, 0.0, 9.75))
 
 
-def test_packet_timeline_sorts_hevc_decode_order_by_pts(monkeypatch) -> None:
-    output = "\n".join((
+def test_packet_timeline_maps_frames_to_original_insv_pts(monkeypatch) -> None:
+    aligned_output = "\n".join((
         "0,0.000000,K__",
         "2048,0.133333,___",
         "1024,0.066667,___",
         "512,0.033333,___",
         "1536,0.100000,___",
     ))
+    source_output = "\n".join((
+        "100,1.249000,K__",
+        "101,1.284000,___",
+        "102,1.316000,___",
+        "103,1.351000,___",
+        "104,1.383000,___",
+    ))
+
+    def fake_run(command, **_kwargs):
+        output = source_output if command[-1] == "source.insv" else aligned_output
+        return subprocess.CompletedProcess([], 0, output, "")
+
     monkeypatch.setattr(
         "osmo360.pipeline.instaumi_format.subprocess.run",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, output, ""),
+        fake_run,
     )
 
-    timeline = packet_timeline(Path("ffprobe"), Path("aligned.mp4"), 1.25)
+    timeline = packet_timeline(
+        Path("ffprobe"),
+        Path("aligned.mp4"),
+        1.25,
+        source_path=Path("source.insv"),
+    )
 
     assert timeline["frame_index"].tolist() == [0, 1, 2, 3, 4]
     assert timeline["pts"].tolist() == [0, 512, 1024, 1536, 2048]
     assert timeline["timestamp_ns"].tolist() == [
-        0, 33_333_000, 66_667_000, 100_000_000, 133_333_000,
+        -1_000_000, 34_000_000, 66_000_000, 101_000_000, 133_000_000,
     ]
     assert timeline["source_timestamp_ns"].tolist() == [
-        1_250_000_000, 1_283_333_000, 1_316_667_000,
-        1_350_000_000, 1_383_333_000,
+        1_249_000_000, 1_284_000_000, 1_316_000_000,
+        1_351_000_000, 1_383_000_000,
     ]
     assert timeline["keyframe"].tolist() == [1, 0, 0, 0, 0]
 
@@ -141,7 +158,12 @@ def test_packet_timeline_rejects_duplicate_pts(monkeypatch) -> None:
     )
 
     with pytest.raises(ManifestError, match="duplicate or invalid PTS"):
-        packet_timeline(Path("ffprobe"), Path("aligned.mp4"), 0.0)
+        packet_timeline(
+            Path("ffprobe"),
+            Path("aligned.mp4"),
+            0.0,
+            source_path=Path("source.insv"),
+        )
 
 
 def test_trajectory_sampling_targets_thirty_hz_without_upsampling() -> None:
@@ -229,7 +251,7 @@ def test_instaumi_h5_references_aligned_mp4(monkeypatch, tmp_path: Path) -> None
         "pixel_format": "yuv420p", "bitrate_bps": 1000,
         "sha256": path.name,
     })
-    monkeypatch.setattr(fmt, "packet_timeline", lambda *_args: {
+    monkeypatch.setattr(fmt, "packet_timeline", lambda *_args, **_kwargs: {
         "frame_index": np.asarray([0, 1], dtype=np.uint64),
         "timestamp_ns": np.asarray([0, 33_333_333], dtype=np.int64),
         "source_timestamp_ns": np.asarray([0, 33_333_333], dtype=np.int64),
@@ -301,34 +323,37 @@ def test_instaumi_h5_references_aligned_mp4(monkeypatch, tmp_path: Path) -> None
         assert metadata_json.startswith('{\n  "schema_version": "1.0.0",\n')
         assert '\n  "time": {\n' in metadata_json
         calibration = json.loads(calibration_json)
-        intrinsics = calibration["cameras"]["left"]["intrinsics"]
-        assert intrinsics["fx"] == pytest.approx(328.3, abs=0.2)
-        assert intrinsics["fy"] == intrinsics["fx"]
-        assert intrinsics["cx"] == pytest.approx(507.4, abs=0.1)
-        assert intrinsics["cy"] == pytest.approx(513.4, abs=0.1)
-        assert calibration["cameras"]["left"]["distortion"]["coefficients"] == [0.0] * 4
-        assert calibration["extrinsics"]["T_rig_camera_left"] != np.eye(4).tolist()
-        identity = np.eye(4).tolist()
+        for side in ("left", "right"):
+            camera = calibration["cameras"][side]
+            assert camera["projection_model"] == "insta360_x5_factory_fisheye"
+            assert camera["intrinsics"] is None
+            assert camera["distortion"] == {
+                "model": "insta360_x5_factory",
+                "coefficients": None,
+            }
+            assert camera["factory_lens"]["source"] == "embedded_insv.x5_offset"
+            assert camera["factory_lens"]["x5_offset"] == source["x5_offset"]
         extrinsics = calibration["extrinsics"]
-        assert extrinsics["transform_convention"] == "T_target_source"
-        assert extrinsics["T_rig_imu_left"] == identity
-        assert extrinsics["T_rig_imu_right"] == identity
-        assert extrinsics["T_right_left"] == identity
+        assert extrinsics["status"] == "unavailable"
+        assert extrinsics["T_rig_camera_left"] is None
+        assert extrinsics["T_rig_camera_right"] is None
+        assert extrinsics["T_rig_imu_left"] is None
+        assert extrinsics["T_rig_imu_right"] is None
+        assert extrinsics["T_right_left"] is None
         for side in ("left", "right"):
             imu_calibration = calibration["imu_calibration"][side]
-            assert imu_calibration["gyroscope_bias_rad_s"] == [0, 0, 0]
-            assert imu_calibration["accelerometer_bias_m_s2"] == [0, 0, 0]
-            assert imu_calibration["gyroscope_scale"] == [1, 1, 1]
-            assert imu_calibration["accelerometer_scale"] == [1, 1, 1]
+            assert imu_calibration["gyroscope_bias_rad_s"] is None
+            assert imu_calibration["accelerometer_bias_m_s2"] is None
+            assert imu_calibration["gyroscope_scale"] is None
+            assert imu_calibration["accelerometer_scale"] is None
             assert imu_calibration["gyroscope_range_rad_s"] == pytest.approx(
                 np.deg2rad(2000)
             )
             assert imu_calibration["accelerometer_range_m_s2"] == pytest.approx(
                 32 * 9.80665
             )
-            assert None not in imu_calibration.values()
+            assert imu_calibration["status"] == "range_only"
         metadata = json.loads(metadata_json)
-        assert "null" not in calibration_json
         for side in ("left", "right"):
             range_provenance = metadata["imu"]["calibration_provenance"][side]
             assert range_provenance == {
@@ -337,8 +362,13 @@ def test_instaumi_h5_references_aligned_mp4(monkeypatch, tmp_path: Path) -> None
                     "acc_range": 32,
                     "gyro_range": 2000,
                 },
-                "bias_scale": "identity_after_parser_normalization",
+                "bias_scale": "unavailable",
             }
+        assert metadata["time"]["source_clock"] == "per_sensor_native"
+        assert metadata["time"]["source_timestamp_provenance"] == {
+            "camera": "original_insv_video_packet_pts",
+            "imu": "embedded_insv_imu_monotonic_clock",
+        }
         dataset_start = metadata["time"]["dataset_start_source_timestamp_ns"]
         for kind in ("camera", "imu"):
             for side in ("left", "right"):
