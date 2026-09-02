@@ -187,6 +187,8 @@ class ReviewStore:
             item["stale_review"]=bool(item.get("review_hash") and item["review_hash"]!=item["data_hash"])
             if item["stale_review"]: item["decision"]=None
             if not item.get("collector"):
+                item["collector"] = str(collectors.get(item["pair_id"], ""))
+            if not item.get("collector"):
                 left_source = str(item["metrics"].get("source", {}).get("left", ""))
                 match = re.search(r"VID_(\d{8})_", left_source)
                 if match:

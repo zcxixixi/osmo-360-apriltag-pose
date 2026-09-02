@@ -80,6 +80,10 @@ def test_instaumi_aligned_videos_are_reviewable(tmp_path: Path) -> None:
     store = ReviewStore(tmp_path)
     item = store.scan()[0]
     assert item["collector"] == "lyw"
+    (tmp_path / "collectors.json").write_text(
+        '{"20260901":"lyw","instaumi_000001":"qsb"}\n'
+    )
+    assert store.list_items()[0]["collector"] == "qsb"
     assert item["pair_id"] == "instaumi_000001"
     assert item["metrics"]["aligned_video_ready"]
     assert item["metrics"]["duration_s"] == 12.5
