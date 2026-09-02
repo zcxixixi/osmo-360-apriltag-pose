@@ -13,6 +13,7 @@ import h5py
 import numpy as np
 
 from .manifest import ManifestError
+from .insta360_telemetry import ImuSamples
 
 
 def sha256(path: Path) -> str:
@@ -85,7 +86,11 @@ def probe_mp4(ffprobe: Path, path: Path) -> dict[str, Any]:
         "time_base_num": tb_num, "time_base_den": tb_den,
         "frame_count": int(stream.get("nb_frames") or round(float(stream["duration"]) * fps_num / fps_den)),
         "duration_ns": round(float(stream["duration"]) * 1_000_000_000),
-        "codec": stream.get("codec_name", ""), "pixel_format": stream.get("pix_fmt", ""),
+        "codec": (
+            "H.265" if stream.get("codec_name") == "hevc"
+            else stream.get("codec_name", "")
+        ),
+        "pixel_format": stream.get("pix_fmt", ""),
         "bitrate_bps": int(stream.get("bit_rate") or 0), "sha256": sha256(path),
     }
 
@@ -194,6 +199,7 @@ def write_dataset_h5(
     output: Path, *, dataset_id: str, left_video: Path, right_video: Path,
     left_source: Path, right_source: Path, left_start_s: float, right_start_s: float,
     sync: dict[str, Any], ffprobe: Path, source_records: dict[str, dict[str, Any]],
+    imu: ImuSamples,
 ) -> dict[str, Any]:
     created = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     videos = {"left": probe_mp4(ffprobe, left_video), "right": probe_mp4(ffprobe, right_video)}
@@ -209,15 +215,15 @@ def write_dataset_h5(
     metadata = {
         "schema_version": "1.0.0", "dataset_id": dataset_id, "created_at_utc": created,
         "description": "Audio-aligned dual Insta360 rear-lens videos",
-        "time": {"unit": "ns", "reference": "dataset_start", "source_clock": "camera_monotonic", "dataset_start_source_timestamp_ns": 0, "dataset_start_utc_ns": None, "first_frame_time_offset_ns": {"left": 0, "right": 0}},
-        "devices": {side: {"manufacturer": "Insta360", "model": "X5", "serial_number": source_records[side]["serial"], "firmware_version": "", "active_sensor": "rear", "rig_position": side} for side in ("left", "right")},
+        "time": {"unit": "ns", "reference": "dataset_start", "source_clock": "camera_monotonic", "dataset_start_source_timestamp_ns": int(imu.source_timestamp_ns[0] - imu.timestamp_ns[0]), "dataset_start_utc_ns": None, "first_frame_time_offset_ns": {"left": 0, "right": 0}},
+        "devices": {side: {"manufacturer": "Insta360", "model": "X5", "serial_number": source_records[side]["serial"], "firmware_version": imu.provenance.get("firmware_version", "") if side == "left" else "", "active_sensor": "rear", "rig_position": side} for side in ("left", "right")},
         "video": {side: {"path": f"video/{side.title()}.mp4", **videos[side]} for side in ("left", "right")},
-        "capture": {"mode": "normal_video", "panorama_mode": False, "source_lens": "rear", "source_resolution": source_records["left"]["lens_size"], "stored_resolution": [1024, 1024], "frame_rate": videos["left"]["frame_rate_num"] / videos["left"]["frame_rate_den"], "encoding": videos["left"]["codec"], "bitrate_mode": "standard", "color_mode": "standard", "hdr_enabled": False, "i_log_enabled": False, "low_light_stabilization": False, "sharpness": "", "white_balance": {"mode": "auto", "temperature_k": None}},
+        "capture": {"mode": "normal_video", "panorama_mode": False, "source_lens": "rear", "source_resolution": [2 * int(source_records["left"]["lens_size"][0]), int(source_records["left"]["lens_size"][1])], "stored_resolution": [1024, 1024], "frame_rate": videos["left"]["frame_rate_num"] / videos["left"]["frame_rate_den"], "encoding": "H.265", "bitrate_mode": "standard", "color_mode": "standard", "hdr_enabled": False, "i_log_enabled": False, "low_light_stabilization": False, "sharpness": "", "white_balance": {"mode": "auto", "temperature_k": None}},
         "exposure": {"mode": "auto", "ev": 0, "iso": None, "iso_upper_limit": None, "shutter_s": None, "left_samples": {"timestamp_ns": [], "exposure_time_ns": [], "iso": []}, "right_samples": {"timestamp_ns": [], "exposure_time_ns": [], "iso": []}},
         "lens_and_stitching": {"left": {"lens": "rear", "lens_guard": "", "field_of_view": "", "crop": {"output_width": 1024, "output_height": 1024, "parameters": {"source_stream": 0, "resize": "lanczos"}}}, "right": {"lens": "rear", "lens_guard": "", "field_of_view": "", "crop": {"output_width": 1024, "output_height": 1024, "parameters": {"source_stream": 0, "resize": "lanczos"}}}, "stitching": {"enabled": False, "mode": "rear_lens_only", "vendor": "Insta360", "profile": "", "parameters": {}}, "stabilization": {"enabled": False, "mode": ""}},
-        "imu": {"source": "Insta360", "sample_count": 0, "gyroscope_unit": "rad/s", "accelerometer_unit": "m/s^2", "axis_order": ["x", "y", "z"], "coordinate_frame": "imu"},
+        "imu": {"source": "Insta360", "sample_count": int(len(imu.timestamp_ns)), "gyroscope_unit": "rad/s", "accelerometer_unit": "m/s^2", "axis_order": ["x", "y", "z"], "coordinate_frame": "imu"},
         "speaker": {"present": False, "sample_rate_hz": 48000, "channels": 1, "sample_format": "s16le", "sample_count": 0},
-        "source": {"left_original_insv": left_source.name, "right_original_insv": right_source.name, "left_original_sha256": source_records["left"].get("sha256", ""), "right_original_sha256": source_records["right"].get("sha256", ""), "insta360_sdk_version": "", "media_sdk_version": "", "conversion_software": "osmo360 instaumi exporter", "conversion_version": "1.0.0"},
+        "source": {"left_original_insv": left_source.name, "right_original_insv": right_source.name, "left_original_sha256": source_records["left"].get("sha256", ""), "right_original_sha256": source_records["right"].get("sha256", ""), "insta360_sdk_version": "CameraSDK 2.1.1.1", "media_sdk_version": "MediaSDK 3.1.1.0", "conversion_software": "osmo360 + telemetry-parser/gyro2bb", "conversion_version": "1.1.0"},
     }
     calibration = _calibration(sync, source_records)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -233,12 +239,12 @@ def write_dataset_h5(
             group.create_dataset("video_path", data=f"video/{side.title()}.mp4", dtype=string_type)
             for name, values in timelines[side].items():
                 group.create_dataset(name, data=values, compression="gzip", shuffle=True, chunks=True)
-        imu = handle.require_group("sensor/imu")
-        imu.create_dataset("timestamp_ns", shape=(0,), dtype="i8")
-        imu.create_dataset("source_timestamp_ns", shape=(0,), dtype="i8")
-        angular = imu.create_dataset("angular_velocity", shape=(0, 3), dtype="f8")
-        linear = imu.create_dataset("linear_acceleration", shape=(0, 3), dtype="f8")
-        imu.create_dataset("valid", shape=(0,), dtype="u1")
+        imu_group = handle.require_group("sensor/imu")
+        imu_group.create_dataset("timestamp_ns", data=imu.timestamp_ns, compression="gzip", shuffle=True, chunks=True)
+        imu_group.create_dataset("source_timestamp_ns", data=imu.source_timestamp_ns, compression="gzip", shuffle=True, chunks=True)
+        angular = imu_group.create_dataset("angular_velocity", data=imu.angular_velocity, compression="gzip", shuffle=True, chunks=True)
+        linear = imu_group.create_dataset("linear_acceleration", data=imu.linear_acceleration, compression="gzip", shuffle=True, chunks=True)
+        imu_group.create_dataset("valid", data=imu.valid, compression="gzip", shuffle=True, chunks=True)
         angular.attrs.update({"unit": "rad/s", "axis_order": "x,y,z", "frame": "imu"})
         linear.attrs.update({"unit": "m/s^2", "axis_order": "x,y,z", "frame": "imu"})
         speaker = handle.require_group("sensor/speaker")
