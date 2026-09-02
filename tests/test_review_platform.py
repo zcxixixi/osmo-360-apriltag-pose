@@ -103,6 +103,7 @@ def test_pair_summary_and_simple_page(tmp_path: Path) -> None:
     assert summary["tag_usable_ratio"] == 1.0
     assert summary["gripper_candidate_ratio"] == 1.0
     assert ">能用</button>" in PAGE
+    assert "播放 / 暂停" in PAGE
     assert ">开始</button>" in PAGE
     assert ">结束</button>" in PAGE
     assert "自动找动作" not in PAGE
