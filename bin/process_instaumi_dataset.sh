@@ -28,6 +28,7 @@ done
 
 "$REPO_ROOT/run_pipeline.sh" "$DATASET_ROOT"
 "$REPO_ROOT/.venv/bin/python" -m osmo360.datasets.instaumi_processed_export \
+    --remove-pipeline-final \
     "$DATASET_ROOT"
 
 printf 'Processed CSV files: %s/{trajectory,gripper,processed,metadata}.csv\n' \

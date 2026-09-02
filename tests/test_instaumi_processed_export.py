@@ -261,8 +261,50 @@ def test_export_rejects_processed_symlink(
         export.export_processed_dataset(tmp_path)
 
 
+def _make_pipeline_final(root: Path) -> Path:
+    revision = root / "final" / export.PIPELINE_REVISION
+    (revision / "pairs").mkdir(parents=True)
+    (revision / "manifest.lock.json").write_text(
+        json.dumps({"pipeline_revision": export.PIPELINE_REVISION}),
+        encoding="utf-8",
+    )
+    (revision / "status.json").write_text("{}\n", encoding="utf-8")
+    return revision
+
+
+def test_remove_pipeline_final_removes_only_generated_revision(tmp_path: Path) -> None:
+    revision = _make_pipeline_final(tmp_path)
+
+    assert export.remove_pipeline_final(tmp_path) is True
+    assert not revision.exists()
+    assert not (tmp_path / "final").exists()
+
+
+def test_remove_pipeline_final_preserves_sibling_revision(tmp_path: Path) -> None:
+    _make_pipeline_final(tmp_path)
+    sibling = tmp_path / "final" / "keep-me"
+    sibling.mkdir()
+    (sibling / "user.txt").write_text("keep\n", encoding="utf-8")
+
+    assert export.remove_pipeline_final(tmp_path) is True
+    assert sibling.is_dir()
+    assert (sibling / "user.txt").read_text(encoding="utf-8") == "keep\n"
+
+
+def test_remove_pipeline_final_rejects_unexpected_content(tmp_path: Path) -> None:
+    revision = _make_pipeline_final(tmp_path)
+    (revision / "user.txt").write_text("keep\n", encoding="utf-8")
+
+    with pytest.raises(ManifestError, match="unexpected top-level"):
+        export.remove_pipeline_final(tmp_path)
+
+    assert revision.is_dir()
+    assert (revision / "user.txt").is_file()
+
+
 def test_shell_entry_rejects_incomplete_dataset(tmp_path: Path) -> None:
     script = Path(__file__).parents[1] / "bin/process_instaumi_dataset.sh"
+    assert "--remove-pipeline-final" in script.read_text(encoding="utf-8")
     process = subprocess.run([str(script), str(tmp_path)], capture_output=True, text=True)
 
     assert process.returncode == 2

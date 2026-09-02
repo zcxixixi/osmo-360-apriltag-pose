@@ -36,6 +36,7 @@ from osmo360.visualization.render_gripper_force_angle_demo import (
 EXPORT_REVISION = "instaumi-csv-v2-direct"
 LEGACY_EXPORT_REVISION = "instaumi-csv-v1"
 CSV_NAMES = ("trajectory.csv", "gripper.csv", "processed.csv", "metadata.csv")
+PIPELINE_FINAL_ENTRIES = frozenset({"manifest.lock.json", "status.json", "pairs"})
 PROFILE_PATH = (
     ROOT
     / "config/rig_revisions/instaumi_pair01_gripper_signal_20260902_r3.json"
@@ -636,10 +637,63 @@ def _publish_csv_files(build_dir: Path, processed_root: Path) -> None:
             shutil.rmtree(legacy)
 
 
+def remove_pipeline_final(root: Path) -> bool:
+    """Remove only this pipeline revision after its CSV export is safely published."""
+    final_root = confined_path(root, "final", field="pipeline final root")
+    revision_root = confined_path(
+        root,
+        "final",
+        PIPELINE_REVISION,
+        field="pipeline final revision",
+    )
+    removed = False
+    if revision_root.exists():
+        if revision_root.is_symlink() or not revision_root.is_dir():
+            raise ManifestError(
+                f"pipeline final revision must be a real directory: {revision_root}"
+            )
+        manifest_path = revision_root / "manifest.lock.json"
+        if manifest_path.is_symlink() or not manifest_path.is_file():
+            raise ManifestError(
+                f"refusing to remove pipeline final without its manifest: {manifest_path}"
+            )
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ManifestError(
+                f"refusing to remove pipeline final with an invalid manifest: {manifest_path}"
+            ) from error
+        if manifest.get("pipeline_revision") != PIPELINE_REVISION:
+            raise ManifestError(
+                "refusing to remove pipeline final whose manifest revision does not match "
+                f"{PIPELINE_REVISION}"
+            )
+        unexpected = sorted(
+            entry.name
+            for entry in revision_root.iterdir()
+            if entry.name not in PIPELINE_FINAL_ENTRIES
+        )
+        if unexpected:
+            raise ManifestError(
+                "refusing to remove pipeline final with unexpected top-level entries: "
+                + ", ".join(unexpected)
+            )
+        shutil.rmtree(revision_root)
+        removed = True
+
+    if final_root.exists():
+        if final_root.is_symlink() or not final_root.is_dir():
+            raise ManifestError(f"pipeline final root must be a real directory: {final_root}")
+        if not any(final_root.iterdir()):
+            final_root.rmdir()
+    return removed
+
+
 def export_processed_dataset(
     dataset_root: Path,
     *,
     profile_path: Path = PROFILE_PATH,
+    remove_final: bool = False,
 ) -> dict[str, Any]:
     root = dataset_root.expanduser().resolve(strict=True)
     if not is_instaumi_dataset(root):
@@ -836,6 +890,8 @@ def export_processed_dataset(
         if build_dir.exists():
             shutil.rmtree(build_dir)
 
+    pipeline_final_removed = remove_pipeline_final(root) if remove_final else False
+
     result = {
         "status": "COMPLETE",
         "output_dir": str(output_dir),
@@ -847,6 +903,7 @@ def export_processed_dataset(
         "trajectory_rate_hz": 1.0 / float(np.median(np.diff(query_time))),
         "left_opening_available": int(np.count_nonzero(sampled["left"]["available"])),
         "right_opening_available": int(np.count_nonzero(sampled["right"]["available"])),
+        "pipeline_final_removed": pipeline_final_removed,
         "training_ready": False,
     }
     return result
@@ -856,6 +913,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dataset_root", type=Path)
     parser.add_argument("--profile", type=Path, default=PROFILE_PATH)
+    parser.add_argument(
+        "--remove-pipeline-final",
+        action="store_true",
+        help="remove this pipeline revision after processed CSVs are published",
+    )
     return parser.parse_args()
 
 
@@ -863,7 +925,11 @@ def main() -> int:
     args = parse_args()
     print(
         json.dumps(
-            export_processed_dataset(args.dataset_root, profile_path=args.profile),
+            export_processed_dataset(
+                args.dataset_root,
+                profile_path=args.profile,
+                remove_final=args.remove_pipeline_final,
+            ),
             ensure_ascii=False,
             indent=2,
         )
