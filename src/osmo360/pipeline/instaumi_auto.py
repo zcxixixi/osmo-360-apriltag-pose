@@ -341,7 +341,8 @@ def _encode_lens(
         "-i", str(source), "-map", f"0:v:{stream}", "-an", "-vf",
         f"fps={TARGET_FPS},scale={size}:{size}:flags=lanczos", "-frames:v",
         str(frame_count), "-c:v", "libx265", "-preset", "ultrafast",
-        "-crf", "24", "-pix_fmt", "yuv420p", "-tag:v", "hvc1",
+        "-x265-params", "pools=4:frame-threads=2", "-crf", "24",
+        "-pix_fmt", "yuv420p", "-tag:v", "hvc1",
         "-bf", "0", "-g", "30", "-movflags", "+faststart", str(temporary),
     ], log)
     temporary.replace(output)
