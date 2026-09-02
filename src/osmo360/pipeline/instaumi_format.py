@@ -211,21 +211,103 @@ def _constant_sensor_offset_ns(
     return dataset_start_source_timestamp_ns + int(delta[0])
 
 
+def _imu_calibration(samples: ImuSamples) -> dict[str, Any]:
+    config = samples.provenance.get("gyro_config")
+    if not isinstance(config, dict):
+        raise ManifestError("X5 IMU gyro_config is missing")
+
+    def positive_config_value(name: str) -> float:
+        value = config.get(name)
+        if isinstance(value, bool):
+            raise ManifestError(
+                f"X5 IMU gyro_config.{name} must be a finite positive number"
+            )
+        try:
+            number = float(value)
+        except (TypeError, ValueError) as error:
+            raise ManifestError(
+                f"X5 IMU gyro_config.{name} must be a finite positive number"
+            ) from error
+        if not math.isfinite(number) or number <= 0:
+            raise ManifestError(
+                f"X5 IMU gyro_config.{name} must be a finite positive number"
+            )
+        return number
+
+    gyroscope_range_deg_s = positive_config_value("gyro_range")
+    accelerometer_range_g = positive_config_value("acc_range")
+    # Embedded gyro_cfg_info records full-scale limits in deg/s and g.
+    return {
+        "gyroscope_bias_rad_s": [0, 0, 0],
+        "accelerometer_bias_m_s2": [0, 0, 0],
+        "gyroscope_scale": [1, 1, 1],
+        "accelerometer_scale": [1, 1, 1],
+        "gyroscope_range_rad_s": math.radians(gyroscope_range_deg_s),
+        "accelerometer_range_m_s2": accelerometer_range_g * 9.80665,
+    }
+
+
 def _calibration(
     sync: dict[str, Any],
     source_records: dict[str, dict[str, Any]],
     sensor_offsets_ns: dict[str, int],
+    imu: dict[str, ImuSamples],
 ) -> dict[str, Any]:
     identity = np.eye(4, dtype=float).tolist()
     left_camera, left_extrinsic = _x5_rear_calibration(source_records["left"])
     right_camera, right_extrinsic = _x5_rear_calibration(source_records["right"])
     return {
         "schema_version": "1.0.0",
-        "coordinate_system": {"rig_frame": "rig", "left_imu_frame": "imu_left", "right_imu_frame": "imu_right", "left_camera_frame": "camera_left", "right_camera_frame": "camera_right", "handedness": "right", "camera_axes": {"x": "right", "y": "down", "z": "forward"}, "rig_axes": {"x": "forward", "y": "left", "z": "up"}, "translation_unit": "m", "rotation_unit": "rad"},
-        "cameras": {"left": left_camera, "right": right_camera},
-        "extrinsics": {"matrix_convention": "row_major", "transform_convention": "T_target_source", "T_rig_camera_left": left_extrinsic, "T_rig_camera_right": right_extrinsic, "T_rig_imu_left": identity, "T_rig_imu_right": identity, "T_right_left": identity},
-        "time_calibration": {"reference": "dataset_start", **sensor_offsets_ns, "right_left_offset_ns": round(-float(sync["offset_s"]) * 1_000_000_000), "uncertainty_ns": round(float(sync["uncertainty_s"]) * 1_000_000_000), "method": "audio_cross_correlation"},
-        "imu_calibration": {"left": {"gyroscope_bias_rad_s": [0, 0, 0], "accelerometer_bias_m_s2": [0, 0, 0], "gyroscope_scale": [1, 1, 1], "accelerometer_scale": [1, 1, 1], "gyroscope_range_rad_s": None, "accelerometer_range_m_s2": None}, "right": {"gyroscope_bias_rad_s": [0, 0, 0], "accelerometer_bias_m_s2": [0, 0, 0], "gyroscope_scale": [1, 1, 1], "accelerometer_scale": [1, 1, 1], "gyroscope_range_rad_s": None, "accelerometer_range_m_s2": None}},
+        "coordinate_system": {
+            "rig_frame": "rig",
+            "left_imu_frame": "imu_left",
+            "right_imu_frame": "imu_right",
+            "left_camera_frame": "camera_left",
+            "right_camera_frame": "camera_right",
+            "handedness": "right",
+            "camera_axes": {
+                "x": "right",
+                "y": "down",
+                "z": "forward",
+            },
+            "rig_axes": {
+                "x": "forward",
+                "y": "left",
+                "z": "up",
+            },
+            "translation_unit": "m",
+            "rotation_unit": "rad",
+        },
+        "cameras": {
+            "left": left_camera,
+            "right": right_camera,
+        },
+        "extrinsics": {
+            "matrix_convention": "row_major",
+            "transform_convention": "T_target_source",
+            "T_rig_camera_left": left_extrinsic,
+            "T_rig_camera_right": right_extrinsic,
+            # These identities express the InstaUMI/Insta360 frame definition;
+            # they are not an independently estimated mechanical baseline.
+            "T_rig_imu_left": identity,
+            "T_rig_imu_right": identity,
+            "T_right_left": identity,
+        },
+        "time_calibration": {
+            "reference": "dataset_start",
+            **sensor_offsets_ns,
+            "right_left_offset_ns": round(
+                -float(sync["offset_s"]) * 1_000_000_000
+            ),
+            "uncertainty_ns": round(
+                float(sync["uncertainty_s"]) * 1_000_000_000
+            ),
+            "method": "audio_cross_correlation",
+        },
+        "imu_calibration": {
+            "left": _imu_calibration(imu["left"]),
+            "right": _imu_calibration(imu["right"]),
+        },
     }
 
 
@@ -236,7 +318,10 @@ def write_dataset_h5(
     imu: dict[str, ImuSamples],
 ) -> dict[str, Any]:
     created = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    videos = {"left": probe_mp4(ffprobe, left_video), "right": probe_mp4(ffprobe, right_video)}
+    videos = {
+        "left": probe_mp4(ffprobe, left_video),
+        "right": probe_mp4(ffprobe, right_video),
+    }
     timelines = {
         "left": packet_timeline(ffprobe, left_video, left_start_s),
         "right": packet_timeline(ffprobe, right_video, right_start_s),
@@ -269,43 +354,251 @@ def write_dataset_h5(
             sensor=f"{side} imu",
         )
     metadata = {
-        "schema_version": "1.0.0", "dataset_id": dataset_id, "created_at_utc": created,
+        "schema_version": "1.0.0",
+        "dataset_id": dataset_id,
+        "created_at_utc": created,
         "description": "Audio-aligned dual Insta360 rear-lens videos",
-        "time": {"unit": "ns", "reference": "dataset_start", "source_clock": "camera_monotonic", "dataset_start_source_timestamp_ns": dataset_start_source_timestamp_ns, "dataset_start_utc_ns": None, "first_frame_time_offset_ns": {"left": 0, "right": 0}},
-        "devices": {side: {"manufacturer": "Insta360", "model": "X5", "serial_number": source_records[side]["serial"], "firmware_version": imu[side].provenance.get("firmware_version", ""), "active_sensor": "rear", "rig_position": side} for side in ("left", "right")},
-        "video": {side: {"path": f"video/{side.title()}.mp4", **videos[side]} for side in ("left", "right")},
-        "capture": {"mode": "normal_video", "panorama_mode": False, "source_lens": "rear", "source_resolution": [2 * int(source_records["left"]["lens_size"][0]), int(source_records["left"]["lens_size"][1])], "stored_resolution": [1024, 1024], "frame_rate": videos["left"]["frame_rate_num"] / videos["left"]["frame_rate_den"], "encoding": "H.265", "bitrate_mode": "standard", "color_mode": "standard", "hdr_enabled": False, "i_log_enabled": False, "low_light_stabilization": False, "sharpness": "", "white_balance": {"mode": "auto", "temperature_k": None}},
-        "exposure": {"mode": "auto", "ev": 0, "iso": None, "iso_upper_limit": None, "shutter_s": None, "left_samples": {"timestamp_ns": [], "exposure_time_ns": [], "iso": []}, "right_samples": {"timestamp_ns": [], "exposure_time_ns": [], "iso": []}},
-        "lens_and_stitching": {"left": {"lens": "rear", "lens_guard": "", "field_of_view": "", "crop": {"output_width": 1024, "output_height": 1024, "parameters": {"source_stream": 0, "resize": "lanczos"}}}, "right": {"lens": "rear", "lens_guard": "", "field_of_view": "", "crop": {"output_width": 1024, "output_height": 1024, "parameters": {"source_stream": 0, "resize": "lanczos"}}}, "stitching": {"enabled": False, "mode": "rear_lens_only", "vendor": "Insta360", "profile": "", "parameters": {}}, "stabilization": {"enabled": False, "mode": ""}},
-        "imu": {"source": "Insta360", "left_sample_count": int(len(imu["left"].timestamp_ns)), "right_sample_count": int(len(imu["right"].timestamp_ns)), "gyroscope_unit": "rad/s", "accelerometer_unit": "m/s^2", "axis_order": ["x", "y", "z"], "coordinate_frames": {"left": "imu_left", "right": "imu_right"}},
-        "speaker": {"present": False, "sample_rate_hz": 48000, "channels": 1, "sample_format": "s16le", "sample_count": 0},
-        "source": {"left_original_insv": left_source.name, "right_original_insv": right_source.name, "left_original_sha256": source_records["left"].get("sha256", ""), "right_original_sha256": source_records["right"].get("sha256", ""), "insta360_sdk_version": "CameraSDK 2.1.1.1", "media_sdk_version": "MediaSDK 3.1.1.0", "conversion_software": "instaumi-x5-pipeline + telemetry-parser/gyro2bb", "conversion_version": "1.1.0"},
+        "time": {
+            "unit": "ns",
+            "reference": "dataset_start",
+            "source_clock": "camera_monotonic",
+            "dataset_start_source_timestamp_ns": dataset_start_source_timestamp_ns,
+            "dataset_start_utc_ns": None,
+            "first_frame_time_offset_ns": {
+                "left": 0,
+                "right": 0,
+            },
+        },
+        "devices": {
+            side: {
+                "manufacturer": "Insta360",
+                "model": "X5",
+                "serial_number": source_records[side]["serial"],
+                "firmware_version": imu[side].provenance.get(
+                    "firmware_version", ""
+                ),
+                "active_sensor": "rear",
+                "rig_position": side,
+            }
+            for side in ("left", "right")
+        },
+        "video": {
+            side: {
+                "path": f"video/{side.title()}.mp4",
+                **videos[side],
+            }
+            for side in ("left", "right")
+        },
+        "capture": {
+            "mode": "normal_video",
+            "panorama_mode": False,
+            "source_lens": "rear",
+            "source_resolution": [
+                2 * int(source_records["left"]["lens_size"][0]),
+                int(source_records["left"]["lens_size"][1]),
+            ],
+            "stored_resolution": [1024, 1024],
+            "frame_rate": (
+                videos["left"]["frame_rate_num"]
+                / videos["left"]["frame_rate_den"]
+            ),
+            "encoding": "H.265",
+            "bitrate_mode": "standard",
+            "color_mode": "standard",
+            "hdr_enabled": False,
+            "i_log_enabled": False,
+            "low_light_stabilization": False,
+            "sharpness": "",
+            "white_balance": {
+                "mode": "auto",
+                "temperature_k": None,
+            },
+        },
+        "exposure": {
+            "mode": "auto",
+            "ev": 0,
+            "iso": None,
+            "iso_upper_limit": None,
+            "shutter_s": None,
+            "left_samples": {
+                "timestamp_ns": [],
+                "exposure_time_ns": [],
+                "iso": [],
+            },
+            "right_samples": {
+                "timestamp_ns": [],
+                "exposure_time_ns": [],
+                "iso": [],
+            },
+        },
+        "lens_and_stitching": {
+            "left": {
+                "lens": "rear",
+                "lens_guard": "",
+                "field_of_view": "",
+                "crop": {
+                    "output_width": 1024,
+                    "output_height": 1024,
+                    "parameters": {
+                        "source_stream": 0,
+                        "resize": "lanczos",
+                    },
+                },
+            },
+            "right": {
+                "lens": "rear",
+                "lens_guard": "",
+                "field_of_view": "",
+                "crop": {
+                    "output_width": 1024,
+                    "output_height": 1024,
+                    "parameters": {
+                        "source_stream": 0,
+                        "resize": "lanczos",
+                    },
+                },
+            },
+            "stitching": {
+                "enabled": False,
+                "mode": "rear_lens_only",
+                "vendor": "Insta360",
+                "profile": "",
+                "parameters": {},
+            },
+            "stabilization": {
+                "enabled": False,
+                "mode": "",
+            },
+        },
+        "imu": {
+            "source": "Insta360",
+            "left_sample_count": int(len(imu["left"].timestamp_ns)),
+            "right_sample_count": int(len(imu["right"].timestamp_ns)),
+            "gyroscope_unit": "rad/s",
+            "accelerometer_unit": "m/s^2",
+            "axis_order": ["x", "y", "z"],
+            "coordinate_frames": {
+                "left": "imu_left",
+                "right": "imu_right",
+            },
+            "calibration_provenance": {
+                side: {
+                    "range_source": "embedded_insv.gyro_cfg_info",
+                    "gyro_config": imu[side].provenance.get("gyro_config"),
+                    "bias_scale": "identity_after_parser_normalization",
+                }
+                for side in ("left", "right")
+            },
+        },
+        "speaker": {
+            "present": False,
+            "sample_rate_hz": 48000,
+            "channels": 1,
+            "sample_format": "s16le",
+            "sample_count": 0,
+        },
+        "source": {
+            "left_original_insv": left_source.name,
+            "right_original_insv": right_source.name,
+            "left_original_sha256": source_records["left"].get("sha256", ""),
+            "right_original_sha256": source_records["right"].get("sha256", ""),
+            "insta360_sdk_version": "CameraSDK 2.1.1.1",
+            "media_sdk_version": "MediaSDK 3.1.1.0",
+            "conversion_software": (
+                "instaumi-x5-pipeline + telemetry-parser/gyro2bb"
+            ),
+            "conversion_version": "1.1.0",
+        },
     }
-    calibration = _calibration(sync, source_records, sensor_offsets_ns)
+    calibration = _calibration(sync, source_records, sensor_offsets_ns, imu)
     output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_suffix(".partial.h5"); temporary.unlink(missing_ok=True)
+    temporary = output.with_suffix(".partial.h5")
+    temporary.unlink(missing_ok=True)
     string_type = h5py.string_dtype("utf-8")
     with h5py.File(temporary, "w") as handle:
-        handle.attrs.update({"schema_name": "instaumi", "schema_version": "1.0.0", "dataset_id": dataset_id, "time_unit": "ns", "time_reference": "dataset_start", "created_at_utc": created})
-        handle.create_dataset("calib/calibration_full.json", data=json.dumps(calibration, ensure_ascii=False), dtype=string_type)
-        handle.create_dataset("metadata/dataset.json", data=json.dumps(metadata, ensure_ascii=False), dtype=string_type)
+        handle.attrs.update({
+            "schema_name": "instaumi",
+            "schema_version": "1.0.0",
+            "dataset_id": dataset_id,
+            "time_unit": "ns",
+            "time_reference": "dataset_start",
+            "created_at_utc": created,
+        })
+        handle.create_dataset(
+            "calib/calibration_full.json",
+            data=json.dumps(calibration, ensure_ascii=False, indent=2),
+            dtype=string_type,
+        )
+        handle.create_dataset(
+            "metadata/dataset.json",
+            data=json.dumps(metadata, ensure_ascii=False, indent=2),
+            dtype=string_type,
+        )
         camera_group = handle.require_group("sensor/camera")
         for side in ("left", "right"):
             group = camera_group.create_group(side)
-            group.create_dataset("video_path", data=f"video/{side.title()}.mp4", dtype=string_type)
+            group.create_dataset(
+                "video_path",
+                data=f"video/{side.title()}.mp4",
+                dtype=string_type,
+            )
             for name, values in timelines[side].items():
-                group.create_dataset(name, data=values, compression="gzip", shuffle=True, chunks=True)
+                group.create_dataset(
+                    name,
+                    data=values,
+                    compression="gzip",
+                    shuffle=True,
+                    chunks=True,
+                )
         imu_root = handle.require_group("sensor/imu")
         for side in ("left", "right"):
             imu_group = imu_root.create_group(side)
             samples = imu[side]
-            imu_group.create_dataset("timestamp_ns", data=samples.timestamp_ns, compression="gzip", shuffle=True, chunks=True)
-            imu_group.create_dataset("source_timestamp_ns", data=samples.source_timestamp_ns, compression="gzip", shuffle=True, chunks=True)
-            angular = imu_group.create_dataset("angular_velocity", data=samples.angular_velocity, compression="gzip", shuffle=True, chunks=True)
-            linear = imu_group.create_dataset("linear_acceleration", data=samples.linear_acceleration, compression="gzip", shuffle=True, chunks=True)
-            imu_group.create_dataset("valid", data=samples.valid, compression="gzip", shuffle=True, chunks=True)
-            angular.attrs.update({"unit": "rad/s", "axis_order": "x,y,z", "frame": f"imu_{side}"})
-            linear.attrs.update({"unit": "m/s^2", "axis_order": "x,y,z", "frame": f"imu_{side}"})
+            imu_group.create_dataset(
+                "timestamp_ns",
+                data=samples.timestamp_ns,
+                compression="gzip",
+                shuffle=True,
+                chunks=True,
+            )
+            imu_group.create_dataset(
+                "source_timestamp_ns",
+                data=samples.source_timestamp_ns,
+                compression="gzip",
+                shuffle=True,
+                chunks=True,
+            )
+            angular = imu_group.create_dataset(
+                "angular_velocity",
+                data=samples.angular_velocity,
+                compression="gzip",
+                shuffle=True,
+                chunks=True,
+            )
+            linear = imu_group.create_dataset(
+                "linear_acceleration",
+                data=samples.linear_acceleration,
+                compression="gzip",
+                shuffle=True,
+                chunks=True,
+            )
+            imu_group.create_dataset(
+                "valid",
+                data=samples.valid,
+                compression="gzip",
+                shuffle=True,
+                chunks=True,
+            )
+            angular.attrs.update({
+                "unit": "rad/s",
+                "axis_order": "x,y,z",
+                "frame": f"imu_{side}",
+            })
+            linear.attrs.update({
+                "unit": "m/s^2",
+                "axis_order": "x,y,z",
+                "frame": f"imu_{side}",
+            })
         speaker = handle.require_group("sensor/speaker")
         speaker.create_dataset("timestamp_ns", shape=(0,), dtype="i8")
         speaker.create_dataset("samples", shape=(0, 1), dtype="i2")
