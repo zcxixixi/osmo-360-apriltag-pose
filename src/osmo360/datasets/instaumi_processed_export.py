@@ -39,7 +39,7 @@ from osmo360.visualization.render_gripper_force_angle_demo import (
 )
 
 
-EXPORT_REVISION = "instaumi-csv-v3-world-flu"
+EXPORT_REVISION = "instaumi-csv-v4-explicit-flu-frames"
 LEGACY_EXPORT_REVISION = "instaumi-csv-v1"
 CSV_NAMES = ("trajectory.csv", "gripper.csv", "processed.csv", "metadata.csv")
 PIPELINE_FINAL_ENTRIES = frozenset({"manifest.lock.json", "status.json", "pairs"})
@@ -598,6 +598,10 @@ def _read_world_flu_trajectory(
         raise ManifestError(f"trajectory world map is missing: {world_map_path}")
     world_map = json.loads(world_map_path.read_text(encoding="utf-8"))
     world_transform = derive_world_flu_transform(world_map)
+    for side in SIDES:
+        for name in (f"{side}_parent_frame", f"{side}_child_frame"):
+            if name not in fields:
+                fields.append(name)
     rows = transform_trajectory_rows(rows, world_transform)
     query_time = np.asarray(
         [float(row["timestamp_s"]) for row in rows], dtype=np.float64
@@ -958,7 +962,7 @@ def export_processed_dataset(
         if not child_frames:
             child_frames = ["hand_camera_flu_back_x"]
         metadata_row = {
-            "schema_version": "instaumi-processed-csv/3.0-world-flu",
+            "schema_version": "instaumi-processed-csv/4.0-explicit-flu-frames",
             "dataset_id": pair_id,
             "dataset_directory": root.name,
             "pair_id": pair_id,

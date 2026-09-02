@@ -141,7 +141,10 @@ def _probe(_path: Path) -> dict[str, object]:
 
 
 def _make_instaumi_dataset(
-    tmp_path: Path, *, dataset_id: str = "instaumi_test_000001"
+    tmp_path: Path,
+    *,
+    dataset_id: str = "instaumi_test_000001",
+    first_offsets_ns: dict[str, int] | None = None,
 ) -> Path:
     video = tmp_path / "video"
     video.mkdir()
@@ -152,11 +155,15 @@ def _make_instaumi_dataset(
         "Right_forward.mp4",
     ):
         (video / name).write_bytes(name.encode())
+    first_offsets_ns = first_offsets_ns or {"left": 0, "right": 0}
     metadata = {
         "schema_version": "1.0.0",
         "dataset_id": dataset_id,
         "created_at_utc": "2026-09-01T08:41:03Z",
-        "time": {"reference": "dataset_start"},
+        "time": {
+            "reference": "dataset_start",
+            "first_frame_time_offset_ns": first_offsets_ns,
+        },
         "devices": {
             "left": {"serial_number": LEFT_SERIAL},
             "right": {"serial_number": RIGHT_SERIAL},
@@ -190,11 +197,62 @@ def _make_instaumi_dataset(
         timestamp = np.arange(300, dtype=np.int64) * 33_333_333
         for side, source_start in (("left", 10_000_000_000), ("right", 7_382_125_000)):
             base = f"/sensor/camera/{side}"
-            handle.create_dataset(f"{base}/timestamp_ns", data=timestamp)
+            aligned = timestamp + first_offsets_ns[side]
+            handle.create_dataset(f"{base}/timestamp_ns", data=aligned)
             handle.create_dataset(f"{base}/source_timestamp_ns", data=timestamp + source_start)
             handle.create_dataset(f"{base}/frame_index", data=np.arange(300, dtype=np.int64))
             handle.create_dataset(f"{base}/valid", data=np.ones(300, dtype=np.bool_))
     return tmp_path
+
+
+def test_instaumi_declared_negative_first_frame_offset_is_preserved(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    root = _make_instaumi_dataset(
+        tmp_path,
+        first_offsets_ns={"left": -500_000, "right": 0},
+    )
+    monkeypatch.setattr(
+        four_mp4,
+        "_probe_mp4",
+        lambda path: {**_probe(path), "width": 1920, "height": 1920},
+    )
+    monkeypatch.setattr(four_mp4, "_embedded_identity", lambda _path: (None, None))
+
+    lock = four_mp4.discover_four_mp4_dataset(root)
+
+    pair = lock["pairs"][0]
+    assert pair["left"]["timeline"]["first_timestamp_ns"] == -500_000
+    assert pair["right"]["timeline"]["first_timestamp_ns"] == 0
+
+
+def test_instaumi_null_intrinsics_fall_back_to_serial_factory_model(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    root = _make_instaumi_dataset(tmp_path)
+    with h5py.File(root / "dataset.h5", "r+") as handle:
+        raw = handle["/calib/calibration_full.json"][()]
+        calibration = json.loads(raw.decode() if isinstance(raw, bytes) else str(raw))
+        calibration["cameras"]["left"]["intrinsics"] = None
+        calibration["cameras"]["left"]["distortion"] = None
+        del handle["/calib/calibration_full.json"]
+        handle.create_dataset(
+            "/calib/calibration_full.json",
+            data=json.dumps(calibration),
+            dtype=h5py.string_dtype(encoding="utf-8"),
+        )
+    monkeypatch.setattr(
+        four_mp4,
+        "_probe_mp4",
+        lambda path: {**_probe(path), "width": 1920, "height": 1920},
+    )
+    monkeypatch.setattr(four_mp4, "_embedded_identity", lambda _path: (None, None))
+
+    lock = four_mp4.discover_four_mp4_dataset(root)
+
+    assert lock["instaumi"]["calibration_intrinsics_complete"] is False
 
 
 def test_four_mp4_discovery_and_dataset_dry_run(monkeypatch, tmp_path: Path):
@@ -205,7 +263,7 @@ def test_four_mp4_discovery_and_dataset_dry_run(monkeypatch, tmp_path: Path):
     lock = four_mp4.discover_four_mp4_dataset(root)
     result = dataset.process_dataset(root, dry_run=True)
 
-    assert lock["pipeline_revision"] == "dual-x5-four-mp4-cpu-v9"
+    assert lock["pipeline_revision"] == "dual-x5-four-mp4-cpu-v10"
     assert lock["pairs"][0]["left"]["lenses"][0]["stream"] == 0
     assert lock["pairs"][0]["right"]["base_tag_id"] == 3
     assert lock["pairs"][0]["sync"]["offset_s"] == 0.0125

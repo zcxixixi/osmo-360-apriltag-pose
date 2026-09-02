@@ -17,11 +17,11 @@ from typing import Any
 
 from osmo360.ffmpeg_runtime import project_ffmpeg_runtime
 
-from .devices import load_device_pairs
+from .devices import load_device_pairs, load_inventory
 from .manifest import ManifestError, ROOT, confined_path, validate_path_component
 
 
-PIPELINE_REVISION = "dual-x5-four-mp4-cpu-v9"
+PIPELINE_REVISION = "dual-x5-four-mp4-cpu-v10"
 INPUT_SCHEMA = "dual-x5-four-mp4-input/1.0"
 LOCK_SCHEMA = "dual-x5-four-mp4-dataset-lock/1.0"
 
@@ -175,7 +175,24 @@ def _embedded_identity(path: Path) -> tuple[str | None, str | None]:
     )
 
 
-def _registered_binding(side: str) -> tuple[str, int]:
+def _registered_binding(
+    side: str,
+    requested_serial: str | None = None,
+) -> tuple[str, int]:
+    if requested_serial:
+        device = load_inventory()["devices"].get(requested_serial)
+        assignment = None if device is None else device.get("assignment")
+        expected_role = f"physical_{side}"
+        if (
+            not isinstance(assignment, dict)
+            or assignment.get("role") != expected_role
+            or int(assignment.get("base_tag_id", -1)) not in {2, 3}
+        ):
+            raise ManifestError(
+                f"{side} camera {requested_serial} has no verified {expected_role} "
+                "and BaseTag assignment in the X5 inventory"
+            )
+        return requested_serial, int(assignment["base_tag_id"])
     candidates = []
     for pair in load_device_pairs()["pairs"].values():
         item = pair[side]
@@ -197,7 +214,11 @@ def _camera_record(
     paths = _lens_paths(root, config, side)
     camera_config = config.get("cameras", {}).get(side, {})
     embedded = {stream: _embedded_identity(path) for stream, path in paths.items()}
-    registered_serial, registered_tag = _registered_binding(side)
+    configured_serial = camera_config.get("serial")
+    registered_serial, registered_tag = _registered_binding(
+        side,
+        None if configured_serial is None else str(configured_serial),
+    )
     embedded_serials = {value[0] for value in embedded.values() if value[0]}
     embedded_offsets = {value[1] for value in embedded.values() if value[1]}
     if len(embedded_serials) > 1 or len(embedded_offsets) > 1:

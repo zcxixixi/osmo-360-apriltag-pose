@@ -305,6 +305,8 @@ def test_export_writes_synchronized_csv_revision_without_removing_existing_files
     with (output / "processed.csv").open(newline="", encoding="utf-8") as handle:
         combined = list(csv.DictReader(handle))
     assert combined[2]["world_frame"] == "world_flu_aprilgrid_midpoint"
+    assert combined[2]["left_parent_frame"] == "world_flu_aprilgrid_midpoint"
+    assert combined[2]["left_child_frame"] == "hand_camera_flu_back_x"
     assert combined[2]["left_camera_x_m"] == "-1.000000000"
     assert combined[2]["left_camera_y_m"] == "-2.500000000"
     assert combined[2]["right_opening_width_m"] == "0.006000000"
@@ -423,6 +425,8 @@ def test_trajectory_only_export_skips_gripper_identity_and_preserves_other_outpu
         published = list(csv.DictReader(handle))
     assert len(published) == 2
     assert published[0]["world_frame"] == "world_flu_aprilgrid_midpoint"
+    assert published[0]["left_parent_frame"] == "world_flu_aprilgrid_midpoint"
+    assert published[0]["right_child_frame"] == "hand_camera_flu_back_x"
 
 
 def _make_pipeline_final(root: Path) -> Path:

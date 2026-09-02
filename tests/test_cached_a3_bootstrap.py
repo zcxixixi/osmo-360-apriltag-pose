@@ -107,6 +107,23 @@ def test_joint_csv_interpolates_both_tracks_in_one_map(tmp_path: Path):
     assert rows[1]["right_pose_state"] == "MEASURED"
 
 
+def test_joint_csv_preserves_aligned_subframe_phase_and_uses_right_timeline(
+    tmp_path: Path,
+) -> None:
+    left = [_row(0, -0.0005, 0.0), _row(1, 0.0995, 1.0)]
+    right = [_row(0, 0.0, 5.0), _row(1, 0.1, 6.0)]
+    output = tmp_path / "joint.csv"
+
+    summary = write_joint_pose_csv(output, left, right, map_id="shared-map")
+    rows = list(csv.DictReader(output.open(newline="", encoding="utf-8")))
+
+    assert [float(row["timestamp_s"]) for row in rows] == [0.0, 0.1]
+    assert summary["canonical_joint_timestamp_source"] == (
+        "right_camera_aligned_h5_timeline"
+    )
+    assert summary["maximum_paired_timestamp_delta_s"] == pytest.approx(0.0005)
+
+
 def test_joint_csv_retains_untrusted_pose_for_interpolation_longer_than_quarter_second(
     tmp_path: Path,
 ):

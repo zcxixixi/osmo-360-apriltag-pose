@@ -470,14 +470,29 @@ def main() -> int:
             if key not in handle:
                 raise RuntimeError(f"InstaUMI timestamp dataset is missing: {key}")
             exact_timestamp_s = np.asarray(handle[key], dtype=np.float64) / 1e9
+            metadata_raw = handle["/metadata/dataset.json"][()]
+            if isinstance(metadata_raw, bytes):
+                metadata_raw = metadata_raw.decode("utf-8")
+            metadata = json.loads(str(metadata_raw))
+            declared_start_s = float(
+                metadata.get("time", {})
+                .get("first_frame_time_offset_ns", {})
+                .get(args.timeline_camera, 0)
+            ) / 1e9
         ignored_video_tail_frames = ignored_trailing_video_frames(
             timestamp_count=len(exact_timestamp_s),
             video_frame_count=source_frame_count,
             end_frame=args.end_frame,
             stop_after_end_frame=args.stop_after_end_frame,
         )
-        if exact_timestamp_s[0] != 0 or np.any(np.diff(exact_timestamp_s) <= 0):
-            raise RuntimeError("InstaUMI timestamps must start at zero and increase")
+        if (
+            not np.isclose(exact_timestamp_s[0], declared_start_s, atol=5e-10)
+            or np.any(np.diff(exact_timestamp_s) <= 0)
+        ):
+            raise RuntimeError(
+                "InstaUMI timestamps must start at the declared first-frame "
+                "offset and increase"
+            )
     frame = 0
     if args.seek_to_start:
         if args.ffmpeg_gray_pipe:
