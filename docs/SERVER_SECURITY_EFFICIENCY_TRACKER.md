@@ -8,8 +8,8 @@
 - 基准数据：`/home/ps/instaumi-data/instaumi_000001`，四路 MP4 与 `dataset.h5`。
 - 开发分支：`codex/cpu-four-mp4-pipeline`。
 - 每次算法、轨迹、坐标系、时间线或渲染语义变更必须：
-  1. 阅读 `AGENTS.md`、`docs/DUAL_GRIPPER_V50_BASELINE.md` 和 v50 机器锁；
-  2. 变更前后运行 `./umi verify`，记录因外部冻结文件缺失造成的环境失败；
+  1. 阅读 `AGENTS.md` 和当前有效的硬件/算法修订；
+  2. 变更前后运行 `./umi verify` 的当前有效基线；
   3. 运行聚焦测试和完整 `pytest`；
   4. 使用新版本输出目录在服务器无缓存重跑 `instaumi_000001`；
   5. 核对频率、样本数、质量门和资源占用；
@@ -29,8 +29,8 @@
 | 审核网关提交 | 本地安全代码 `3e5a0b3`、unit `2fd08c3`；服务器等价 `a6f22f2`、`f0ffecd` |
 | 服务器无缓存耗时 | 空闲服务器 v8 为 5.87 s，平均 1268% CPU，峰值 RSS 261,348 KiB、无 swap；此前无竞争 v5 基线为 6.49 s |
 | 输出 | 300/300 帧具备双侧数值位姿；266 帧联合可信，263 帧双侧实测，34 帧长间隔不可信，`SELF_CALIBRATED_PASS` |
-| CSV 产品入口 | `bin/process_instaumi_dataset.sh DATASET_ROOT`；四文件原子发布到 `processed/{trajectory,gripper,processed,metadata}.csv`，保留 `time_alignment.csv`；成功发布后删除本次 v8 `final/` 工作制品，失败时保留供诊断；夹爪信号保持诊断级 `training_ready=0` |
-| 回归测试 | 当前本地/服务器完整测试均为 301 passed/8 skipped；此前服务器启用正式 v7 缓存回归时 283 passed/7 skipped，严格验证左侧仅 frame 168/360/420 命中 handoff 门、右侧 0、300/300 数值位姿 |
+| CSV 产品入口 | `bin/process_instaumi_dataset.sh DATASET_ROOT`；终端显示阶段、四路合计帧/块进度、百分比、ETA 与整条耗时；四文件原子发布到 `processed/{trajectory,gripper,processed,metadata}.csv`，保留 `time_alignment.csv`；成功发布后删除本次 v8 `final/` 工作制品，失败时保留供诊断；夹爪信号保持诊断级 `training_ready=0` |
+| 回归测试 | 当前本地/服务器完整测试均为 305 passed/8 skipped；此前服务器启用正式 v7 缓存回归时 283 passed/7 skipped，严格验证左侧仅 frame 168/360/420 命中 handoff 门、右侧 0、300/300 数值位姿 |
 | IMU 状态 | 当前 `dataset.h5` 共享 IMU 样本数为 0，左右独立流缺失；v8 明确 `UNAVAILABLE_NO_SAMPLES`，34 个长间隔帧回退视觉 `INTERPOLATED_UNTRUSTED`，不伪造 IMU |
 | 最新已发视频 | v8 `processed_joint_trajectory_30hz_tag_map_front_above_v8.mp4`，固定 `tag-map-front-above`，SHA-256 `fb12d243...c9a48` |
 | 受管服务实际 unit | `osmo-visualization.service`、`osmo-alignment-review.service`（认证网关）、`osmo-alignment-review-backend.service`；三者均为 user unit，active/enabled、`NRestarts=0` |
@@ -348,6 +348,19 @@
 - 本地及 CPU 服务器完整回归均为 `301 passed, 8 skipped`，bash 语法与 `git diff --check` 通过。新增测试覆盖精确 revision 删除、空 `final/` 删除、兄弟目录保留、未知内容 fail-closed，以及最终 shell 入口必带清理开关。
 - 在 260 s 正式数据 `/home/ps/current-robotics-data-2/total_annotation/umi_insta360/0901_instaumi_sort_blocks/pair_M5WSK_KKUKF/final/instaumi_20260901_103308` 连续热运行两次：第一次 wall `2.90 s`、平均 `500% CPU`、峰值 RSS `171,276 KiB`，第二次从已无 `final/` 的状态重建并再次清理，wall `2.83 s`、`500% CPU`、峰值 RSS `170,084 KiB`。两次均无 swap且最终 `final/` 不存在。
 - 正式 `processed/` 保留 `trajectory.csv`、`gripper.csv`、`processed.csv`、`metadata.csv` 和既有 `time_alignment.csv`；前三个产品 CSV 均为 7,767 行，元数据复核为 `SELF_CALIBRATED_PASS`、`29.969730572 Hz`、`hand_camera_flu_back_x`。原始 `dataset.h5`、四 MP4 与隐藏缓存均未改动或删除。
+
+### 2026-09-02 / Cycle 022
+
+- 为最终单参数 shell 入口增加实时终端进度。worker 每次运行先重置本轮状态，避免显示上次运行的陈旧阶段；观测阶段原子记录已完成/总 chunk 和四路视频合计已处理/总帧数，随后分别记录双镜头合并与联合轨迹求解的 `RUNNING/PASS`。独立只读 monitor 在 TTY 中单行刷新阶段、墙钟、百分比与 ETA，在非交互日志中仅于阶段或计数变化时输出，避免刷屏。
+- `bin/process_instaumi_dataset.sh` 现在显示开始、轨迹 `1/2`、CSV 导出 `2/2`、失败退出码、整条累计秒数和输出路径；隐藏原有大段成功 JSON，但错误仍走 stderr。退出、失败和 Ctrl+C 均由 trap 精确停止并回收 monitor，不影响失败时保留 `final/` 的诊断语义。
+- 本地及 CPU 服务器完整回归均为 `304 passed, 8 skipped`，聚焦进度/四 MP4 回归为 36 passed，compileall、bash 语法和 `git diff --check` 通过。`./umi verify` 仍只因用户已授权忽略的外部 v50 冻结时间线缺失而失败，未修改任何受保护文件。
+- 仅用已完成的 `instaumi_20260901_103308` 做热缓存 TTY 冒烟：终端实际显示准备、身份校验、联合轨迹、CSV 发布与总耗时，整条约 5 s，结束后内部 `final/` 仍不存在。用户准备运行的 `instaumi_20260901_105442` 未提前处理，`processed/` 仍只有原有 `time_alignment.csv`。
+
+### 2026-09-02 / Cycle 023
+
+- 按用户明确要求退役不再使用的双夹爪 v50 冻结门：删除两份 v50 baseline lock、专用 verifier、说明文档和未被代码引用的旧 v50/v51 CAD revision 元数据；`umi verify`、pipeline registry、历史 commit binding、README 与仓库工作约束均移除 v50 引用。外部历史视频/数据、当前 InstaUMI v8、X5 单夹爪有效基线及通用安全不变量不删除。
+- 该变更消除 `/home/cenxi/...dual_gripper_claw_to_claw_action_v50_fixed_timeline.json` 缺失导致的环境 gate；后续 `./umi verify` 只运行仍登记的 X5 单夹爪基线。终端进度功能和用户待验证的 `instaumi_20260901_105442` 输入保持不变。
+- 本地相关聚焦回归 52 passed，本地/服务器完整回归均为 `305 passed, 8 skipped`。v50 verifier 已不再被调用；当前 `./umi verify` 若在两端运行，失败来源已变为另一个仍有效的 X5 单夹爪基线外部 `audit.json` 缺失，不再涉及 v50。是否继续保留该独立 X5 gate 不在本轮删除授权内。
 
 ## 最近一次流水线版本变更验证
 

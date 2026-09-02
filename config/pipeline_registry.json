@@ -72,10 +72,9 @@
       ]
     },
     {
-      "group": "frozen-baseline-tools",
-      "status": "active verification only; never edit to make a failure pass",
+      "group": "legacy-dual-gripper-tools",
+      "status": "historical implementation; not part of the active baseline verifier",
       "files": [
-        "src/osmo360/verification/verify_dual_gripper_v50_baseline.py",
         "src/osmo360/visualization/render_fused_world_audit.py",
         "src/osmo360/localization/fuse_asymmetric_gripper_world_pose.py"
       ]

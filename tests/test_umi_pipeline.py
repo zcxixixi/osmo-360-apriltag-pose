@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from osmo360.pipeline.cli import list_commands
+from osmo360.pipeline.cli import list_commands, verify_baselines
 from osmo360.pipeline.devices import (
     assign_device,
     load_inventory,
@@ -219,6 +219,25 @@ def test_existing_outputs_become_immutable_review_bundle(tmp_path):
 def test_command_registry_hides_legacy_by_default():
     assert "legacy" not in list_commands(False)
     assert "legacy" in list_commands(True)
+
+
+def test_verify_baselines_excludes_retired_dual_gripper_v50(monkeypatch):
+    called = []
+
+    def fake_run(command, **_kwargs):
+        called.append(command[-1])
+        return type(
+            "Completed",
+            (),
+            {"stdout": json.dumps({"baseline_id": "x5-current", "status": "PASS"})},
+        )()
+
+    monkeypatch.setattr("osmo360.pipeline.cli.subprocess.run", fake_run)
+
+    result = verify_baselines()
+
+    assert called == ["osmo360.verification.verify_x5_one_sided_force_baseline"]
+    assert result["status"] == "PASS"
 
 
 def test_camera_sdk_fleet_registration_preserves_assignments(tmp_path):

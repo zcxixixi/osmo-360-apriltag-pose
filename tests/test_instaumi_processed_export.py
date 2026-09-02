@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from osmo360.datasets import instaumi_processed_export as export
+from osmo360.datasets.instaumi_progress import ProgressSnapshot, _render, progress_snapshot
 from osmo360.pipeline.manifest import ManifestError
 
 
@@ -309,3 +310,50 @@ def test_shell_entry_rejects_incomplete_dataset(tmp_path: Path) -> None:
 
     assert process.returncode == 2
     assert "Missing required InstaUMI input" in process.stderr
+
+
+def test_progress_snapshot_reports_aggregate_video_frames() -> None:
+    snapshot = progress_snapshot(
+        {
+            "stages": {
+                "identity": {"state": "PASS"},
+                "sync": {"state": "PASS"},
+                "observation_chunks": {
+                    "state": "RUNNING",
+                    "completed": 3,
+                    "total": 12,
+                    "completed_frames": 7200,
+                    "total_frames": 31068,
+                },
+            }
+        }
+    )
+
+    assert snapshot.key == "observation_chunks"
+    assert snapshot.completed_frames == 7200
+    line = _render(snapshot, elapsed_s=20, stage_elapsed_s=10)
+    assert "3/12" in line
+    assert "7200/31068" in line
+    assert "23.2%" in line
+    assert "ETA 00:33" in line
+
+
+def test_progress_snapshot_exposes_merge_and_tracking_stages() -> None:
+    base = {
+        "identity": {"state": "PASS"},
+        "sync": {"state": "PASS"},
+        "observation_chunks": {"state": "REUSED"},
+    }
+    merging = progress_snapshot({"stages": base})
+    tracking = progress_snapshot(
+        {
+            "stages": {
+                **base,
+                "dual_lens_observations": {"state": "PASS"},
+                "trajectory_tracking": {"state": "RUNNING"},
+            }
+        }
+    )
+
+    assert merging == ProgressSnapshot("dual_lens_observations", "合并双镜头观测", "WAITING")
+    assert tracking.key == "trajectory_tracking"

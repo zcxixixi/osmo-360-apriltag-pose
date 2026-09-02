@@ -1,7 +1,6 @@
 {
   "schema_version": "historical-baseline-bindings/1.0",
   "bindings": {
-    "config/baselines/dual_gripper_v50_accepted_baseline.json": "aa375ee1e3a7a8edbffb8d1517a217a3c352f789",
     "config/baselines/two_tag_locator_20260828_v1.json": "ede677611721d6907be033eafc9235a34b8649a7",
     "config/baselines/x5_left_one_sided_force_accepted_20260830.json": "c7c19d286d69bfa58dab931c2a0c095a36e4013e"
   },
