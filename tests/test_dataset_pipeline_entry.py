@@ -261,6 +261,16 @@ def test_instaumi_h5_references_aligned_mp4(monkeypatch, tmp_path: Path) -> None
         assert intrinsics["cy"] == pytest.approx(513.4, abs=0.1)
         assert calibration["cameras"]["left"]["distortion"]["coefficients"] == [0.0] * 4
         assert calibration["extrinsics"]["T_rig_camera_left"] != np.eye(4).tolist()
+        metadata = json.loads(handle["metadata/dataset.json"][()].decode())
+        dataset_start = metadata["time"]["dataset_start_source_timestamp_ns"]
+        for kind in ("camera", "imu"):
+            for side in ("left", "right"):
+                group = handle[f"sensor/{kind}/{side}"]
+                offset = calibration["time_calibration"][f"{side}_{kind}_offset_ns"]
+                assert np.array_equal(
+                    group["timestamp_ns"][:],
+                    group["source_timestamp_ns"][:] + offset - dataset_start,
+                )
 
 
 def test_run_pipeline_shell_requires_only_dataset_path(tmp_path: Path):
