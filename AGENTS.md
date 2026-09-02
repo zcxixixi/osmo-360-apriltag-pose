@@ -124,7 +124,7 @@ This revision prefers bilateral force measurement, falls back to the one
 complete jaw as `MEASURED_ONE_SIDED_{LEFT,RIGHT}_LOW_CONFIDENCE`, and preserves
 `N/A` when neither jaw is complete; it never fabricates the hidden marker.
 The accepted result is frozen by
-`config/baselines/x5_left_one_sided_force_src_accepted_20260830.json`. Run
+`config/baselines/x5_left_one_sided_force_insta_only_accepted_20260902.json`. Run
 `./umi verify` after relevant changes. Never overwrite its force, timeline, or
 review-bundle directories; replacements need new revisions and user acceptance.
 
