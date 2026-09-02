@@ -62,8 +62,8 @@ def _rear_calibration(
     calibration: dict[str, Any], side: str, x5_offset: str
 ) -> dict[str, Any] | None:
     camera = calibration.get("cameras", {}).get(side, {})
-    intrinsics = camera.get("intrinsics", {})
-    distortion = camera.get("distortion", {})
+    intrinsics = camera.get("intrinsics") or {}
+    distortion = camera.get("distortion") or {}
     intrinsic_values = [intrinsics.get(name) for name in ("fx", "fy", "cx", "cy")]
     if all(value is None for value in intrinsic_values):
         return None
@@ -122,7 +122,12 @@ def _rear_calibration(
     }
 
 
-def _timeline(handle: h5py.File, side: str) -> dict[str, Any]:
+def _timeline(
+    handle: h5py.File,
+    side: str,
+    *,
+    expected_first_timestamp_ns: int = 0,
+) -> dict[str, Any]:
     base = f"/sensor/camera/{side}"
     required = ("timestamp_ns", "source_timestamp_ns", "frame_index", "valid")
     missing = [name for name in required if f"{base}/{name}" not in handle]
@@ -139,8 +144,11 @@ def _timeline(handle: h5py.File, side: str) -> dict[str, Any]:
         raise ManifestError(f"InstaUMI H5 {side} frame_index must be contiguous from zero")
     if not bool(np.all(valid)):
         raise ManifestError(f"InstaUMI H5 {side} contains invalid video frames")
-    if timestamp[0] != 0 or np.any(np.diff(timestamp) <= 0):
-        raise ManifestError(f"InstaUMI H5 {side} aligned timestamps must start at zero and increase")
+    if timestamp[0] != expected_first_timestamp_ns or np.any(np.diff(timestamp) <= 0):
+        raise ManifestError(
+            f"InstaUMI H5 {side} aligned timestamps must start at its declared "
+            "first-frame offset and increase"
+        )
     return {
         "frame_count": count,
         "first_timestamp_ns": int(timestamp[0]),
@@ -162,8 +170,19 @@ def load_instaumi_config(root: Path) -> dict[str, Any]:
             if isinstance(calibration_raw, bytes):
                 calibration_raw = calibration_raw.decode("utf-8")
             calibration = json.loads(str(calibration_raw))
-            left_timeline = _timeline(handle, "left")
-            right_timeline = _timeline(handle, "right")
+            first_offsets = metadata.get("time", {}).get(
+                "first_frame_time_offset_ns", {}
+            )
+            left_timeline = _timeline(
+                handle,
+                "left",
+                expected_first_timestamp_ns=int(first_offsets.get("left", 0)),
+            )
+            right_timeline = _timeline(
+                handle,
+                "right",
+                expected_first_timestamp_ns=int(first_offsets.get("right", 0)),
+            )
     except OSError as error:
         raise ManifestError(f"cannot read InstaUMI H5: {error}") from error
 
@@ -279,7 +298,10 @@ def load_instaumi_config(root: Path) -> dict[str, Any]:
             "created_at_utc": created,
             "timeline_frame_count": left_timeline["frame_count"],
             "calibration_intrinsics_complete": all(
-                calibration.get("cameras", {}).get(side, {}).get("intrinsics", {}).get(name)
+                (
+                    calibration.get("cameras", {}).get(side, {}).get("intrinsics")
+                    or {}
+                ).get(name)
                 is not None
                 for side in ("left", "right")
                 for name in ("fx", "fy", "cx", "cy")

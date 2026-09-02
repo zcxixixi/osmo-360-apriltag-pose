@@ -24,6 +24,7 @@ from osmo360.localization.cached_a3_bootstrap import (
 )
 from osmo360.localization.instaumi_imu import (
     ImuAssistanceUnavailable,
+    calibrate_instaumi_imu_from_visual,
     load_instaumi_imu,
 )
 
@@ -94,23 +95,53 @@ def main() -> int:
         else:
             imu_streams = imu_bundle.streams
             imu_audit = imu_bundle.audit
+    explicit_imu_audit = imu_audit
+
+    def run_tracking() -> dict:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            futures = {
+                side: executor.submit(
+                    track_cache,
+                    cache,
+                    panel_a,
+                    panel_b,
+                    transform,
+                    minimum_tags=args.minimum_tags,
+                    max_angular_rmse_deg=args.max_angular_rmse_deg,
+                    imu_stream=imu_streams.get(side),
+                )
+                for side, cache in caches.items()
+            }
+            return {side: future.result() for side, future in futures.items()}
+
+    results = run_tracking()
+    visual_tracking_passes = 1
+    if args.imu_h5 is not None and len(imu_streams) != 2:
+        try:
+            self_calibrated = calibrate_instaumi_imu_from_visual(
+                args.imu_h5,
+                {side: results[side][0] for side in ("left", "right")},
+            )
+        except (ImuAssistanceUnavailable, OSError, ValueError, KeyError) as exc:
+            imu_audit = {
+                "status": "UNAVAILABLE_VISUAL_SELF_CALIBRATION_FAILED",
+                "h5": str(args.imu_h5.resolve()),
+                "reason": str(exc),
+                "explicit_calibration_attempt": explicit_imu_audit,
+                "translation_source": "visual_endpoint_interpolation",
+                "orientation_source": "visual_slerp_fallback",
+            }
+        else:
+            imu_streams = self_calibrated.streams
+            imu_audit = {
+                **self_calibrated.audit,
+                "explicit_calibration_attempt": explicit_imu_audit,
+            }
+            if len(imu_streams) == 2:
+                results = run_tracking()
+                visual_tracking_passes = 2
     trajectories = {}
     trajectory_rows = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        futures = {
-            side: executor.submit(
-                track_cache,
-                cache,
-                panel_a,
-                panel_b,
-                transform,
-                minimum_tags=args.minimum_tags,
-                max_angular_rmse_deg=args.max_angular_rmse_deg,
-                imu_stream=imu_streams.get(side),
-            )
-            for side, cache in caches.items()
-        }
-        results = {side: future.result() for side, future in futures.items()}
     for side in ("left", "right"):
         rows, summary = results[side]
         write_pose_csv(args.output_dir / f"{side}_pose.csv", rows)
@@ -173,6 +204,7 @@ def main() -> int:
                 imu_streams
             ),
             "accelerometer_translation_integration_used": False,
+            "visual_tracking_passes": visual_tracking_passes,
             "maximum_trusted_interpolation_gap_s": args.maximum_interpolation_gap_s,
             "absolute_visual_motion_limits": {
                 "speed_m_s": MAXIMUM_ABSOLUTE_SPEED_M_S,

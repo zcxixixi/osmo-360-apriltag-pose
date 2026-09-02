@@ -170,6 +170,8 @@ def transform_trajectory_rows(
         row["world_frame"] = transform.target_frame
         row["map_id"] = transform.target_map_id
         for side in ("left", "right"):
+            row[f"{side}_parent_frame"] = transform.target_frame
+            row[f"{side}_child_frame"] = "hand_camera_flu_back_x"
             position_keys = [f"{side}_camera_{axis}_m" for axis in "xyz"]
             quaternion_keys = [f"{side}_q{axis}" for axis in "xyzw"]
             position_values = [str(row.get(key, "")) for key in position_keys]

@@ -772,6 +772,7 @@ def write_joint_pose_csv(
     *,
     map_id: str,
     maximum_interpolation_gap_s: float = MAXIMUM_TRUSTED_INTERPOLATION_GAP_S,
+    maximum_paired_timestamp_delta_s: float = 0.010,
     imu_streams: dict[str, ImuSeries] | None = None,
     imu_audit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -784,6 +785,11 @@ def write_joint_pose_csv(
         raise ValueError(
             "maximum_interpolation_gap_s must be positive and no greater than 0.25 s"
         )
+    if (
+        not np.isfinite(maximum_paired_timestamp_delta_s)
+        or maximum_paired_timestamp_delta_s < 0
+    ):
+        raise ValueError("maximum_paired_timestamp_delta_s must be finite and non-negative")
     by_side = {
         "left": {int(row["frame"]): row for row in left_rows},
         "right": {int(row["frame"]): row for row in right_rows},
@@ -826,6 +832,7 @@ def write_joint_pose_csv(
     imu_bridge_maximum_sample_gap_s = {"left": 0.0, "right": 0.0}
     imu_bridge_maximum_endpoint_closure_deg = {"left": 0.0, "right": 0.0}
     imu_fallback_reasons: dict[str, dict[str, int]] = {"left": {}, "right": {}}
+    paired_timestamp_deltas_s: list[float] = []
     imu_streams = {} if imu_streams is None else imu_streams
 
     valid_series = {}
@@ -859,15 +866,24 @@ def write_joint_pose_csv(
         timestamps = [
             float(row["timestamp"]) for row in (left, right) if row is not None
         ]
-        if timestamps and max(timestamps) - min(timestamps) > 1e-6:
-            raise ValueError(f"left/right common timestamps disagree at frame {frame}")
+        if len(timestamps) == 2:
+            paired_delta_s = max(timestamps) - min(timestamps)
+            if paired_delta_s > maximum_paired_timestamp_delta_s + 1e-12:
+                raise ValueError(
+                    "left/right aligned frame timestamps exceed the paired limit "
+                    f"at frame {frame}: {paired_delta_s:.9f} s"
+                )
+            paired_timestamp_deltas_s.append(paired_delta_s)
         joint_measured = bool(
             left is not None and right is not None
             and left["quality_status"] == "valid"
             and right["quality_status"] == "valid"
         )
         resolved = {"left": left, "right": right}
-        now_s = timestamps[0]
+        # InstaUMI frame indices are already paired in the shared dataset clock.
+        # Preserve their sub-frame phase difference and publish the stable right
+        # 29.97 Hz camera timeline as the canonical joint timestamp.
+        now_s = float(right["timestamp"]) if right is not None else timestamps[0]
         for side in ("left", "right"):
             source = resolved[side]
             if source is not None and source["quality_status"] == "valid":
@@ -1063,7 +1079,7 @@ def write_joint_pose_csv(
         joint_measured_count += int(joint_measured)
         item: dict[str, Any] = {
             "frame": frame,
-            "timestamp_s": f"{timestamps[0]:.9f}",
+            "timestamp_s": f"{now_s:.9f}",
             "world_frame": "session_grid_A",
             "map_id": map_id,
             "joint_has_pose": str(joint_has_pose).lower(),
@@ -1099,6 +1115,13 @@ def write_joint_pose_csv(
             joint_measured_count / len(output_rows) if output_rows else 0.0
         ),
         "maximum_allowed_interpolation_gap_s": maximum_interpolation_gap_s,
+        "canonical_joint_timestamp_source": "right_camera_aligned_h5_timeline",
+        "maximum_allowed_paired_timestamp_delta_s": (
+            maximum_paired_timestamp_delta_s
+        ),
+        "maximum_paired_timestamp_delta_s": max(
+            paired_timestamp_deltas_s, default=0.0
+        ),
         "maximum_interpolation_gap_s": {
             side: max(trusted_interpolation_gaps[side], default=0.0)
             for side in ("left", "right")

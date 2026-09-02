@@ -13,7 +13,10 @@ from osmo360.localization.cached_a3_bootstrap import write_joint_pose_csv
 from osmo360.localization.coordinate_frames import (
     X5_STREAM0_OPENCV_FROM_HAND_CAMERA_FLU,
 )
-from osmo360.localization.instaumi_imu import load_instaumi_imu
+from osmo360.localization.instaumi_imu import (
+    calibrate_instaumi_imu_from_visual,
+    load_instaumi_imu,
+)
 
 
 def _transform(rotation: np.ndarray) -> list[list[float]]:
@@ -42,6 +45,11 @@ def _h5(tmp_path: Path, *, per_side: bool) -> Path:
     angular_velocity = np.tile([0.0, 0.0, np.pi], (len(timestamps), 1))
     with h5py.File(path, "w") as handle:
         handle.create_dataset(
+            "/metadata/dataset.json",
+            data=json.dumps({"time": {"reference": "dataset_start"}}),
+            dtype=string,
+        )
+        handle.create_dataset(
             "/calib/calibration_full.json",
             data=json.dumps(calibration),
             dtype=string,
@@ -59,6 +67,68 @@ def _h5(tmp_path: Path, *, per_side: bool) -> Path:
             handle.create_dataset("/sensor/imu/angular_velocity", data=np.empty((0, 3)))
             handle.create_dataset("/sensor/imu/valid", data=np.empty(0, bool))
     return path
+
+
+def _visual_self_calibration_fixture(
+    tmp_path: Path,
+) -> tuple[Path, dict[str, list[dict[str, str | int]]], dict[str, float]]:
+    path = tmp_path / "self-calibration.h5"
+    raw_time = np.arange(-1.0, 11.001, 0.001)
+
+    def raw_gyro(time_s: np.ndarray) -> np.ndarray:
+        return np.column_stack((
+            0.8 * np.sin(1.3 * time_s) + 0.4 * np.cos(2.1 * time_s),
+            0.7 * np.cos(0.9 * time_s) + 0.3 * np.sin(2.7 * time_s),
+            0.6 * np.sin(1.7 * time_s) + 0.2 * np.cos(0.5 * time_s),
+        ))
+
+    angular_velocity = raw_gyro(raw_time)
+    true_rotation = Rotation.from_euler("xyz", [2.0, -90.0, 1.0], degrees=True)
+    bias_hand = np.asarray([0.01, -0.02, 0.005])
+    offsets = {"left": -0.30, "right": 0.012}
+    rows: dict[str, list[dict[str, str | int]]] = {}
+    video_time = np.arange(0.0, 10.001, 1 / 30)
+    for side, offset_s in offsets.items():
+        rotation = Rotation.identity()
+        side_rows = []
+        for frame, time_s in enumerate(video_time):
+            quaternion = rotation.as_quat()
+            side_rows.append({
+                "frame": frame,
+                "timestamp": f"{time_s:.12f}",
+                "qx": f"{quaternion[0]:.15f}",
+                "qy": f"{quaternion[1]:.15f}",
+                "qz": f"{quaternion[2]:.15f}",
+                "qw": f"{quaternion[3]:.15f}",
+                "quality_status": "valid",
+                "inlier_tag_count": 6,
+            })
+            if frame + 1 < len(video_time):
+                midpoint = 0.5 * (time_s + video_time[frame + 1]) + offset_s
+                omega_hand = true_rotation.apply(raw_gyro(np.asarray([midpoint]))[0])
+                omega_hand += bias_hand
+                rotation = rotation * Rotation.from_rotvec(
+                    omega_hand * (video_time[frame + 1] - time_s)
+                )
+        rows[side] = side_rows
+    string = h5py.string_dtype(encoding="utf-8")
+    with h5py.File(path, "w") as handle:
+        handle.create_dataset(
+            "/metadata/dataset.json",
+            data=json.dumps({"time": {"reference": "dataset_start"}}),
+            dtype=string,
+        )
+        for side in ("left", "right"):
+            base = f"/sensor/imu/{side}"
+            handle.create_dataset(
+                f"{base}/timestamp_ns",
+                data=np.rint(raw_time * 1e9).astype(np.int64),
+            )
+            handle.create_dataset(f"{base}/angular_velocity", data=angular_velocity)
+            handle.create_dataset(
+                f"{base}/valid", data=np.ones(len(raw_time), dtype=bool)
+            )
+    return path, rows, offsets
 
 
 def _row(frame: int, time_s: float, x: float | None, yaw_deg: float = 0) -> dict[str, str | int]:
@@ -166,3 +236,21 @@ def test_empty_shared_imu_is_audited_and_never_assigned_to_both_hands(tmp_path: 
     assert bundle.audit["status"] == "UNAVAILABLE_NO_SAMPLES"
     assert bundle.audit["shared_stream_used"] is False
     assert bundle.audit["singular_shared_imu_sample_count"] == 0
+
+
+def test_visual_self_calibration_recovers_per_side_imu_time_and_axes(
+    tmp_path: Path,
+) -> None:
+    path, rows, offsets = _visual_self_calibration_fixture(tmp_path)
+
+    bundle = calibrate_instaumi_imu_from_visual(path, rows)
+
+    assert bundle.audit["status"] == "VISUAL_SELF_CALIBRATED_PASS"
+    assert set(bundle.streams) == {"left", "right"}
+    assert bundle.audit["cross_side_extrinsic_disagreement_deg"] < 1.0
+    for side in ("left", "right"):
+        audit = bundle.audit["sides"][side]
+        assert audit["time_offset_s_raw_imu_minus_visual"] == pytest.approx(
+            offsets[side], abs=0.003
+        )
+        assert audit["holdout_rotation_error_deg"]["p95"] < 0.1

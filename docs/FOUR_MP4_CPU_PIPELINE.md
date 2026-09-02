@@ -1,6 +1,6 @@
-# Four-MP4 CPU pipeline v9
+# Four-MP4 CPU pipeline v10
 
-`dual-x5-four-mp4-cpu-v9` accepts the four independent raw fisheye MP4 streams
+`dual-x5-four-mp4-cpu-v10` accepts the four independent raw fisheye MP4 streams
 produced by two X5 cameras. It does not import INSV and does not invoke the
 Insta360 stitching SDK. The official panorama is therefore no longer a
 localization prerequisite.
@@ -25,6 +25,12 @@ original right/left time offset. The exported MP4 files are already aligned,
 so the source offset is retained for audit but is not applied again. The H5
 rear preview declares source stream 0 and frame-matches `*_back`; consequently
 `back=stream-0` and `forward=stream-1`.
+
+Declared sub-frame first-frame offsets are preserved rather than independently
+zeroing each sensor clock. Left/right H5 frame indices are treated as the
+already aligned pairing, a maximum 10 ms paired-timestamp difference is
+enforced, and the stable right-camera 29.97 Hz timeline is published as the
+joint timestamp. The observed maximum pairing delta is recorded in the report.
 
 When present, the rear-lens Kannala-Brandt intrinsics and
 `T_rig_camera_left/right` rotations in H5 are used directly for stream 0.
@@ -54,7 +60,13 @@ than 0.25 s are `IMU_ASSISTED`; longer gaps remain
 `IMU_ASSISTED_UNTRUSTED`. Position always remains visual endpoint interpolation;
 accelerometer double integration is deliberately not used. Missing, empty,
 ambiguous, poorly sampled, or incompletely calibrated IMU data falls back to
-visual SLERP and is recorded in `report.json`.
+visual SLERP and is recorded in `report.json`. If the H5 contains per-side gyro
+samples but explicitly lacks camera-to-IMU extrinsics or gyro bias, v10 performs
+a first visual pass and estimates each side's time offset, constant IMU-to-hand
+FLU rotation, and bias from high-quality visual angular velocity. It enables
+that capture-local calibration only when at least 200 excited pairs, speed-norm
+correlation of at least 0.70, held-out median/p95 residuals no greater than
+0.50/2.0 degrees, and cross-side extrinsic agreement within 10 degrees all pass.
 
 ## Generic four-MP4 input contract
 
@@ -165,7 +177,7 @@ gate:
 This mode writes `processed/trajectory.csv`, preserves unrelated existing files
 under `processed/`, and never invents a gripper signal for unknown hardware.
 
-It first runs or resumes the v9 shared-map trajectory pipeline, then reads the
+It first runs or resumes the v10 shared-map trajectory pipeline, then reads the
 H5 serials/timestamps and the two registered 1920x1920 `*_back.mp4` gripper
 views. The H5 timeline is the bounded processing range: a source MP4 may retain
 verified trailing encoded frames, but missing source frames or any request past
@@ -178,9 +190,9 @@ The atomically published CSV product is written directly under the dataset:
 
 ```text
 processed/
-├── trajectory.csv  # v9 joint trajectory re-expressed in world FLU
+├── trajectory.csv  # v10 joint trajectory re-expressed in world FLU
 ├── gripper.csv     # synchronized left/right opening angle, width and state
-├── processed.csv   # trajectory and gripper columns joined at v9 timestamps
+├── processed.csv   # trajectory and gripper columns joined at v10 timestamps
 ├── metadata.csv    # revisions, source/target frames, rate and quality status
 └── time_alignment.csv  # preserved when already present
 ```
@@ -192,17 +204,19 @@ toward their rear, world `+Y` is left when looking along `+X`, and world `+Z`
 is physical up.  The child frame remains `hand_camera_flu_back_x`, so each
 quaternion represents `T_world_flu_hand_camera_flu`.  `metadata.csv` records
 the native source frame, source-frame origin and complete source-to-world-FLU
-rotation so the conversion is auditable.
+rotation so the conversion is auditable. The trajectory CSV also carries
+`left/right_parent_frame=world_flu_aprilgrid_midpoint` and
+`left/right_child_frame=hand_camera_flu_back_x` explicitly on every row.
 
 The shell entry shows the active stage, elapsed time, aggregate four-stream
 frame/chunk progress, percentage and ETA in the terminal. After all CSV files
-are published successfully it removes the generated v9 `final/` work tree;
+are published successfully it removes the generated v10 `final/` work tree;
 failed runs retain it for diagnosis. The hidden `.osmo-cache` is retained so a
 repeat run can reuse decoded observations.
 
 Empty opening values are intentional when a visual gap exceeds 0.25 seconds.
 This jaw signal remains diagnostic (`training_ready=0`); the pose CSV retains
-the v9 `hand_camera_flu_back_x` camera frame and does not silently claim a TCP
+the v10 `hand_camera_flu_back_x` camera frame and does not silently claim a TCP
 trajectory.
 
 The generic conservative profile defaults to one detector process and two
@@ -273,7 +287,7 @@ records every flow, redetection, scout, fallback, and rejection count.
 Persistent cache defaults to:
 
 ```text
-dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v9/<pair-id>/
+dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v10/<pair-id>/
 ```
 
 Set `OSMO_PIPELINE_CACHE` to a server-local SSD if the dataset itself is on a
@@ -296,7 +310,7 @@ self-calibration, not external ground truth.
 The principal outputs are:
 
 ```text
-final/dual-x5-four-mp4-cpu-v9/pairs/<pair-id>/tracking/
+final/dual-x5-four-mp4-cpu-v10/pairs/<pair-id>/tracking/
 ├── session_world_map.json
 ├── left_pose.csv
 ├── right_pose.csv
@@ -368,7 +382,7 @@ Render the four source views beside the synchronized shared-map 3D tracks:
 ```bash
 .venv/bin/python -m tools.render_joint_four_mp4_trajectory \
   /data/session \
-  /data/session/final/dual-x5-four-mp4-cpu-v9/pairs/<pair-id>/tracking \
+  /data/session/final/dual-x5-four-mp4-cpu-v10/pairs/<pair-id>/tracking \
   /data/session/processed/joint_trajectory_comparison.mp4 \
   --reframe-world-flu \
   --view-preset flu-front-above
