@@ -25,6 +25,7 @@ MINIMUM_VISUAL_IMU_SPEED_CORRELATION = 0.70
 MAXIMUM_VISUAL_IMU_HOLDOUT_MEDIAN_DEG = 0.50
 MAXIMUM_VISUAL_IMU_HOLDOUT_P95_DEG = 2.0
 MAXIMUM_CROSS_SIDE_EXTRINSIC_DISAGREEMENT_DEG = 10.0
+MAXIMUM_GYRO_ENDPOINT_CLOSURE_DEG = 20.0
 MAXIMUM_ACCELEROMETER_NORM_M_S2 = 50.0
 MAXIMUM_ACCELEROMETER_BRIDGE_DEVIATION_M = 0.15
 IMU_ROTATION_BASELINE_PATH = (
@@ -167,6 +168,12 @@ class ImuSeries:
             )
         predicted_end = propagated[-1]
         endpoint_closure = predicted_end.inv() * end_rotation
+        endpoint_closure_deg = float(np.degrees(endpoint_closure.magnitude()))
+        if endpoint_closure_deg > MAXIMUM_GYRO_ENDPOINT_CLOSURE_DEG:
+            raise ImuAssistanceUnavailable(
+                "gyro_endpoint_closure_exceeds_limit:"
+                f"{endpoint_closure_deg:.9f}"
+            )
         closure_vector = endpoint_closure.as_rotvec()
         duration_s = end_s - start_s
         corrected = [
@@ -182,7 +189,7 @@ class ImuSeries:
         return GyroBridge(
             rotations=result,
             maximum_sample_gap_s=largest_gap,
-            endpoint_closure_deg=float(np.degrees(endpoint_closure.magnitude())),
+            endpoint_closure_deg=endpoint_closure_deg,
         )
 
     def bridge_positions(
@@ -997,6 +1004,9 @@ def load_instaumi_imu(path: Path) -> ImuBundle:
                 "frame_index_alignment_used": False,
             },
             "maximum_allowed_imu_sample_gap_s": MAXIMUM_IMU_SAMPLE_GAP_S,
+            "maximum_allowed_gyro_endpoint_closure_deg": (
+                MAXIMUM_GYRO_ENDPOINT_CLOSURE_DEG
+            ),
             "sides": side_audit,
         },
     )

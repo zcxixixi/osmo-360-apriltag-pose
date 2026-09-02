@@ -15,6 +15,7 @@ from osmo360.localization.coordinate_frames import (
 )
 from osmo360.localization.instaumi_imu import (
     IMU_ROTATION_BASELINE_PATH,
+    ImuAssistanceUnavailable,
     ImuSeries,
     calibrate_instaumi_imu_from_visual,
     load_instaumi_imu,
@@ -418,3 +419,26 @@ def test_joint_gap_uses_accelerometer_translation_with_visual_scale_anchors(
         "left": 1,
         "right": 0,
     }
+
+
+def test_excessive_gyro_endpoint_closure_rejects_inertial_bridge() -> None:
+    timestamps = np.arange(0.0, 0.501, 0.01)
+    stream = ImuSeries(
+        side="left",
+        timestamp_s=timestamps,
+        angular_velocity_hand_rad_s=np.zeros((len(timestamps), 3)),
+        calibration_sha256="test",
+        dataset_path="test.h5",
+    )
+
+    with pytest.raises(
+        ImuAssistanceUnavailable,
+        match="gyro_endpoint_closure_exceeds_limit",
+    ):
+        stream.bridge_orientations(
+            0.0,
+            Rotation.identity(),
+            0.5,
+            Rotation.from_euler("z", 25.0, degrees=True),
+            np.asarray([0.25]),
+        )

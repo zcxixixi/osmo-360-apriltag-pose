@@ -24,6 +24,7 @@ from osmo360.localization.cached_a3_bootstrap import (
 )
 from osmo360.localization.instaumi_imu import (
     ImuAssistanceUnavailable,
+    MAXIMUM_GYRO_ENDPOINT_CLOSURE_DEG,
     calibrate_instaumi_imu_from_visual,
     load_instaumi_imu,
 )
@@ -211,6 +212,9 @@ def main() -> int:
                 "timestamp-aligned specific force shapes only internal visual gaps; "
                 "mean world specific force is removed; both visual positions remain "
                 "exact metric anchors; deviation is capped at 0.15 m"
+            ),
+            "maximum_gyro_endpoint_closure_deg": (
+                MAXIMUM_GYRO_ENDPOINT_CLOSURE_DEG
             ),
             "visual_tracking_passes": visual_tracking_passes,
             "maximum_trusted_interpolation_gap_s": args.maximum_interpolation_gap_s,
