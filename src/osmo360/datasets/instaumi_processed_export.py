@@ -8,6 +8,7 @@ import csv
 import json
 import math
 import shutil
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,13 +40,13 @@ from osmo360.visualization.render_gripper_force_angle_demo import (
 )
 
 
-EXPORT_REVISION = "instaumi-csv-v4-explicit-flu-frames"
+EXPORT_REVISION = "instaumi-csv-v5-gripper-serial-provenance"
 LEGACY_EXPORT_REVISION = "instaumi-csv-v1"
 CSV_NAMES = ("trajectory.csv", "gripper.csv", "processed.csv", "metadata.csv")
 PIPELINE_FINAL_ENTRIES = frozenset({"manifest.lock.json", "status.json", "pairs"})
 PROFILE_PATH = (
     ROOT
-    / "config/rig_revisions/instaumi_pair01_gripper_signal_20260902_r3.json"
+    / "config/rig_revisions/instaumi_gripper_signal_20260902_r4.json"
 )
 SIDES = ("left", "right")
 
@@ -53,7 +54,7 @@ SIDES = ("left", "right")
 @dataclass(frozen=True)
 class SideProfile:
     side: str
-    camera_serial: str
+    calibration_source_camera_serial: str
     base_tag_id: int
     angle_revision_id: str
     angle_revision_sha256: str
@@ -172,7 +173,7 @@ def load_profile(path: Path = PROFILE_PATH) -> tuple[dict[str, Any], dict[str, S
             raise ManifestError(f"{side} has an invalid included-angle range")
         profiles[side] = SideProfile(
             side=side,
-            camera_serial=str(item["camera_serial"]),
+            calibration_source_camera_serial=str(item["camera_serial"]),
             base_tag_id=int(item["base_tag_id"]),
             angle_revision_id=str(angle_revision["revision_id"]),
             angle_revision_sha256=angle_sha,
@@ -793,13 +794,32 @@ def export_processed_dataset(
     profile, side_profiles = load_profile(profile_path)
     config = load_instaumi_config(root)
     pair_id = str(config["pair_id"])
+    camera_identity_policy = profile.get("camera_identity_policy", {})
+    camera_identity_mode = str(camera_identity_policy.get("mode", "exact_serial"))
+    if camera_identity_mode not in {"exact_serial", "provenance_only"}:
+        raise ManifestError(
+            f"unsupported gripper camera identity policy {camera_identity_mode!r}"
+        )
+    camera_identity: dict[str, dict[str, str]] = {}
     for side in SIDES:
         actual = str(config["cameras"][side]["serial"])
-        expected = side_profiles[side].camera_serial
-        if actual != expected:
+        calibration_source = side_profiles[side].calibration_source_camera_serial
+        if not actual:
+            raise ManifestError(f"{side} camera serial is missing from dataset metadata")
+        if camera_identity_mode == "exact_serial" and actual != calibration_source:
             raise ManifestError(
-                f"{side} camera serial {actual!r} does not match gripper profile {expected!r}"
+                f"{side} camera serial {actual!r} does not match gripper profile "
+                f"{calibration_source!r}"
             )
+        camera_identity[side] = {
+            "actual": actual,
+            "calibration_source": calibration_source,
+            "transfer_status": (
+                "EXACT_CAMERA_SERIAL"
+                if actual == calibration_source
+                else "ROLE_BOUND_FIXED_ROI_SERIAL_TRANSFER"
+            ),
+        }
     (
         trajectory_fields,
         trajectory_rows,
@@ -937,9 +957,14 @@ def export_processed_dataset(
             "world_qw_from_source",
             "camera_child_frame",
             "gripper_signal_revision",
+            "gripper_camera_identity_policy",
             "training_ready",
             "left_camera_serial",
             "right_camera_serial",
+            "left_calibration_source_camera_serial",
+            "right_calibration_source_camera_serial",
+            "left_calibration_transfer_status",
+            "right_calibration_transfer_status",
             "left_base_tag_id",
             "right_base_tag_id",
             "left_video_source",
@@ -962,7 +987,7 @@ def export_processed_dataset(
         if not child_frames:
             child_frames = ["hand_camera_flu_back_x"]
         metadata_row = {
-            "schema_version": "instaumi-processed-csv/4.0-explicit-flu-frames",
+            "schema_version": "instaumi-processed-csv/5.0-gripper-serial-provenance",
             "dataset_id": pair_id,
             "dataset_directory": root.name,
             "pair_id": pair_id,
@@ -995,9 +1020,22 @@ def export_processed_dataset(
             },
             "camera_child_frame": ";".join(child_frames),
             "gripper_signal_revision": profile["revision_id"],
+            "gripper_camera_identity_policy": camera_identity_mode,
             "training_ready": 0,
-            "left_camera_serial": side_profiles["left"].camera_serial,
-            "right_camera_serial": side_profiles["right"].camera_serial,
+            "left_camera_serial": camera_identity["left"]["actual"],
+            "right_camera_serial": camera_identity["right"]["actual"],
+            "left_calibration_source_camera_serial": camera_identity["left"][
+                "calibration_source"
+            ],
+            "right_calibration_source_camera_serial": camera_identity["right"][
+                "calibration_source"
+            ],
+            "left_calibration_transfer_status": camera_identity["left"][
+                "transfer_status"
+            ],
+            "right_calibration_transfer_status": camera_identity["right"][
+                "transfer_status"
+            ],
             "left_base_tag_id": side_profiles["left"].base_tag_id,
             "right_base_tag_id": side_profiles["right"].base_tag_id,
             "left_video_source": side_inputs["left"].video_kind,
@@ -1026,6 +1064,8 @@ def export_processed_dataset(
         "trajectory_rate_hz": 1.0 / float(np.median(np.diff(query_time))),
         "left_opening_available": int(np.count_nonzero(sampled["left"]["available"])),
         "right_opening_available": int(np.count_nonzero(sampled["right"]["available"])),
+        "camera_identity_policy": camera_identity_mode,
+        "camera_identity": camera_identity,
         "pipeline_final_removed": pipeline_final_removed,
         "training_ready": False,
     }
@@ -1062,6 +1102,15 @@ def main() -> int:
             profile_path=args.profile,
             remove_final=args.remove_pipeline_final,
         )
+        for side, identity in result["camera_identity"].items():
+            if identity["transfer_status"] != "EXACT_CAMERA_SERIAL":
+                print(
+                    "[夹爪] "
+                    f"{side} 数据相机 {identity['actual']}；固定 ROI/物理夹爪标定来源相机 "
+                    f"{identity['calibration_source']}。序列号仅作溯源，结果保持 "
+                    "training_ready=0；两者已写入 metadata.csv。",
+                    file=sys.stderr,
+                )
     print(
         json.dumps(
             result,
