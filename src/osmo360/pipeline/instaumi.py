@@ -58,6 +58,52 @@ def _factory_offsets() -> dict[str, Any]:
     return payload["devices"]
 
 
+def _valid_x5_offset(value: Any) -> bool:
+    fields = str(value).split("_")
+    if len(fields) != 16 or fields[0] not in {"m2", "n2"}:
+        return False
+    try:
+        numbers = np.asarray([float(item) for item in fields[1:]], dtype=float)
+    except ValueError:
+        return False
+    return bool(np.isfinite(numbers).all())
+
+
+def _factory_record(
+    calibration: dict[str, Any],
+    registry: dict[str, Any],
+    *,
+    side: str,
+    serial: str,
+) -> dict[str, Any]:
+    registered = registry.get(serial)
+    camera = calibration.get("cameras", {}).get(side, {})
+    factory_lens = camera.get("factory_lens") if isinstance(camera, dict) else None
+    embedded_offset = (
+        factory_lens.get("x5_offset")
+        if isinstance(factory_lens, dict)
+        and factory_lens.get("source") == "embedded_insv.x5_offset"
+        and factory_lens.get("stream") == 0
+        else None
+    )
+    if embedded_offset is not None:
+        if not _valid_x5_offset(embedded_offset):
+            raise ManifestError(f"InstaUMI camera {serial!r} has an invalid H5 X5 factory lens record")
+        if registered is not None and registered.get("x5_offset") != embedded_offset:
+            raise ManifestError(
+                f"InstaUMI camera {serial!r} H5 and registry X5 factory lens records disagree"
+            )
+        return {
+            "x5_offset": str(embedded_offset),
+            "source": f"dataset.h5:/calib/calibration_full.json/cameras/{side}/factory_lens",
+        }
+    if registered is not None:
+        return registered
+    raise ManifestError(
+        f"InstaUMI camera {serial!r} has no serial-bound X5 factory lens record"
+    )
+
+
 def _rear_calibration(
     calibration: dict[str, Any], side: str, x5_offset: str
 ) -> dict[str, Any] | None:
@@ -207,11 +253,12 @@ def load_instaumi_config(root: Path) -> dict[str, Any]:
     ):
         device = metadata.get("devices", {}).get(side, {})
         serial = str(device.get("serial_number", ""))
-        factory = offsets.get(serial)
-        if factory is None:
-            raise ManifestError(
-                f"InstaUMI camera {serial!r} has no serial-bound X5 factory lens record"
-            )
+        factory = _factory_record(
+            calibration,
+            offsets,
+            side=side,
+            serial=serial,
+        )
         expected_count = metadata.get("video", {}).get(side, {}).get("frame_count")
         if expected_count is not None and int(expected_count) != timeline["frame_count"]:
             raise ManifestError(f"InstaUMI H5 {side} video/timeline frame counts disagree")

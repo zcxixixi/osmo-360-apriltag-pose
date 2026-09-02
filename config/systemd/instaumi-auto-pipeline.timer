@@ -1,0 +1,12 @@
+[Unit]
+Description=Scan for completed InstaUMI uploads every minute
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Persistent=true
+Unit=instaumi-auto-pipeline.service
+
+[Install]
+WantedBy=timers.target

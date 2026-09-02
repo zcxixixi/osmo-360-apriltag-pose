@@ -7,7 +7,7 @@ import h5py
 import numpy as np
 import pytest
 
-from osmo360.pipeline import dataset, four_mp4
+from osmo360.pipeline import dataset, four_mp4, instaumi
 from osmo360.pipeline.four_mp4_worker import (
     ChunkTask,
     _worker_environment,
@@ -255,6 +255,40 @@ def test_instaumi_null_intrinsics_fall_back_to_serial_factory_model(
     assert lock["instaumi"]["calibration_intrinsics_complete"] is False
 
 
+def test_instaumi_embedded_factory_model_supports_unregistered_offset(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    root = _make_instaumi_dataset(tmp_path)
+    with h5py.File(root / "dataset.h5", "r+") as handle:
+        raw = handle["/calib/calibration_full.json"][()]
+        calibration = json.loads(raw.decode() if isinstance(raw, bytes) else str(raw))
+        for side in ("left", "right"):
+            calibration["cameras"][side]["factory_lens"] = {
+                "source": "embedded_insv.x5_offset",
+                "stream": 0,
+                "x5_offset": OFFSET,
+            }
+        del handle["/calib/calibration_full.json"]
+        handle.create_dataset(
+            "/calib/calibration_full.json",
+            data=json.dumps(calibration),
+            dtype=h5py.string_dtype(encoding="utf-8"),
+        )
+    monkeypatch.setattr(instaumi, "_factory_offsets", lambda: {})
+    monkeypatch.setattr(
+        four_mp4,
+        "_probe_mp4",
+        lambda path: {**_probe(path), "width": 1920, "height": 1920},
+    )
+    monkeypatch.setattr(four_mp4, "_embedded_identity", lambda _path: (None, None))
+
+    lock = four_mp4.discover_four_mp4_dataset(root)
+
+    assert lock["pairs"][0]["left"]["x5_offset"] == OFFSET
+    assert lock["pairs"][0]["left"]["factory_offset_source"].startswith("dataset.h5:")
+
+
 def test_four_mp4_discovery_and_dataset_dry_run(monkeypatch, tmp_path: Path):
     root = _make_dataset(tmp_path)
     monkeypatch.setattr(four_mp4, "_probe_mp4", _probe)
@@ -410,14 +444,15 @@ def test_worker_environment_caps_every_common_native_thread_pool(monkeypatch):
     assert environment["MKL_DYNAMIC"] == "FALSE"
 
 
-def test_four_mp4_requires_factory_offset_when_mp4_has_no_embedded_metadata(
-    monkeypatch, tmp_path: Path
+def test_four_mp4_requires_identity_descriptor_with_multiple_registered_pairs(
+    monkeypatch,
+    tmp_path: Path,
 ):
     root = _make_dataset(tmp_path, descriptor=False)
     monkeypatch.setattr(four_mp4, "_probe_mp4", _probe)
     monkeypatch.setattr(four_mp4, "_embedded_identity", lambda _path: (None, None))
 
-    with pytest.raises(ManifestError, match="x5_offset"):
+    with pytest.raises(ManifestError, match="cannot infer left camera identity"):
         four_mp4.discover_four_mp4_dataset(root)
 
 
