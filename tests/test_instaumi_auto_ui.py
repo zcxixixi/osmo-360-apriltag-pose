@@ -47,6 +47,10 @@ def test_dashboard_aggregates_running_failed_and_complete(tmp_path: Path) -> Non
     complete.mkdir(parents=True)
     for name in ("trajectory.csv", "gripper.csv", "processed.csv", "metadata.csv"):
         (complete / name).write_text(name)
+    (
+        complete
+        / f"{pairs[2].episode_name}_imu_assisted_demo.mp4"
+    ).write_bytes(b"demo")
 
     result = build_status(tmp_path)
 

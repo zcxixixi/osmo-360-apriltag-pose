@@ -125,7 +125,9 @@ def _task_progress(data_root: Path, pair, state: dict[str, Any]) -> tuple[str, f
         return "SHA verification", 2.0
     if stage == "trajectory":
         downstream = _process_progress(logs / "process.log")
-        return "trajectory/gripper", 96.0 + 4.0 * downstream / 100.0
+        return "trajectory/gripper", 96.0 + 3.0 * downstream / 100.0
+    if stage == "render":
+        return "trajectory video", 99.0
     if status == "FAILED":
         return "failed", 0.0
     return stage, 0.0
