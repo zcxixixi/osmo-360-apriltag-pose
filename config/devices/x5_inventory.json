@@ -40,7 +40,11 @@
       "firmware": "v1.7.8",
       "identity_status": "SDK_VERIFIED",
       "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
-      "assignment": null
+      "assignment": {
+        "role": "physical_right",
+        "base_tag_id": 3,
+        "label": "right-gripper-basetag3"
+      }
     },
     "IAHEA2606KKUKF": {
       "serial": "IAHEA2606KKUKF",
@@ -98,7 +102,11 @@
       "firmware": "v1.7.8",
       "identity_status": "SDK_VERIFIED",
       "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
-      "assignment": null
+      "assignment": {
+        "role": "physical_right",
+        "base_tag_id": 3,
+        "label": "right-gripper-basetag3"
+      }
     },
     "IAHEA2606M5DA6": {
       "serial": "IAHEA2606M5DA6",
@@ -167,7 +175,11 @@
       "firmware": "v1.7.8",
       "identity_status": "SDK_VERIFIED",
       "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
-      "assignment": null
+      "assignment": {
+        "role": "physical_left",
+        "base_tag_id": 2,
+        "label": "left-gripper-basetag2"
+      }
     },
     "IAHEA2607VP4XM": {
       "serial": "IAHEA2607VP4XM",
@@ -175,7 +187,11 @@
       "firmware": "v1.7.8",
       "identity_status": "SDK_VERIFIED",
       "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
-      "assignment": null
+      "assignment": {
+        "role": "physical_left",
+        "base_tag_id": 2,
+        "label": "left-gripper-basetag2"
+      }
     },
     "IAHEA2607VX8DF": {
       "serial": "IAHEA2607VX8DF",
