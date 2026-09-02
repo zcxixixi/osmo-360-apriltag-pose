@@ -183,7 +183,11 @@
       "firmware": "v1.7.8",
       "identity_status": "SDK_VERIFIED",
       "sdk_revision_id": "insta360-linux-camera-2.1.1-media-3.1.1",
-      "assignment": null
+      "assignment": {
+        "role": "physical_right",
+        "base_tag_id": 3,
+        "label": "right-gripper-basetag3"
+      }
     }
   }
 }

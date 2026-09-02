@@ -39,6 +39,38 @@
         },
         "video_tracks": "both X5 fisheye tracks must be decoded and unified"
       }
+    },
+    "dual-x5-gripper-pair-02": {
+      "status": "SERIAL_AND_BASETAG_USER_VISUALLY_VERIFIED",
+      "label": "dual X5 gripper pair 02",
+      "left": {
+        "serial": "IAHEA2606KMDGP",
+        "role": "physical_left",
+        "base_tag_id": 2,
+        "asset_label": "left-gripper-basetag2"
+      },
+      "right": {
+        "serial": "IAHEA2606KMURQ",
+        "role": "physical_right",
+        "base_tag_id": 3,
+        "asset_label": "right-gripper-basetag3"
+      }
+    },
+    "dual-x5-gripper-pair-03": {
+      "status": "SERIAL_AND_DATASET_SIDE_VERIFIED",
+      "label": "dual X5 gripper pair 03",
+      "left": {
+        "serial": "IAHEA2606KM43A",
+        "role": "physical_left",
+        "base_tag_id": 2,
+        "asset_label": "left-gripper-basetag2"
+      },
+      "right": {
+        "serial": "IAHEA2607VX8DF",
+        "role": "physical_right",
+        "base_tag_id": 3,
+        "asset_label": "right-gripper-basetag3"
+      }
     }
   }
 }
