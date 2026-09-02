@@ -156,18 +156,44 @@ def test_export_writes_synchronized_csv_revision_without_removing_existing_files
         "frame",
         "timestamp_s",
         "world_frame",
+        "map_id",
         "joint_has_pose",
         "left_camera_x_m",
+        "left_camera_y_m",
+        "left_camera_z_m",
+        "left_qx",
+        "left_qy",
+        "left_qz",
+        "left_qw",
         "right_camera_x_m",
+        "right_camera_y_m",
+        "right_camera_z_m",
+        "right_qx",
+        "right_qy",
+        "right_qz",
+        "right_qw",
     ]
     trajectory_rows = [
         {
             "frame": str(index),
             "timestamp_s": f"{index * 0.1:.1f}",
             "world_frame": "session_grid_A",
+            "map_id": "test-map",
             "joint_has_pose": "1",
             "left_camera_x_m": f"{index + 1}.0",
+            "left_camera_y_m": "0.0",
+            "left_camera_z_m": "-1.0",
+            "left_qx": "0.0",
+            "left_qy": "0.0",
+            "left_qz": "0.0",
+            "left_qw": "1.0",
             "right_camera_x_m": f"{index + 4}.0",
+            "right_camera_y_m": "0.0",
+            "right_camera_z_m": "-1.0",
+            "right_qx": "0.0",
+            "right_qy": "0.0",
+            "right_qz": "0.0",
+            "right_qw": "1.0",
         }
         for index in range(3)
     ]
@@ -175,6 +201,39 @@ def test_export_writes_synchronized_csv_revision_without_removing_existing_files
         writer = csv.DictWriter(handle, fieldnames=trajectory_fields)
         writer.writeheader()
         writer.writerows(trajectory_rows)
+    (tmp_path / "session_world_map.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "world-apriltag-map/1.0",
+                "map_id": "test-map",
+                "world_frame": "session_grid_A",
+                "physical_up_vector": [0, -1, 0],
+                "tags": [
+                    {
+                        "id": 200,
+                        "panel": "grid_A",
+                        "corners_m": [
+                            [-0.1, -0.1, 0],
+                            [0.1, -0.1, 0],
+                            [0.1, 0.1, 0],
+                            [-0.1, 0.1, 0],
+                        ],
+                    },
+                    {
+                        "id": 210,
+                        "panel": "grid_B",
+                        "corners_m": [
+                            [0.9, -0.1, 0],
+                            [1.1, -0.1, 0],
+                            [1.1, 0.1, 0],
+                            [0.9, 0.1, 0],
+                        ],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     monkeypatch.setattr(
         export,
@@ -245,8 +304,16 @@ def test_export_writes_synchronized_csv_revision_without_removing_existing_files
     assert rows[2]["left_opening_measured"] == "0"
     with (output / "processed.csv").open(newline="", encoding="utf-8") as handle:
         combined = list(csv.DictReader(handle))
-    assert combined[2]["left_camera_x_m"] == "3.0"
+    assert combined[2]["world_frame"] == "world_flu_aprilgrid_midpoint"
+    assert combined[2]["left_camera_x_m"] == "-1.000000000"
+    assert combined[2]["left_camera_y_m"] == "-2.500000000"
     assert combined[2]["right_opening_width_m"] == "0.006000000"
+    with (output / "metadata.csv").open(newline="", encoding="utf-8") as handle:
+        metadata = next(csv.DictReader(handle))
+    assert metadata["source_world_frame"] == "session_grid_A"
+    assert metadata["world_frame"] == "world_flu_aprilgrid_midpoint"
+    assert metadata["world_frame_convention"] == "FLU"
+    assert metadata["world_x_positive_definition"] == "AprilGrid_back"
     assert not list(processed.glob(".instaumi-csv-v2-direct-*"))
 
 

@@ -15,6 +15,11 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
+from osmo360.datasets.world_flu import (
+    derive_world_flu_transform,
+    transform_trajectory_rows,
+    transform_world_map,
+)
 from osmo360.ffmpeg_runtime import project_ffmpeg_runtime, resolve_ffmpeg_runtime
 from osmo360.localization.cached_a3_bootstrap import (
     MAXIMUM_TRUSTED_INTERPOLATION_GAP_S,
@@ -58,6 +63,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--ffmpeg", type=Path,
         help="override the verified project FFmpeg runtime",
+    )
+    parser.add_argument(
+        "--reframe-world-flu",
+        action="store_true",
+        help=(
+            "use the midpoint of both AprilGrids as world origin, +X toward "
+            "the grid back, +Y left and +Z up"
+        ),
     )
     return parser.parse_args()
 
@@ -271,9 +284,10 @@ class Projector:
                 self.target = panel_focus + np.asarray([0.0, 0.0, -0.28])
                 world_up = np.asarray([0.0, -1.0, 0.0])
             else:
-                # FLU world: wall is X=0 and physical up is +Z.
-                self.eye = panel_focus + np.asarray([1.55, 0.0, 0.85])
-                self.target = panel_focus + np.asarray([0.28, 0.0, 0.0])
+                # FLU world: wall is X=0, +X points through the printed
+                # AprilGrid toward its rear, and the visible front is at -X.
+                self.eye = panel_focus + np.asarray([-1.55, 0.0, 0.85])
+                self.target = panel_focus + np.asarray([-0.28, 0.0, 0.0])
                 world_up = np.asarray([0.0, 0.0, 1.0])
             forward = self.target - self.eye
             self.forward = forward / np.linalg.norm(forward)
@@ -673,6 +687,24 @@ def main() -> int:
     ) as handle:
         rows = list(csv.DictReader(handle))
     report = json.loads((tracking / "report.json").read_text(encoding="utf-8"))
+    world_map, tags = load_map(tracking / "session_world_map.json")
+    world_transform = None
+    if args.reframe_world_flu:
+        if args.view_preset != "flu-front-above":
+            raise ValueError(
+                "--reframe-world-flu requires --view-preset flu-front-above"
+            )
+        world_transform = derive_world_flu_transform(world_map)
+        rows = transform_trajectory_rows(rows, world_transform)
+        world_map = transform_world_map(world_map, world_transform)
+        tags = [
+            {
+                "id": int(tag["id"]),
+                "panel": str(tag.get("panel", "grid_A")),
+                "corners": np.asarray(tag["corners_m"], dtype=float),
+            }
+            for tag in world_map["tags"]
+        ]
     maximum_gap_s = float(
         report.get("trajectories", {}).get("joint", {}).get(
             "maximum_allowed_interpolation_gap_s",
@@ -681,7 +713,6 @@ def main() -> int:
     )
     left = Track(rows, "left", maximum_gap_s=maximum_gap_s)
     right = Track(rows, "right", maximum_gap_s=maximum_gap_s)
-    world_map, tags = load_map(tracking / "session_world_map.json")
     start = max(left.times[0], right.times[0])
     end = min(left.times[-1], right.times[-1])
     if args.duration > 0:
@@ -854,6 +885,9 @@ def main() -> int:
         "view_preset": args.view_preset,
         "coordinate_frame": coordinate_frame,
         "camera_frame": camera_frame,
+        "world_flu_transform": (
+            None if world_transform is None else world_transform.metadata()
+        ),
         "view_eye_world": (
             None if projector.eye is None else projector.eye.tolist()
         ),

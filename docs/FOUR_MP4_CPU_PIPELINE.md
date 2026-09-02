@@ -165,12 +165,21 @@ The atomically published CSV product is written directly under the dataset:
 
 ```text
 processed/
-├── trajectory.csv  # unchanged v8 joint camera trajectory
+├── trajectory.csv  # v8 joint trajectory re-expressed in world FLU
 ├── gripper.csv     # synchronized left/right opening angle, width and state
 ├── processed.csv   # trajectory and gripper columns joined at v8 timestamps
-├── metadata.csv    # revisions, serials, frames, rate and quality status
+├── metadata.csv    # revisions, source/target frames, rate and quality status
 └── time_alignment.csv  # preserved when already present
 ```
+
+All published camera pose fields use one right-handed FLU contract.  The world
+origin is the midpoint of the geometric centers of `grid_A` and `grid_B`; world
+`+X` follows the AprilTag corner-winding normal through the printed grids
+toward their rear, world `+Y` is left when looking along `+X`, and world `+Z`
+is physical up.  The child frame remains `hand_camera_flu_back_x`, so each
+quaternion represents `T_world_flu_hand_camera_flu`.  `metadata.csv` records
+the native source frame, source-frame origin and complete source-to-world-FLU
+rotation so the conversion is auditable.
 
 The shell entry shows the active stage, elapsed time, aggregate four-stream
 frame/chunk progress, percentage and ETA in the terminal. After all CSV files
@@ -340,19 +349,22 @@ Render the four source views beside the synchronized shared-map 3D tracks:
 .venv/bin/python -m tools.render_joint_four_mp4_trajectory \
   /data/session \
   /data/session/final/dual-x5-four-mp4-cpu-v8/pairs/<pair-id>/tracking \
-  /data/session/final/joint_trajectory_comparison.mp4
+  /data/session/processed/joint_trajectory_comparison.mp4 \
+  --reframe-world-flu \
+  --view-preset flu-front-above
 ```
 
 The comparison view includes a metric world grid and XYZ axes, camera
 frustums, measured/interpolated state, live XYZ and RPY values, linear and
 angular speeds, and full-clip XYZ/RPY trend plots for both cameras.
 
-For data explicitly re-expressed in a right-handed FLU world and camera frame
-(`X` forward from the Tag wall, `Y` left, `Z` up), use
-`--view-preset flu-front-above`. This fixes a perspective camera in front of
-and above both AprilGrids, draws the vertical Tag plane, labels the world and
-camera FLU axes, and adds dashed camera-to-wall `X` depth guides. The pose
-conversion must be performed and audited before rendering; the view preset is
+For data explicitly re-expressed in the right-handed FLU world above (`+X`
+toward the AprilGrid rear, `+Y` left, `+Z` up), use
+`--view-preset flu-front-above`. This fixes a perspective camera on the
+negative-X printed-front side and above both AprilGrids, draws the vertical Tag
+plane, labels the world and camera FLU axes, and adds dashed camera-to-wall `X`
+depth guides. `--reframe-world-flu` performs and audits the same conversion
+used by the published CSV exporter; the view preset by itself remains
 display-only and does not silently reinterpret input coordinates.
 
 When only the hand-camera child frame is FLU and the parent remains the native
