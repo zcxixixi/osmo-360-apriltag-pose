@@ -73,6 +73,7 @@ def summarize_pair(directory: Path) -> dict[str, Any]:
             "aligned_video_ready": videos_ready, "review_ready": videos_ready,
             "video_fps": float(review.get("video_fps", 60.0)),
             "sync": review.get("sync", {}),
+            "source": review.get("source", {}),
         }
     metrics_path = directory / "metrics.json"
     metrics = json.loads(metrics_path.read_text()) if metrics_path.is_file() else {}

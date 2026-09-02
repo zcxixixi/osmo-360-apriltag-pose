@@ -66,6 +66,10 @@ def write_instaumi(root: Path) -> Path:
     (directory / "processed" / "review.json").write_text(json.dumps({
         "duration_s": 12.5, "video_fps": 30.0,
         "sync": {"offset_s": 0.025},
+        "source": {
+            "left": "VID_20260901_155535_00_003.insv",
+            "right": "VID_20260901_155528_00_003.insv",
+        },
     }))
     return directory
 
@@ -77,6 +81,9 @@ def test_instaumi_aligned_videos_are_reviewable(tmp_path: Path) -> None:
     assert item["pair_id"] == "instaumi_000001"
     assert item["metrics"]["aligned_video_ready"]
     assert item["metrics"]["duration_s"] == 12.5
+    assert item["metrics"]["source"]["left"] == "VID_20260901_155535_00_003.insv"
+    assert "folder-title" in PAGE
+    assert "📁" in PAGE
     store.add_review(
         item["pair_id"], decision="approved", reasons=[], notes="左右同步",
         reviewer="审核员",
