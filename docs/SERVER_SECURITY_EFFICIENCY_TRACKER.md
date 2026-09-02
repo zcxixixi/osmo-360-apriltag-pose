@@ -368,16 +368,14 @@
 - 真实 `instaumi_20260901_105442` 原路径已由外部流程移到存储 `#recycle`；本轮没有移动、恢复或删除数据，使用完整副本 `/home/ps/current-robotics-data-2/#recycle/total_annotation/umi_insta360/0901_instaumi_sort_blocks_sc/instaumi_20260901_105442`。热缓存重新发布耗时 `3.946 s`；`processed/trajectory.csv` 与合并 CSV 均为 9,516/9,516 帧有位姿、317.483833 s、`29.969730572 Hz`、`SELF_CALIBRATED_PASS`、世界 `world_flu_aprilgrid_midpoint`。两网格变换后中心分别约为 `[+0.00451,+0.28689,+0.00168]` 和 `[-0.00451,-0.28689,-0.00168]` m，中点为数值零；左/右相机 `X` 中位数约 `-0.534/-0.506 m`，符合相机在网格打印正面（负 X）；变换前后刚体距离最大误差 `<1.5e-9 m`，四元数范数误差 `<9e-13`。
 - 渲染器新增显式 `--reframe-world-flu`，与 CSV 共用同一变换模块，并要求固定 `flu-front-above`；eye 位于负 X 打印正面侧 `[-1.55,0,0.85]`、镜头朝向网格和 `+X`，不跟随或自动旋转。完整高清原片为 `processed/instaumi_20260901_105442_trajectory_world_flu_front_above.mp4`，1920×1080、30 FPS、9,525 帧、317.5 s、203,563,179 B，SHA-256 `cfe4c4b98ffb36eb3f5eeeaf4f4cac6d5f6cebc0fc44c30806aff4fc8fa0b72b`；渲染 wall `13:49.34`、平均 CPU `261%`、峰值 RSS 1,500,984 KiB、无 swap。人工检查起始、7.1 s、中段和末帧，均为两网格横排、正面斜上固定机位且 XYZ/RPY 面板可见。
 - 飞书接口先拒绝 194.1 MiB 高清原片，并进一步以 `234006` 拒绝 86.6 MB 发送版，说明当前租户实际 media 限额低于 CLI 提示的 100 MB。最终保留 30 FPS/9,525 帧/317.5 s，编码 1280×720、25,575,931 B 的发送版，SHA-256 `6fb8ca0ad5ec9ba410c9b415837f18402e970a68809677caf2bb130e04e202af`；文字 `om_x100b6649430d44b4c0200ef4690683a`、视频 `om_x100b66495890f4a8c1cb94b68e14a2b` 已发送并回读，media 报告时长 318 s。两份本地发送副本与高清原片均保留在该数据集 `processed/`。
-- 新增/更新原点与轴向、位置/姿态、地图、CSV schema/metadata 及固定机位回归；本地和服务器完整测试均为 `307 passed, 8 skipped`，聚焦测试 20 passed，`git diff --check` 通过。下一步等待用户观看视频确认实际方向；若方向定义需调整，必须修改单一共享变换并重新生成 CSV/视频，不能在渲染层单独翻转造成产品与画面不一致。
+- 新增/更新原点与轴向、位置/姿态、地图、CSV schema/metadata 及固定机位回归；本地和服务器完整测试均为 `307 passed, 8 skipped`，聚焦测试 20 passed，`git diff --check` 通过。功能提交为本地 `b7f350b`、服务器等价 `fae8ac8`；服务器既有未提交 `config/devices/x5_factory_lens_offsets.json` 保持原样且未纳入提交。下一步等待用户观看视频确认实际方向；若方向定义需调整，必须修改单一共享变换并重新生成 CSV/视频，不能在渲染层单独翻转造成产品与画面不一致。
 
 ## 最近一次流水线版本变更验证
 
-- 改动：v8 保留 inlier 镜头来源，对超过既有运动上限的主导镜头 handoff 首帧降信任；仍保留每帧数值位姿，渲染语义和 19:03 固定视角不变。
-- 提交：本地 `505febb`，服务器等价 `73ba77d`。
-- 服务器输出：`/home/ps/instaumi-data/instaumi_000001/final/dual-x5-four-mp4-cpu-v8/`。
-- 服务器报告：300/300 帧具备数值位姿；联合可信 266（88.67%）；联合实测 263（87.67%）；长间隔不可信 34 帧；全部门通过。
-- 服务器运行：空闲服务器 5.87 s；`time -v` 平均 CPU 1268%；峰值 RSS 261,348 KiB；无 swap。
-- 真实缓存回归：左侧只拒绝 frame 168/360/420，右侧 0；完整测试本地 282/8、服务器 283/7。
-- IMU：当前 H5 为 0 样本，`UNAVAILABLE_NO_SAMPLES`，34 帧使用视觉低置信度回退；能力已由合成 per-side IMU 测试覆盖，待新数据集实测。
-- 最终审阅视频：`reviews/processed_joint_trajectory_30hz_tag_map_front_above_v8.mp4`，SHA-256 `fb12d243...c9a48`，固定 `tag-map-front-above`。
-- 飞书：文字 `om_x100b6641b20f88a0c4b17510107b516`、视频 `om_x100b6641b3f09ca0dfe45eb420cb891`，均已回读验证。
+- 改动：CSV 产品层和审阅渲染共用 `aprilgrid-midpoint-flu-back-x-v1`，把 v8 原生 Tag Map 轨迹刚体重表达为世界 FLU；检测、光流、PnP、时间线、可信度和每帧数值位姿策略未改变。
+- 提交：本地 `b7f350b`，服务器等价 `fae8ac8`。
+- 服务器输出：`.../instaumi_20260901_105442/processed/{trajectory,gripper,processed,metadata}.csv`；9,516/9,516 帧具备双侧数值位姿，`29.969730572 Hz`、`SELF_CALIBRATED_PASS`、`world_flu_aprilgrid_midpoint -> hand_camera_flu_back_x`。
+- 世界定义：两网格中心中点为零；`+X` 指向网格背面，`+Y` 向左，`+Z` 向上；位置、姿态和渲染地图使用同一变换，刚体距离保持误差 `<1.5e-9 m`。
+- 回归：本地/服务器完整测试均为 307 passed/8 skipped，真实热缓存发布 3.946 s。
+- 最终审阅视频：服务器高清 1920×1080/30 FPS/317.5 s 原片 SHA-256 `cfe4c4b9...b72b`；飞书 1280×720/30 FPS 发送版 SHA-256 `6fb8ca0a...02af`，固定 `flu-front-above`。
+- 飞书：文字 `om_x100b6649430d44b4c0200ef4690683a`、视频 `om_x100b66495890f4a8c1cb94b68e14a2b`，均已回读验证。
