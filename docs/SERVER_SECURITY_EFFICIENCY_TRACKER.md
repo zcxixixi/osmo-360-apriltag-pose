@@ -29,7 +29,8 @@
 | 审核网关提交 | 本地安全代码 `3e5a0b3`、unit `2fd08c3`；服务器等价 `a6f22f2`、`f0ffecd` |
 | 服务器无缓存耗时 | 空闲服务器 v8 为 5.87 s，平均 1268% CPU，峰值 RSS 261,348 KiB、无 swap；此前无竞争 v5 基线为 6.49 s |
 | 输出 | 300/300 帧具备双侧数值位姿；266 帧联合可信，263 帧双侧实测，34 帧长间隔不可信，`SELF_CALIBRATED_PASS` |
-| 回归测试 | 本地 282 passed/8 skipped；服务器启用正式 v7 缓存回归后 283 passed/7 skipped，严格验证左侧仅 frame 168/360/420 命中 handoff 门、右侧 0、300/300 数值位姿 |
+| CSV 产品入口 | `bin/process_instaumi_dataset.sh DATASET_ROOT`；原子发布 `processed/instaumi-csv-v1/{trajectory,gripper,processed,metadata}.csv`，夹爪信号保持诊断级 `training_ready=0` |
+| 回归测试 | 当前本地/服务器完整测试均为 288 passed/8 skipped；此前服务器启用正式 v7 缓存回归时 283 passed/7 skipped，严格验证左侧仅 frame 168/360/420 命中 handoff 门、右侧 0、300/300 数值位姿 |
 | IMU 状态 | 当前 `dataset.h5` 共享 IMU 样本数为 0，左右独立流缺失；v8 明确 `UNAVAILABLE_NO_SAMPLES`，34 个长间隔帧回退视觉 `INTERPOLATED_UNTRUSTED`，不伪造 IMU |
 | 最新已发视频 | v8 `processed_joint_trajectory_30hz_tag_map_front_above_v8.mp4`，固定 `tag-map-front-above`，SHA-256 `fb12d243...c9a48` |
 | 受管服务实际 unit | `osmo-visualization.service`、`osmo-alignment-review.service`（认证网关）、`osmo-alignment-review-backend.service`；三者均为 user unit，active/enabled、`NRestarts=0` |
@@ -311,6 +312,15 @@
 - 候选 system unit 边界为 `User=osmo360-worker`、`NoNewPrivileges=yes`、`ProtectSystem=strict`、`ProtectHome=yes`、`PrivateTmp/PrivateDevices=yes`、`RestrictSUIDSGID=yes`、内核/控制组保护、`IPAddressDeny=any`/仅 `AF_UNIX`，只用 `ReadWritePaths` 放行精确 revision 输出与 `/run` 任务槽；初始资源上限按现有每任务 16 逻辑线程设 `CPUQuota=1600%`、`MemoryHigh=1536M`、`MemoryMax=2G`、`TasksMax=128`，上线前以影子无缓存运行验证而不是直接套用。
 - 可回滚实施顺序确定为：保留现有 `ps` checkout、正式 v8 和三项服务不变；创建新账户/自包含 release；在精确命名的临时影子数据集上先 dry-run，再无缓存处理并核对轨迹数值、状态、资源和 19:03 模板语义；失败时只停用新 unit 并清理该影子目录，成功后才把后续调度切到 worker。当前正式 v8 再验证为 300/300 数值位姿、266 联合可信、263 双侧实测、`29.969730572 Hz`、左右唯一 child `hand_camera_flu_back_x`、`SELF_CALIBRATED_PASS`；视频 SHA 仍为 `fb12d2439c59b7573f07b98e4734aa24bab62d28e576083a6f68046d66bc9a48`，audit 仍为 `tag-map-front-above / TAG MAP / CAMERA FLU / 30 FPS / 299 帧`。
 - 飞书整点进度 `om_x100b6643bfbd6ca4c07f58b58e8dc3c` 已发送并回读验证。本轮没有算法、坐标、时间线或渲染变化，因此按规则不重复无缓存处理和视频发送；审计未创建临时目录。SEC-002 仍为高风险 `OPEN`，下一步需要用户授权创建系统账户、root-owned release/数据视图、精确 ACL 和受管 system unit，不能擅自执行主机级迁移。
+
+### 2026-09-02 / Cycle 018
+
+- 按用户要求新增单参数入口 `bin/process_instaumi_dataset.sh DATASET_ROOT`。脚本严格要求 `dataset.h5` 与 `video/{Left,Right}_{back,forward}.mp4`，先运行/恢复 v8 联合轨迹，再从 H5 自动读取序列号、公共时间轴和受 SHA-256 约束的 1024×1024 后视预览；预览不存在时安全回退到四 MP4 的 `*_back.mp4`。结果以可恢复目录切换发布到 `processed/instaumi-csv-v1/`，保留已有 `processed/time_alignment.csv`，重复执行没有构建目录残留。
+- 新增序列号/BaseTag/安装绑定的 `instaumi-pair01-gripper-signal-20260902-r1`：左/右分别锁定 `IAHEA2606M5WSK`/BaseTag2 与 `IAHEA2606KKUKF`/BaseTag3，复用各自已登记的物理夹爪黄点开合修订和验证过的角度→宽度分段标定。两路仅并行做彩色黄点检测，AprilTag 轨迹继续使用原有灰度 FFmpeg 管道；开合不按 episode 分位数重新归零，直接双侧测量、低置信度单侧测量、≤0.25 s 恢复和不可用状态分别保留。该信号明确为诊断级 `training_ready=0`，不得当作力、TCP 轨迹或无缺口真值。
+- 真实样例生成 `trajectory.csv`、`gripper.csv`、合并后的 `processed.csv` 和 `metadata.csv`，均为 300 行/中位 `29.969730572 Hz`。轨迹仍为 300/300 数值位姿、266 联合可信、263 双侧实测、`SELF_CALIBRATED_PASS`、`hand_camera_flu_back_x`；左开合 300/300 可用（276 直接双侧、4 直接单侧低置信度、20 短缺口恢复），右开合 293/300 可用（286 直接双侧、7 短缺口恢复、7 明确空值）。左/右角度范围约 `0.264..25.602°`/`0..11.689°`，对应宽度约 `0..47.04 mm`/`0..17.85 mm`。
+- 本地完整入口 wall 11.35 s、平均 1056% CPU、峰值 RSS 279,216 KiB；单独 CSV 导出 wall 2.69 s、峰值 RSS 279,272 KiB。服务器复用既有 v8 cache、但重新测量夹爪的完整入口 wall 6.54 s、平均 1203% CPU、峰值 RSS 278,720 KiB、无 swap。两端 `gripper.csv` SHA 同为 `24f9c63a68ed9b11a8a23cac0441bc1a0d815026e63d0ae260ad9fded41ad45a`，`metadata.csv` 同为 `d88d3a1e...eff003`；轨迹仅有跨 CPU 浮点末位差，300 行最大数值差 `2.0e-9`、无文本状态差。
+- 聚焦回归 41 passed 后补齐 H5 预览缺失→四 MP4 back 回退测试；最终本地和服务器完整测试均为 `288 passed, 8 skipped`，compileall/bash 语法检查通过，当前环境没有 ShellCheck。变更前后本地和服务器 `./umi verify` 都只因已知外部冻结时间线 `/home/cenxi/.../dual_gripper_claw_to_claw_action_v50_fixed_timeline.json` 缺失而失败，按用户既有授权忽略环境 gate；受保护 v50 文件未修改。
+- 功能提交为本地 `a620094`/`7a92685`，服务器等价 `3cf0029`/`f48a3ec`。正式 v8 视频 SHA 仍为 `fb12d2439c59b7573f07b98e4734aa24bab62d28e576083a6f68046d66bc9a48`，本轮未改坐标、轨迹算法或 19:03 渲染模板，因此不重复出片。下一步等新数据到位后先验证相同序列号/安装修订与右侧 7 帧遮挡分布；硬件或安装变化必须新增夹爪 signal revision，不能静默复用当前标定。
 
 ## 最近一次流水线版本变更验证
 
