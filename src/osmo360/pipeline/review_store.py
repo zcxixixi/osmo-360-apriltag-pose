@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import re
 import sqlite3
 from typing import Any
 from uuid import uuid4
@@ -130,6 +131,7 @@ class ReviewStore:
         # keyframes.json belongs beside the many reviewed video directories;
         # SQLite, snapshots, and operational state remain outside the dataset.
         self.keyframes_path = self.dataset_root / "keyframes.json"
+        self.collectors_path = self.dataset_root / "collectors.json"
         self._initialize()
 
     def connect(self) -> sqlite3.Connection:
@@ -175,11 +177,20 @@ class ReviewStore:
     def list_items(self) -> list[dict[str, Any]]:
         query="""SELECT i.*,r.id review_id,r.data_hash review_hash,r.decision,r.reasons_json,r.notes,r.reviewer,r.created_at,r.collector FROM items i LEFT JOIN review_events r ON r.id=(SELECT id FROM review_events WHERE pair_id=i.pair_id ORDER BY id DESC LIMIT 1) ORDER BY i.pair_id"""
         with self.connect() as c: rows=c.execute(query).fetchall()
+        collectors = (
+            json.loads(self.collectors_path.read_text(encoding="utf-8"))
+            if self.collectors_path.is_file() else {}
+        )
         result=[]
         for row in rows:
             item=dict(row);item["metrics"]=json.loads(item.pop("metrics_json"));item["reasons"]=json.loads(item.pop("reasons_json")) if item.get("reasons_json") else []
             item["stale_review"]=bool(item.get("review_hash") and item["review_hash"]!=item["data_hash"])
             if item["stale_review"]: item["decision"]=None
+            if not item.get("collector"):
+                left_source = str(item["metrics"].get("source", {}).get("left", ""))
+                match = re.search(r"VID_(\d{8})_", left_source)
+                if match:
+                    item["collector"] = str(collectors.get(match.group(1), ""))
             result.append(item)
         return result
 

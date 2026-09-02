@@ -76,8 +76,10 @@ def write_instaumi(root: Path) -> Path:
 
 def test_instaumi_aligned_videos_are_reviewable(tmp_path: Path) -> None:
     write_instaumi(tmp_path)
+    (tmp_path / "collectors.json").write_text('{"20260901":"lyw"}\n')
     store = ReviewStore(tmp_path)
     item = store.scan()[0]
+    assert item["collector"] == "lyw"
     assert item["pair_id"] == "instaumi_000001"
     assert item["metrics"]["aligned_video_ready"]
     assert item["metrics"]["duration_s"] == 12.5
