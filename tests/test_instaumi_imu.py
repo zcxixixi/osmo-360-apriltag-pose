@@ -14,6 +14,9 @@ from osmo360.localization.coordinate_frames import (
     X5_STREAM0_OPENCV_FROM_HAND_CAMERA_FLU,
 )
 from osmo360.localization.instaumi_imu import (
+    IMU_ROTATION_BASELINE_PATH,
+    ImuAssistanceUnavailable,
+    ImuSeries,
     calibrate_instaumi_imu_from_visual,
     load_instaumi_imu,
 )
@@ -183,7 +186,8 @@ def test_calibrated_gyro_bridge_shapes_rotation_but_keeps_visual_position(tmp_pa
         "right": 0,
     }
     assert summary["imu_assistance"]["translation_source"] == (
-        "visual_endpoint_interpolation"
+        "visual_endpoint_anchored_timestamp_aligned_accelerometer_bridge"
+        "_when_available"
     )
 
 
@@ -254,3 +258,187 @@ def test_visual_self_calibration_recovers_per_side_imu_time_and_axes(
             offsets[side], abs=0.003
         )
         assert audit["holdout_rotation_error_deg"]["p95"] < 0.1
+
+
+def test_identity_h5_extrinsics_use_serial_bound_rotation_baseline_and_timestamps(
+    tmp_path: Path,
+) -> None:
+    path = _h5(tmp_path, per_side=True)
+    with h5py.File(path, "r+") as handle:
+        metadata = {
+            "time": {"reference": "dataset_start"},
+            "devices": {
+                "left": {"serial_number": "IAHEA2606KMDGP"},
+                "right": {"serial_number": "IAHEA2606KMURQ"},
+            },
+        }
+        calibration = {
+            "extrinsics": {
+                "transform_convention": "T_target_source",
+                "T_rig_camera_left": np.eye(4).tolist(),
+                "T_rig_camera_right": np.eye(4).tolist(),
+                "T_rig_imu_left": np.eye(4).tolist(),
+                "T_rig_imu_right": np.eye(4).tolist(),
+            },
+            "imu_calibration": {
+                side: {
+                    "gyroscope_bias_rad_s": None,
+                    "gyroscope_scale": None,
+                    "accelerometer_bias_m_s2": None,
+                    "accelerometer_scale": None,
+                }
+                for side in ("left", "right")
+            },
+        }
+        handle["/metadata/dataset.json"][()] = json.dumps(metadata)
+        handle["/calib/calibration_full.json"][()] = json.dumps(calibration)
+
+    bundle = load_instaumi_imu(path)
+
+    baseline = json.loads(IMU_ROTATION_BASELINE_PATH.read_text(encoding="utf-8"))
+    assert bundle.audit["status"] == "AVAILABLE"
+    assert bundle.audit["time_alignment"] == {
+        "method": "linear_interpolation_by_h5_timestamp_ns",
+        "reference": "dataset_start",
+        "fixed_time_offset_s": 0.0,
+        "frame_index_alignment_used": False,
+    }
+    for side, serial in (
+        ("left", "IAHEA2606KMDGP"),
+        ("right", "IAHEA2606KMURQ"),
+    ):
+        audit = bundle.audit["sides"][side]
+        expected_rotation = np.asarray(
+            baseline["devices"][serial]
+            ["T_hand_camera_flu_back_x_imu_rotation_only"]
+        )[:3, :3]
+        assert audit["orientation_calibration_source"] == (
+            "serial_bound_visual_gyro_baseline"
+        )
+        assert audit["placeholder_identity_extrinsics_replaced"] is True
+        assert audit["gyroscope_bias_source"] == "safe_default"
+        assert np.allclose(
+            bundle.streams[side].timestamp_s,
+            np.arange(0, 0.401, 0.01),
+            atol=1e-12,
+            rtol=0,
+        )
+        assert bundle.streams[side].angular_velocity_hand_rad_s[0] == pytest.approx(
+            expected_rotation @ np.asarray([0.0, 0.0, np.pi])
+        )
+
+
+def test_explicit_non_identity_calibration_full_extrinsics_override_baseline(
+    tmp_path: Path,
+) -> None:
+    path = _h5(tmp_path, per_side=True)
+    with h5py.File(path, "r+") as handle:
+        raw = handle["/metadata/dataset.json"][()]
+        metadata = json.loads(raw.decode() if isinstance(raw, bytes) else str(raw))
+        metadata["devices"] = {
+            "left": {"serial_number": "IAHEA2606KMDGP"},
+            "right": {"serial_number": "IAHEA2606KMURQ"},
+        }
+        handle["/metadata/dataset.json"][()] = json.dumps(metadata)
+
+    bundle = load_instaumi_imu(path)
+
+    for side in ("left", "right"):
+        assert bundle.audit["sides"][side]["orientation_calibration_source"] == (
+            "calibration_full_explicit_extrinsics"
+        )
+        assert bundle.audit["sides"][side][
+            "placeholder_identity_extrinsics_replaced"
+        ] is False
+        assert bundle.streams[side].angular_velocity_hand_rad_s[0] == pytest.approx(
+            [0.0, 0.0, np.pi]
+        )
+
+
+def test_accelerometer_bridge_keeps_visual_endpoints_and_changes_gap_shape() -> None:
+    timestamps = np.arange(0.0, 1.001, 0.01)
+    acceleration = np.zeros((len(timestamps), 3))
+    acceleration[:, 0] = 4.0 * np.sin(2 * np.pi * timestamps)
+    stream = ImuSeries(
+        side="left",
+        timestamp_s=timestamps,
+        angular_velocity_hand_rad_s=np.zeros((len(timestamps), 3)),
+        calibration_sha256="test",
+        dataset_path="test.h5",
+        linear_acceleration_hand_m_s2=acceleration,
+    )
+
+    bridge = stream.bridge_positions(
+        0.0,
+        np.asarray([0.0, 0.0, 0.0]),
+        Rotation.identity(),
+        1.0,
+        np.asarray([1.0, 0.0, 0.0]),
+        Rotation.identity(),
+        np.asarray([0.0, 0.25, 1.0]),
+    )
+
+    assert bridge.positions_m[0] == pytest.approx([0.0, 0.0, 0.0])
+    assert bridge.positions_m[-1] == pytest.approx([1.0, 0.0, 0.0])
+    assert bridge.positions_m[1, 0] != pytest.approx(0.5, abs=1e-3)
+    assert bridge.maximum_deviation_from_linear_m <= 0.15
+
+
+def test_joint_gap_uses_accelerometer_translation_with_visual_scale_anchors(
+    tmp_path: Path,
+) -> None:
+    timestamps = np.arange(0.0, 1.001, 0.01)
+    acceleration = np.zeros((len(timestamps), 3))
+    acceleration[:, 0] = 4.0 * np.sin(2 * np.pi * timestamps)
+    stream = ImuSeries(
+        side="left",
+        timestamp_s=timestamps,
+        angular_velocity_hand_rad_s=np.zeros((len(timestamps), 3)),
+        calibration_sha256="test",
+        dataset_path="test.h5",
+        linear_acceleration_hand_m_s2=acceleration,
+    )
+    left = [_row(0, 0.0, 0.0), _row(1, 0.25, None), _row(2, 1.0, 1.0)]
+    right = [_row(0, 0.0, 2.0), _row(1, 0.25, 2.25), _row(2, 1.0, 3.0)]
+    output = tmp_path / "joint.csv"
+
+    summary = write_joint_pose_csv(
+        output,
+        left,
+        right,
+        map_id="shared-map",
+        imu_streams={"left": stream},
+        imu_audit={"status": "AVAILABLE"},
+    )
+    rows = list(csv.DictReader(output.open(newline="", encoding="utf-8")))
+
+    assert rows[1]["left_pose_state"] == "IMU_ASSISTED_UNTRUSTED"
+    assert float(rows[1]["left_camera_x_m"]) != pytest.approx(0.25, abs=1e-3)
+    assert "accelerometer_translation" in rows[1]["left_measurement_source"]
+    assert summary["imu_assistance"]["accelerometer_assisted_side_frames"] == {
+        "left": 1,
+        "right": 0,
+    }
+
+
+def test_excessive_gyro_endpoint_closure_rejects_inertial_bridge() -> None:
+    timestamps = np.arange(0.0, 0.501, 0.01)
+    stream = ImuSeries(
+        side="left",
+        timestamp_s=timestamps,
+        angular_velocity_hand_rad_s=np.zeros((len(timestamps), 3)),
+        calibration_sha256="test",
+        dataset_path="test.h5",
+    )
+
+    with pytest.raises(
+        ImuAssistanceUnavailable,
+        match="gyro_endpoint_closure_exceeds_limit",
+    ):
+        stream.bridge_orientations(
+            0.0,
+            Rotation.identity(),
+            0.5,
+            Rotation.from_euler("z", 25.0, degrees=True),
+            np.asarray([0.25]),
+        )

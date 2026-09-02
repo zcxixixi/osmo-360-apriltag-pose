@@ -263,7 +263,7 @@ def test_four_mp4_discovery_and_dataset_dry_run(monkeypatch, tmp_path: Path):
     lock = four_mp4.discover_four_mp4_dataset(root)
     result = dataset.process_dataset(root, dry_run=True)
 
-    assert lock["pipeline_revision"] == "dual-x5-four-mp4-cpu-v10"
+    assert lock["pipeline_revision"] == "dual-x5-four-mp4-cpu-v12"
     assert lock["pairs"][0]["left"]["lenses"][0]["stream"] == 0
     assert lock["pairs"][0]["right"]["base_tag_id"] == 3
     assert lock["pairs"][0]["sync"]["offset_s"] == 0.0125

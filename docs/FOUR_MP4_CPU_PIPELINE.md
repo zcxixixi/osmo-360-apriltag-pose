@@ -1,6 +1,6 @@
 # Four-MP4 CPU pipeline v10
 
-`dual-x5-four-mp4-cpu-v10` accepts the four independent raw fisheye MP4 streams
+`dual-x5-four-mp4-cpu-v12` accepts the four independent raw fisheye MP4 streams
 produced by two X5 cameras. It does not import INSV and does not invoke the
 Insta360 stitching SDK. The official panorama is therefore no longer a
 localization prerequisite.
@@ -49,24 +49,36 @@ and the subprocess exit code. No BGR/RGB frame is produced.
 
 Optional IMU assistance is fail-closed. Because the two hand cameras move
 independently, usable H5 data must contain `/sensor/imu/left/...` and
-`/sensor/imu/right/...` (or `/sensor/{left,right}/imu/...`) plus explicit
-`T_rig_imu_left/right`, `T_rig_camera_left/right`, and `T_target_source`
-transform semantics. A singular `/sensor/imu` stream is never silently assigned
-to both hands. Calibrated gyro propagation is also used as an independent
-short-horizon attitude check for weak visual solves. During an internal visual
-gap, gyro increments shape orientation between the two trusted visual anchors
-and a distributed closure correction keeps both endpoints exact. Gaps no longer
+`/sensor/imu/right/...` (or `/sensor/{left,right}/imu/...`). A singular
+`/sensor/imu` stream is never silently assigned to both hands. IMU and visual
+data are matched by their H5 `timestamp_ns` values and interpolated in the
+shared `dataset_start` clock; frame-index matching and fixed baseline time
+offsets are forbidden.
+
+IMU rotation calibration has an explicit precedence. Valid non-identity
+`T_rig_camera_left/right` and `T_rig_imu_left/right` matrices in
+`calibration_full` win. Identity or null placeholder matrices use the immutable,
+rig-side-checked, serial-bound rotation-only baseline in
+`config/imu_revisions/x5_kmdgp_kmurq_visual_gyro_20260902_r1.json`. An unknown
+serial never receives another camera's baseline. If neither source is usable,
+v12 may perform the existing fail-closed capture-local visual/gyro fit; it is
+enabled only with at least 200 excited pairs, speed-norm correlation of at least
+0.70, held-out median/p95 residuals no greater than 0.50/2.0 degrees, and
+cross-side rotation agreement within 10 degrees.
+
+Calibrated gyro propagation supplies a short-horizon attitude check and shapes
+orientation between exact visual endpoints. Timestamp-aligned accelerometer
+samples also shape translation inside a visually bounded gap. The mean
+world-frame specific force is removed over that interval to cancel gravity and
+constant bias, both visual positions remain exact metric anchors, and deviation
+from linear visual interpolation is capped at 0.15 m. A gyro bridge whose visual
+endpoint closure exceeds 20 degrees is rejected before acceleration is used.
+This is not unbounded raw
+double integration and is not used beyond the last visual anchor. Gaps no longer
 than 0.25 s are `IMU_ASSISTED`; longer gaps remain
-`IMU_ASSISTED_UNTRUSTED`. Position always remains visual endpoint interpolation;
-accelerometer double integration is deliberately not used. Missing, empty,
-ambiguous, poorly sampled, or incompletely calibrated IMU data falls back to
-visual SLERP and is recorded in `report.json`. If the H5 contains per-side gyro
-samples but explicitly lacks camera-to-IMU extrinsics or gyro bias, v10 performs
-a first visual pass and estimates each side's time offset, constant IMU-to-hand
-FLU rotation, and bias from high-quality visual angular velocity. It enables
-that capture-local calibration only when at least 200 excited pairs, speed-norm
-correlation of at least 0.70, held-out median/p95 residuals no greater than
-0.50/2.0 degrees, and cross-side extrinsic agreement within 10 degrees all pass.
+`IMU_ASSISTED_UNTRUSTED`. Missing, empty, ambiguous, poorly sampled, or invalid
+IMU data falls back to visual interpolation/SLERP and is recorded in
+`report.json`.
 
 ## Generic four-MP4 input contract
 
@@ -287,7 +299,7 @@ records every flow, redetection, scout, fallback, and rejection count.
 Persistent cache defaults to:
 
 ```text
-dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v10/<pair-id>/
+dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v12/<pair-id>/
 ```
 
 Set `OSMO_PIPELINE_CACHE` to a server-local SSD if the dataset itself is on a
@@ -310,7 +322,7 @@ self-calibration, not external ground truth.
 The principal outputs are:
 
 ```text
-final/dual-x5-four-mp4-cpu-v10/pairs/<pair-id>/tracking/
+final/dual-x5-four-mp4-cpu-v12/pairs/<pair-id>/tracking/
 ├── session_world_map.json
 ├── left_pose.csv
 ├── right_pose.csv
@@ -322,9 +334,10 @@ final/dual-x5-four-mp4-cpu-v10/pairs/<pair-id>/tracking/
 row, followed by both left and right 6DoF poses. Direct bearing measurements
 are marked `MEASURED`; gaps bounded by measurements are filled and retain a
 numeric pose on every common-timeline frame. Gaps up to 0.25 seconds use a
-calibrated gyro bridge when available and are marked `IMU_ASSISTED`, otherwise
-they use visual SLERP and are marked `INTERPOLATED`. Longer gaps use a calibrated
-per-side gyro bridge when safely available and are marked
+timestamp-aligned, visual-endpoint-anchored accelerometer/gyro bridge when
+available and are marked `IMU_ASSISTED`, otherwise they use visual interpolation
+and SLERP and are marked `INTERPOLATED`. Longer gaps use the same bounded bridge
+when safely available and are marked
 `IMU_ASSISTED_UNTRUSTED`; otherwise they are marked
 `INTERPOLATED_UNTRUSTED`. Leading or
 trailing gaps use the nearest accepted pose and are marked `HELD_UNTRUSTED`.
@@ -382,7 +395,7 @@ Render the four source views beside the synchronized shared-map 3D tracks:
 ```bash
 .venv/bin/python -m tools.render_joint_four_mp4_trajectory \
   /data/session \
-  /data/session/final/dual-x5-four-mp4-cpu-v10/pairs/<pair-id>/tracking \
+  /data/session/final/dual-x5-four-mp4-cpu-v12/pairs/<pair-id>/tracking \
   /data/session/processed/joint_trajectory_comparison.mp4 \
   --reframe-world-flu \
   --view-preset flu-front-above
