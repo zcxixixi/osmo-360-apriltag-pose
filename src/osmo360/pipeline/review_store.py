@@ -140,7 +140,7 @@ class ReviewStore:
         with self.connect() as c:
             c.executescript("""
             CREATE TABLE IF NOT EXISTS items(pair_id TEXT PRIMARY KEY,source_dir TEXT NOT NULL,data_hash TEXT NOT NULL,auto_status TEXT NOT NULL,metrics_json TEXT NOT NULL,scanned_at TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS review_events(id INTEGER PRIMARY KEY AUTOINCREMENT,pair_id TEXT NOT NULL REFERENCES items(pair_id),data_hash TEXT NOT NULL,decision TEXT NOT NULL,reasons_json TEXT NOT NULL,notes TEXT NOT NULL,reviewer TEXT NOT NULL,created_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS review_events(id INTEGER PRIMARY KEY AUTOINCREMENT,pair_id TEXT NOT NULL REFERENCES items(pair_id),data_hash TEXT NOT NULL,decision TEXT NOT NULL,reasons_json TEXT NOT NULL,notes TEXT NOT NULL,reviewer TEXT NOT NULL,created_at TEXT NOT NULL,collector TEXT NOT NULL DEFAULT '');
             CREATE INDEX IF NOT EXISTS review_pair_created ON review_events(pair_id,created_at DESC,id DESC);
             CREATE TABLE IF NOT EXISTS reprocess_queue(pair_id TEXT PRIMARY KEY REFERENCES items(pair_id),data_hash TEXT NOT NULL,review_event_id INTEGER NOT NULL REFERENCES review_events(id),status TEXT NOT NULL,updated_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS segments(id INTEGER PRIMARY KEY AUTOINCREMENT,pair_id TEXT NOT NULL REFERENCES items(pair_id),data_hash TEXT NOT NULL,start_s REAL NOT NULL,end_s REAL NOT NULL,label TEXT NOT NULL,success INTEGER NOT NULL,notes TEXT NOT NULL,reviewer TEXT NOT NULL,created_at TEXT NOT NULL,superseded_by INTEGER REFERENCES segments(id));
@@ -150,6 +150,11 @@ class ReviewStore:
             CREATE TABLE IF NOT EXISTS keyframes(id TEXT PRIMARY KEY,pair_id TEXT NOT NULL REFERENCES items(pair_id),data_hash TEXT NOT NULL,frame INTEGER NOT NULL,time_sec REAL NOT NULL,label TEXT NOT NULL,reviewer TEXT NOT NULL,created_at TEXT NOT NULL,deleted_at TEXT);
             CREATE INDEX IF NOT EXISTS keyframe_pair_time ON keyframes(pair_id,time_sec,id);
             """)
+            columns = {row[1] for row in c.execute("PRAGMA table_info(review_events)")}
+            if "collector" not in columns:
+                c.execute(
+                    "ALTER TABLE review_events ADD COLUMN collector TEXT NOT NULL DEFAULT ''"
+                )
 
     def scan(self) -> list[dict[str, Any]]:
         directories = []
@@ -168,7 +173,7 @@ class ReviewStore:
         return self.list_items()
 
     def list_items(self) -> list[dict[str, Any]]:
-        query="""SELECT i.*,r.id review_id,r.data_hash review_hash,r.decision,r.reasons_json,r.notes,r.reviewer,r.created_at FROM items i LEFT JOIN review_events r ON r.id=(SELECT id FROM review_events WHERE pair_id=i.pair_id ORDER BY id DESC LIMIT 1) ORDER BY i.pair_id"""
+        query="""SELECT i.*,r.id review_id,r.data_hash review_hash,r.decision,r.reasons_json,r.notes,r.reviewer,r.created_at,r.collector FROM items i LEFT JOIN review_events r ON r.id=(SELECT id FROM review_events WHERE pair_id=i.pair_id ORDER BY id DESC LIMIT 1) ORDER BY i.pair_id"""
         with self.connect() as c: rows=c.execute(query).fetchall()
         result=[]
         for row in rows:
@@ -226,7 +231,10 @@ class ReviewStore:
         self._export()
         return {**dict(row), "saved": True, "stale": False}
 
-    def add_review(self,pair_id:str,*,decision:str,reasons:list[str],notes:str,reviewer:str)->dict[str,Any]:
+    def add_review(
+        self, pair_id: str, *, decision: str, reasons: list[str],
+        notes: str, reviewer: str, collector: str = "",
+    ) -> dict[str, Any]:
         if decision not in DECISIONS: raise ValueError("invalid decision")
         if set(reasons)-REASONS.keys(): raise ValueError("invalid reasons")
         if not reviewer.strip(): raise ValueError("reviewer is required")
@@ -235,7 +243,7 @@ class ReviewStore:
         if decision=="approved" and not item["metrics"].get("review_ready"): raise ValueError("必须先生成可审核的对齐视频或3D同步画面，才能通过")
         now=utc_now()
         with self.connect() as c:
-            cur=c.execute("INSERT INTO review_events(pair_id,data_hash,decision,reasons_json,notes,reviewer,created_at) VALUES(?,?,?,?,?,?,?)",(pair_id,item["data_hash"],decision,json.dumps(reasons),notes.strip(),reviewer.strip(),now));event_id=int(cur.lastrowid)
+            cur=c.execute("INSERT INTO review_events(pair_id,data_hash,decision,reasons_json,notes,reviewer,created_at,collector) VALUES(?,?,?,?,?,?,?,?)",(pair_id,item["data_hash"],decision,json.dumps(reasons),notes.strip(),reviewer.strip(),now,collector.strip()));event_id=int(cur.lastrowid)
             if decision=="reprocess": c.execute("INSERT INTO reprocess_queue VALUES(?,?,?,?,?) ON CONFLICT(pair_id) DO UPDATE SET data_hash=excluded.data_hash,review_event_id=excluded.review_event_id,status='queued',updated_at=excluded.updated_at",(pair_id,item["data_hash"],event_id,"queued",now))
             else: c.execute("UPDATE reprocess_queue SET status='cancelled',updated_at=? WHERE pair_id=? AND status='queued'",(now,pair_id))
         self._export();return self.history(pair_id)[0]
