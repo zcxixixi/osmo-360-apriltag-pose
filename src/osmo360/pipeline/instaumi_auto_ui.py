@@ -56,15 +56,20 @@ def _load_json(path: Path) -> dict[str, Any]:
 def _latest_pair_states(automation_root: Path) -> tuple[dict[str, dict[str, Any]], list[str]]:
     merged: dict[str, dict[str, Any]] = {}
     shards = []
-    for path in sorted(automation_root.glob("state*.json")):
+    paths = sorted(automation_root.glob("state*.json"))
+    if any("-of-" in path.stem for path in paths):
+        paths = [path for path in paths if path.name != "state.json"]
+    for path in paths:
         state = _load_json(path)
         shard = path.stem.removeprefix("state") or "legacy"
-        shards.append(f"{shard}:{state.get('node', '-')}" )
+        shards.append(f"{shard}:{state.get('node', '-')}")
         for key, value in state.get("pairs", {}).items():
             if not isinstance(value, dict):
                 continue
             current = merged.get(key)
-            if current is None or str(value.get("updated_at_utc", "")) >= str(current.get("updated_at_utc", "")):
+            if current is None or str(value.get("updated_at_utc", "")) >= str(
+                current.get("updated_at_utc", "")
+            ):
                 merged[key] = value
     return merged, shards
 
