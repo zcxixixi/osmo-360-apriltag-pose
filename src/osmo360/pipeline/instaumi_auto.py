@@ -35,7 +35,7 @@ OFFSET_PATTERN = re.compile(rb"[mn]2(?:_-?\d+(?:\.\d+)?){15}")
 TIME_PATTERN = re.compile(r"VID_(\d{8})_(\d{6})_")
 COLLECTOR_PATTERN = re.compile(r"^\d{4}_instaumi_[a-z0-9_]+$")
 GRIPPER_PROFILE = (
-    ROOT / "config/rig_revisions/instaumi_pair01_gripper_signal_20260902_r3.json"
+    ROOT / "config/rig_revisions/instaumi_gripper_signal_20260902_r4.json"
 )
 FFMPEG = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg"
 FFPROBE = FFMPEG.with_name("ffprobe")
@@ -378,6 +378,8 @@ def _full_export_available(episode: Path) -> bool:
         raw = handle["metadata/dataset.json"][()]
     metadata = json.loads(raw.decode() if isinstance(raw, bytes) else str(raw))
     profile = json.loads(GRIPPER_PROFILE.read_text(encoding="utf-8"))
+    if profile.get("camera_identity_policy", {}).get("mode") == "provenance_only":
+        return True
     return all(
         metadata.get("devices", {}).get(side, {}).get("serial_number")
         == profile.get("sides", {}).get(side, {}).get("camera_serial")
