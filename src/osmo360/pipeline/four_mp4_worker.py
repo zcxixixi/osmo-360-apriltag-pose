@@ -56,6 +56,18 @@ def status_update(path: Path, stage: str, state: str, **details: Any) -> None:
     atomic_json(path, payload)
 
 
+def initialize_status(path: Path) -> None:
+    atomic_json(
+        path,
+        {
+            "schema_version": "dual-x5-four-mp4-worker-status/1.0",
+            "pipeline_revision": PIPELINE_REVISION,
+            "status": "RUNNING",
+            "stages": {},
+        },
+    )
+
+
 def run(
     command: list[str],
     log: Path,
@@ -462,6 +474,13 @@ def build_chunk_tasks(
 def run_chunks(tasks: list[ChunkTask], budget: dict[str, Any], status: Path) -> None:
     pending = [task for task in tasks if not _valid_metadata(task.output, task.expected)]
     completed = len(tasks) - len(pending)
+    pending_outputs = {task.output for task in pending}
+    total_frames = sum(task.end - task.start + 1 for task in tasks)
+    completed_frames = sum(
+        task.end - task.start + 1
+        for task in tasks
+        if task.output not in pending_outputs
+    )
     status_update(
         status,
         "observation_chunks",
@@ -469,6 +488,9 @@ def run_chunks(tasks: list[ChunkTask], budget: dict[str, Any], status: Path) -> 
         total=len(tasks),
         completed=completed,
         pending=len(pending),
+        total_frames=total_frames,
+        completed_frames=completed_frames,
+        frame_count_semantics="four_video_streams_aggregate",
     )
     environment = _worker_environment(int(budget["threads_per_worker"]))
     with concurrent.futures.ThreadPoolExecutor(
@@ -480,7 +502,9 @@ def run_chunks(tasks: list[ChunkTask], budget: dict[str, Any], status: Path) -> 
         }
         for future in concurrent.futures.as_completed(futures):
             future.result()
+            task = futures[future]
             completed += 1
+            completed_frames += task.end - task.start + 1
             status_update(
                 status,
                 "observation_chunks",
@@ -488,6 +512,9 @@ def run_chunks(tasks: list[ChunkTask], budget: dict[str, Any], status: Path) -> 
                 total=len(tasks),
                 completed=completed,
                 pending=len(tasks) - completed,
+                total_frames=total_frames,
+                completed_frames=completed_frames,
+                frame_count_semantics="four_video_streams_aggregate",
             )
 
 
@@ -723,6 +750,7 @@ def process_pair(root: Path, pair: dict[str, Any], cache_root: Path, budget: dic
     cache_root.mkdir(parents=True, exist_ok=True)
     logs = cache_root / "logs"
     status = cache_root / "status.json"
+    initialize_status(status)
     status_update(status, "identity", "RUNNING")
     hashes = source_hashes(root, pair, cache_root)
     status_update(status, "identity", "PASS", source_sha256=hashes)
@@ -730,6 +758,7 @@ def process_pair(root: Path, pair: dict[str, Any], cache_root: Path, budget: dic
     status_update(status, "sync", "PASS", **sync)
     tasks = build_chunk_tasks(root, pair, cache_root, hashes, sync, budget)
     run_chunks(tasks, budget, status)
+    status_update(status, "dual_lens_observations", "RUNNING")
     dual, gripper = merge_observations(pair, tasks, cache_root, hashes, logs)
     status_update(
         status,
@@ -741,6 +770,7 @@ def process_pair(root: Path, pair: dict[str, Any], cache_root: Path, budget: dic
         full_video_target_frame_scans_per_lens=1,
         chunk_seek_keyframe_overlap_possible=True,
     )
+    status_update(status, "trajectory_tracking", "RUNNING")
     tracking = run_tracking(root, pair, dual, cache_root, budget, logs)
     final = confined_path(
         root,

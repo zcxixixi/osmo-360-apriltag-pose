@@ -5,9 +5,6 @@ produced by two X5 cameras. It does not import INSV and does not invoke the
 Insta360 stitching SDK. The official panorama is therefore no longer a
 localization prerequisite.
 
-This is a new output revision. It does not overwrite or reinterpret the v50
-accepted diagnostic baseline.
-
 ## InstaUMI HDF5 input contract
 
 The native input accepted by the optimized profile is:
@@ -164,15 +161,22 @@ serial/BaseTag/mount-bound jaw calibration produces angle and calibrated jaw
 width while preserving direct, low-confidence one-sided, short-gap recovered,
 and unavailable states.  It never derives a zero from each input episode.
 
-The atomically published CSV revision is:
+The atomically published CSV product is written directly under the dataset:
 
 ```text
-processed/instaumi-csv-v1/
+processed/
 ├── trajectory.csv  # unchanged v8 joint camera trajectory
 ├── gripper.csv     # synchronized left/right opening angle, width and state
 ├── processed.csv   # trajectory and gripper columns joined at v8 timestamps
-└── metadata.csv    # revisions, serials, frames, rate and quality status
+├── metadata.csv    # revisions, serials, frames, rate and quality status
+└── time_alignment.csv  # preserved when already present
 ```
+
+The shell entry shows the active stage, elapsed time, aggregate four-stream
+frame/chunk progress, percentage and ETA in the terminal. After all CSV files
+are published successfully it removes the generated v8 `final/` work tree;
+failed runs retain it for diagnosis. The hidden `.osmo-cache` is retained so a
+repeat run can reuse decoded observations.
 
 Empty opening values are intentional when a visual gap exceeds 0.25 seconds.
 This jaw signal remains diagnostic (`training_ready=0`); the pose CSV retains

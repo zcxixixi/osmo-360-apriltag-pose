@@ -389,20 +389,6 @@ uv sync --extra test
 uv run pytest -q
 ```
 
-### 双夹爪 v50 冻结基线
-
-修改双夹爪定位、姿态融合、左右角色、外参、平滑或三维渲染前，必须先读
-[`docs/DUAL_GRIPPER_V50_BASELINE.md`](docs/DUAL_GRIPPER_V50_BASELINE.md)，并执行：
-
-```bash
-./umi verify
-./.venv/bin/pytest -q
-```
-
-机器可读的当前固定哈希、角色绑定、算法不变量和回归阈值保存在
-`config/baselines/dual_gripper_v50_src_accepted_baseline.json`。旧基线仍绑定历史
-commit，当前 v15/v50 产物不可覆盖；实验必须写入新目录并重新验收。
-
 ## UMI / VLA 数据集封装
 
 视觉解算完成后，用一个 Episode 清单把视频、6DoF、夹爪角度、双机时间偏移和任务文本统一封装：

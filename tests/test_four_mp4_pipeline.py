@@ -8,7 +8,12 @@ import numpy as np
 import pytest
 
 from osmo360.pipeline import dataset, four_mp4
-from osmo360.pipeline.four_mp4_worker import _worker_environment, build_chunk_tasks
+from osmo360.pipeline.four_mp4_worker import (
+    ChunkTask,
+    _worker_environment,
+    build_chunk_tasks,
+    run_chunks,
+)
 from osmo360.pipeline.manifest import ManifestError
 from osmo360.gripper_markers import marker_signature
 from tools.merge_fisheye_observation_chunks import merge_chunks
@@ -30,6 +35,38 @@ def test_bounded_h5_timeline_ignores_only_encoded_video_tail() -> None:
         end_frame=7766,
         stop_after_end_frame=True,
     ) == 16
+
+
+def test_reused_chunk_progress_counts_aggregate_frames(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    tasks = [
+        ChunkTask(
+            side="left",
+            stream=index,
+            start=0,
+            end=99,
+            output=tmp_path / f"chunk-{index}.npz",
+            command=["unused"],
+            log=tmp_path / f"chunk-{index}.log",
+            expected={},
+        )
+        for index in (0, 1)
+    ]
+    monkeypatch.setattr(
+        "osmo360.pipeline.four_mp4_worker._valid_metadata",
+        lambda _path, _expected: True,
+    )
+    status = tmp_path / "status.json"
+
+    run_chunks(tasks, {"threads_per_worker": 1, "cache_workers": 1}, status)
+
+    payload = json.loads(status.read_text(encoding="utf-8"))
+    progress = payload["stages"]["observation_chunks"]
+    assert progress["state"] == "REUSED"
+    assert progress["completed_frames"] == 200
+    assert progress["total_frames"] == 200
+    assert progress["frame_count_semantics"] == "four_video_streams_aggregate"
 
 
 @pytest.mark.parametrize(

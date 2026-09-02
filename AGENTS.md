@@ -7,20 +7,18 @@ or case-variant agent instruction files.
 Use short-lived branches and one-purpose PRs under `docs/DEVELOPMENT.md`; never
 develop directly on `main`.
 
-## Guarded v50 baseline
+## Guarded accepted baselines
 
 Before changing localization, calibration, fusion, role mapping, world frames,
 hardware extrinsics, smoothing, timeline export, 3-D rendering, or UMI export:
 
-1. Read `docs/DUAL_GRIPPER_V50_BASELINE.md` and
-   `config/baselines/dual_gripper_v50_src_accepted_baseline.json`.
-2. Run `./umi verify`.
-3. After the change, run the focused check, the real-data path, `./umi verify`,
+1. Run `./umi verify` for the currently registered accepted baselines.
+2. After the change, run the focused check, the real-data path, `./umi verify`,
    and `./.venv/bin/pytest -q`.
 
-The accepted v15/v50 artifacts and `assets/gripper/` meshes are immutable.
-Never overwrite them or change pinned hashes. New experiments use a new
-version/output directory. If the verifier fails, stop and report the mismatch.
+Accepted artifacts and `assets/gripper/` meshes are immutable. Never overwrite
+them or change pinned hashes. New experiments use a new version/output
+directory. If a currently registered verifier fails, stop and report the mismatch.
 
 New product code belongs in `src/osmo360/`, offline utilities in `tools/`,
 compatibility launchers in `bin/`, and focused documentation in `docs/`. Do not
