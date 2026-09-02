@@ -6,7 +6,11 @@ from pathlib import Path
 import numpy as np
 
 from osmo360.ffmpeg_runtime import project_ffmpeg_runtime
-from osmo360.pipeline.ffmpeg_gray_pipe import FFmpegGrayPipe, probe_video_stream
+from osmo360.pipeline.ffmpeg_gray_pipe import (
+    FFmpegGrayPipe,
+    FFmpegYUV420Pipe,
+    probe_video_stream,
+)
 
 
 def _video(tmp_path: Path) -> Path:
@@ -32,7 +36,14 @@ def _read(pipe: FFmpegGrayPipe) -> np.ndarray:
 def test_ffmpeg_gray_pipe_stride_and_seek_are_frame_exact(tmp_path: Path):
     video = _video(tmp_path)
     info = probe_video_stream(video)
-    assert info == type(info)(width=64, height=48, fps=30.0, frame_count=30)
+    assert info == type(info)(
+        width=64,
+        height=48,
+        fps=30.0,
+        frame_count=30,
+        pixel_format="yuv420p",
+        color_range=None,
+    )
 
     full = _read(FFmpegGrayPipe(
         video,
@@ -85,3 +96,36 @@ def pipe_provenance(video: Path) -> dict[str, object]:
     with pipe:
         pipe.read()
     return provenance
+
+
+def test_yuv420_pipe_preserves_exact_gray_luma_and_exposes_chroma(tmp_path: Path):
+    video = _video(tmp_path)
+    gray = _read(
+        FFmpegGrayPipe(
+            video,
+            width=64,
+            height=48,
+            fps=30.0,
+            start_frame=4,
+            end_frame=12,
+            frame_stride=2,
+            decoder_threads=1,
+        )
+    )
+    pipe = FFmpegYUV420Pipe(
+        video,
+        width=64,
+        height=48,
+        fps=30.0,
+        start_frame=4,
+        end_frame=12,
+        frame_stride=2,
+        decoder_threads=1,
+    )
+    with pipe:
+        frames = [pipe.read() for _ in range(pipe.expected_frames)]
+
+    assert np.array_equal(np.asarray([frame.luma for frame in frames]), gray)
+    assert frames[0].chroma_u.shape == (24, 32)
+    assert frames[0].chroma_v.shape == (24, 32)
+    assert pipe.provenance["pixel_format"] == "yuv420p_shared_luma_chroma"

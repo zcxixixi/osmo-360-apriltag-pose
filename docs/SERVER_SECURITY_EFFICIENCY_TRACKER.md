@@ -29,8 +29,8 @@
 | 审核网关提交 | 本地安全代码 `3e5a0b3`、unit `2fd08c3`；服务器等价 `a6f22f2`、`f0ffecd` |
 | 服务器无缓存耗时 | 空闲服务器 v8 为 5.87 s，平均 1268% CPU，峰值 RSS 261,348 KiB、无 swap；此前无竞争 v5 基线为 6.49 s |
 | 输出 | 300/300 帧具备双侧数值位姿；266 帧联合可信，263 帧双侧实测，34 帧长间隔不可信，`SELF_CALIBRATED_PASS` |
-| CSV 产品入口 | `bin/process_instaumi_dataset.sh DATASET_ROOT`；原子发布 `processed/instaumi-csv-v1/{trajectory,gripper,processed,metadata}.csv`，夹爪信号保持诊断级 `training_ready=0` |
-| 回归测试 | 当前本地/服务器完整测试均为 288 passed/8 skipped；此前服务器启用正式 v7 缓存回归时 283 passed/7 skipped，严格验证左侧仅 frame 168/360/420 命中 handoff 门、右侧 0、300/300 数值位姿 |
+| CSV 产品入口 | `bin/process_instaumi_dataset.sh DATASET_ROOT`；四文件原子发布到 `processed/{trajectory,gripper,processed,metadata}.csv`，保留 `time_alignment.csv`，夹爪信号保持诊断级 `training_ready=0` |
+| 回归测试 | 当前本地/服务器完整测试均为 298 passed/8 skipped；此前服务器启用正式 v7 缓存回归时 283 passed/7 skipped，严格验证左侧仅 frame 168/360/420 命中 handoff 门、右侧 0、300/300 数值位姿 |
 | IMU 状态 | 当前 `dataset.h5` 共享 IMU 样本数为 0，左右独立流缺失；v8 明确 `UNAVAILABLE_NO_SAMPLES`，34 个长间隔帧回退视觉 `INTERPOLATED_UNTRUSTED`，不伪造 IMU |
 | 最新已发视频 | v8 `processed_joint_trajectory_30hz_tag_map_front_above_v8.mp4`，固定 `tag-map-front-above`，SHA-256 `fb12d243...c9a48` |
 | 受管服务实际 unit | `osmo-visualization.service`、`osmo-alignment-review.service`（认证网关）、`osmo-alignment-review-backend.service`；三者均为 user unit，active/enabled、`NRestarts=0` |
@@ -70,6 +70,7 @@
 | EFF-005 | 低 | IN_PROGRESS | `:7869 /api/items` 仍同步调用旧源码的 `store.scan()`；新后端冷启动（含 Python/OpenCV 与首次扫描）约 8 s。生产热态 48 条记录连续 5 次为 11.7–28.4 ms，网关 12.8 MiB/1 task、后端 32.7 MiB/1 task，较先前一次 3.06 s 热请求明显改善但尚未证明持久。 | 保持认证/线程边界，下一轮跨小时采样冷/热分位；将无 Git 旧源码迁入受管分支后再实现带输入指纹失效的缓存，不能用永久缓存隐藏新数据。 |
 | EFF-006 | 低 | OPEN | `:7865` 目前保存 50 个项目、总计 4.2 GiB（文件字节 4,486,238,512），单项目中位约 69.6 MiB、最大约 447.5 MiB；没有保留期限、容量配额或清理工作流。当前磁盘仍有 1.4 TiB，项目列表 50 次实测中位 3.55 ms、p95 8.87 ms，暂非实时瓶颈。 | 在不自动删除正式审阅数据的前提下增加只读容量告警和按项目创建时间/最后访问时间的清理候选报告；真正删除必须经用户确认并提供可恢复窗口。 |
 | EFF-007 | 低 | RESOLVED | 此前定位 v50 外部冻结文件的 `find /home/ps` 遗留在 D 状态约 2 小时，持续扫盘并占约 1.1% CPU；父 shell 已孤化到 PID 1。 | 精确核对命令、父进程、cwd、I/O 与业务进程后仅向该搜索及父 shell 发送 TERM，进程已退出；三条真实 ORB-SLAM 任务未触碰。后续禁止无边界 home 扫描，优先使用已知目录与 `rg --files`。 |
+| EFF-008 | 高 | RESOLVED | 7,767 帧样例原先轨迹完成后再次彩色解码两路 1920 后视视频，完整入口 3:44.01；缓存 sidecar 还漏写顶层 decoder transport，导致 chunk 无法稳定复用。 | 后视流改为一次 `yuvj420p` 解码：原生 Y 平面继续供 AprilTag/LK，固定 ROI 色度只供黄点三联检测并随 observation chunk 缓存；真实 Y 与旧 gray8 连续帧逐字节一致、轨迹 SHA 不变。最终代码无缓存完整入口 2:30.69，平均 755% CPU、峰值 275,216 KiB、无 swap；热缓存 3.60 s。 |
 | REL-002 | 低 | RESOLVED | 本机不带隔离环境变量运行 pytest 时会自动加载 ROS Humble 的 `launch_testing` 插件，并因跨 Python 环境缺少 `yaml` 在收集前失败。 | `pyproject.toml` 明确屏蔽 7 个宿主 ROS/ament pytest entry point；本地和服务器均以普通 `pytest -q` 得到 `247 passed, 7 skipped`。提交本地 `598175b`、服务器 `61c1d02`。 |
 | REL-003 | 低 | DEFERRED | CPU 服务器未安装 Chrome/Chromium，因此可选的服务器端 WebGL 离线渲染不可用；四 MP4 轨迹审阅使用 Python/OpenCV，不受影响，`:7865` 也只在客户端浏览器渲染。原实现硬编码 `/usr/bin/google-chrome`。 | 已支持 `--chrome`/`OSMO_CHROME_BINARY` 与常见路径探测，缺失时启动前明确失败；本地前后视频 SHA 完全相同。仅在确需服务器 WebGL 时再固定、校验并安装项目级 Chromium，避免当前无收益地增加体积和攻击面。提交本地 `29f91f4`、服务器 `78c734c`。 |
 
@@ -330,6 +331,15 @@
 - CPU 服务器续跑成功，最终 `processed/instaumi-csv-v1` 含 7,767 行、`29.969730572 Hz`；轨迹为 `SELF_CALIBRATED_PASS`、7,767/7,767 行 `joint_has_pose=true`、世界 `session_grid_A`、子坐标 `hand_camera_flu_back_x`。夹爪 r2 左侧可用 6,770/7,767、右侧 2,682/7,767；长遮挡分别保留 997/5,085 个 `UNAVAILABLE` 空值，不伪造开合。
 - 在轨迹 observation cache 已生成的情况下，完整入口实测 wall `3:44.01`、平均 CPU `685%`、峰值 RSS `853,712 KiB`、无 swap；其中轨迹合并/求解约 2 分钟，1920 夹爪约 1 分 44 秒。完全冷启动预计约 5–6 分钟，需以后续精确无缓存基准替换估算。此前两次失败运行分别暴露并验证了 worker 切块仍按源帧数、merge 仍按源尾帧验收的边界，均未覆盖正式输入或删除已完成缓存。
 - 新增有界尾帧、缺帧/越界拒绝、H5 timeline 切块、timeline-aware chunk merge、强制 1920 back 源等回归。聚焦测试服务器/本地均为 28 passed，完整测试两端均为 `294 passed, 8 skipped`，compileall 和 `git diff --check` 通过。两端 `./umi verify` 仍只因用户已授权忽略的 `/home/cenxi/.../dual_gripper_claw_to_claw_action_v50_fixed_timeline.json` 外部冻结文件缺失而失败，v50 受保护文件未修改。`final/dual-x5-four-mp4-cpu-v8` 是可恢复轨迹的 manifest/status/tracking 工作制品，用户 CSV 仍只发布到 `processed/instaumi-csv-v1`，本轮未自动删除正式中间制品。
+
+### 2026-09-02 / Cycle 020
+
+- 解决 260 s 样例的重复解码：两路 `*_back.mp4` 由锁定 FFmpeg 一次输出原生范围 `yuvj420p`。完整 Y 平面继续原样供 AprilTag/光流，固定 `[450,950,1470,1800]` ROI 的 U/V 仅用于物理黄点三联检测；标记点、双侧夹角和逐帧索引随 trajectory observation chunk 保存并合并，CSV 导出直接读取缓存。两路 `*_forward.mp4` 仍只取 gray8。真实视频连续 8 帧的新 Y 与旧 gray8 逐字节完全相同；最终新旧 `joint_trajectory.csv` SHA-256 均为 `b743248d...ca3e31`。
+- 新增夹爪修订 `instaumi-pair01-gripper-signal-20260902-r3`，锁定 1920 后视、YUV/HSV 阈值、固定 ROI、`adaptive-black-pad` 三联选择和 `0..80°` 物理夹角范围。真实 7,767 帧正式结果：左侧直接测量 6,870、短缺口恢复后可用 7,025（90.45%）；右侧直接测量 6,958、可用 7,037（90.60%），较 r2 右侧 2,682/7,767 明显改善；仍保持 `training_ready=0`，长缺口不伪造。
+- 修复两层复用身份：chunk sidecar 明确记录 decoder transport；lens merge 同时校验夹爪 marker signature，避免复用只含轨迹的旧 lens-0 NPZ；H5 哈希既保留顶层字段也可从 processing signature 严格回读。首次真实运行由此发现并修复了 H5 顶层哈希漏传和 lens merge 漏校验，最终代码重新完整无缓存验证通过。
+- 最终 CPU 服务器无缓存完整入口（四路轨迹 + 夹爪 + 四 CSV）为 `2:30.69`，user/system `1004.64/133.12 s`、平均 CPU `755%`、峰值 RSS `275,216 KiB`、20 major faults、无 swap；热缓存正式入口为 `3.60 s`、平均 CPU `529%`、峰值 RSS `169,936 KiB`。因此 260 s 视频的可靠预算约 151 s，而不是旧流程的 224 s；四路并行，不按 4×260 s 累加。
+- CSV 改为直接原子发布到原数据集 `processed/{trajectory,gripper,processed,metadata}.csv`，保留已有 `time_alignment.csv`；仅在旧 `processed/instaumi-csv-v1` 内部严格只含四个已知生成文件时清理旧重复目录。正式目录现有五个文件，旧子目录不存在；7,767 行全部 `joint_has_pose=true` 且双侧位姿值有限，`29.969730572 Hz`、`SELF_CALIBRATED_PASS`。
+- 本地/服务器完整测试均为 `298 passed, 8 skipped`，聚焦回归 33 passed，真实 full-range Y 精确回归、合成 YUV 三联、marker chunk merge、缓存导出不打开视频、直接发布/保留既有文件均通过。两次失败或中间基准目录均按精确路径清理；用户澄清应保留的是原数据集 `processed/`，最终又在原目录热发布一次并保留，独立 benchmark 目录已清理。`./umi verify` 仍只因用户已授权忽略的外部 v50 冻结文件缺失而失败，受保护文件未修改。
 
 ## 最近一次流水线版本变更验证
 

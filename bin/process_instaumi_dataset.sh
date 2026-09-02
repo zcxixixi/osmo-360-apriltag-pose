@@ -30,5 +30,5 @@ done
 "$REPO_ROOT/.venv/bin/python" -m osmo360.datasets.instaumi_processed_export \
     "$DATASET_ROOT"
 
-printf 'Processed CSV files: %s\n' \
-    "$DATASET_ROOT/processed/instaumi-csv-v1"
+printf 'Processed CSV files: %s/{trajectory,gripper,processed,metadata}.csv\n' \
+    "$DATASET_ROOT/processed"
