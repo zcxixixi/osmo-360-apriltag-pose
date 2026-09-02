@@ -1,0 +1,63 @@
+{
+  "schema_version": "instaumi-imu-rotation-baseline/1.0",
+  "revision": "x5-kmdgp-kmurq-visual-gyro-20260902-r1",
+  "transform_convention": "T_target_source",
+  "target_frame": "hand_camera_flu_back_x",
+  "source_frame": "imu",
+  "scope": "gyroscope_rotation_only",
+  "translation_status": "unobservable_not_used",
+  "timestamp_policy": {
+    "reference": "dataset_start",
+    "alignment": "interpolate_by_h5_timestamp_ns",
+    "fixed_time_offset_s": 0.0,
+    "note": "The capture-local fitted time offsets are not reusable hardware extrinsics."
+  },
+  "source_evidence": {
+    "dataset_id": "instaumi_20260901_165007",
+    "dataset_h5_sha256": "1ec7a3ea6a0b05710ea21791d945776e3047cb3cd0708bdc6970215fc209ea6f",
+    "tracking_report_sha256": "1c7bcb2e5ffe8285551cce6fbdeed73aace355e616c908283cdaddea0506962b",
+    "pipeline_revision": "dual-x5-four-mp4-cpu-v10",
+    "validation": "VISUAL_SELF_CALIBRATED_PASS",
+    "cross_side_extrinsic_disagreement_deg": 3.5825
+  },
+  "devices": {
+    "IAHEA2606KMDGP": {
+      "rig_side": "left",
+      "T_hand_camera_flu_back_x_imu_rotation_only": [
+        [-0.0024136451042349183, 0.0008367069492771426, -0.9999967371140729, 0.0],
+        [0.03366257980627367, 0.9994329695971369, 0.0007549854534846974, 0.0],
+        [0.9994303402629406, -0.03366064770217217, -0.0024404422085335664, 0.0],
+        [0.0, 0.0, 0.0, 1.0]
+      ],
+      "source_quaternion_xyzw": [
+        0.012184288111764332,
+        0.7078642272551116,
+        -0.011621459660522014,
+        -0.7061478036297302
+      ],
+      "holdout_rotation_error_deg": {
+        "median": 0.2043612707381091,
+        "p95": 1.8514031886814404
+      }
+    },
+    "IAHEA2606KMURQ": {
+      "rig_side": "right",
+      "T_hand_camera_flu_back_x_imu_rotation_only": [
+        [-0.016284436865592167, 0.003963588418647029, -0.9998595436774199, 0.0],
+        [-0.027183813830061743, 0.9996207445419141, 0.004405377069250031, 0.0],
+        [0.9994978025896922, 0.027251734776290795, -0.016170515454357715, 0.0],
+        [0.0, 0.0, 0.0, 1.0]
+      ],
+      "source_quaternion_xyzw": [
+        -0.008144538766122438,
+        0.7127544627818657,
+        0.01110379292540091,
+        -0.7012784383221055
+      ],
+      "holdout_rotation_error_deg": {
+        "median": 0.17354946557814976,
+        "p95": 1.244667806239651
+      }
+    }
+  }
+}

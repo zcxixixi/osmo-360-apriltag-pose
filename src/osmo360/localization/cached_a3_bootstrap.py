@@ -828,10 +828,15 @@ def write_joint_pose_csv(
     imu_assisted_side_frames = {"left": 0, "right": 0}
     trusted_imu_assisted_side_frames = {"left": 0, "right": 0}
     untrusted_imu_assisted_side_frames = {"left": 0, "right": 0}
+    accelerometer_assisted_side_frames = {"left": 0, "right": 0}
     visual_long_gap_fallback_side_frames = {"left": 0, "right": 0}
     imu_bridge_maximum_sample_gap_s = {"left": 0.0, "right": 0.0}
     imu_bridge_maximum_endpoint_closure_deg = {"left": 0.0, "right": 0.0}
+    accelerometer_bridge_maximum_deviation_m = {"left": 0.0, "right": 0.0}
     imu_fallback_reasons: dict[str, dict[str, int]] = {"left": {}, "right": {}}
+    accelerometer_fallback_reasons: dict[str, dict[str, int]] = {
+        "left": {}, "right": {}
+    }
     paired_timestamp_deltas_s: list[float] = []
     imu_streams = {} if imu_streams is None else imu_streams
 
@@ -981,6 +986,33 @@ def write_joint_pose_csv(
                             imu_bridge_maximum_endpoint_closure_deg[side],
                             bridge.endpoint_closure_deg,
                         )
+                        try:
+                            acceleration_bridge = stream.bridge_positions(
+                                float(series_times[lower]),
+                                series_positions[lower],
+                                valid_series[side][2][lower],
+                                float(series_times[upper]),
+                                series_positions[upper],
+                                valid_series[side][2][upper],
+                                np.asarray([now_s]),
+                            )
+                        except ImuAssistanceUnavailable as exc:
+                            reason = str(exc)
+                            accelerometer_fallback_reasons[side][reason] = (
+                                accelerometer_fallback_reasons[side].get(reason, 0) + 1
+                            )
+                        else:
+                            position = acceleration_bridge.positions_m[0]
+                            measurement_source = (
+                                "visual_endpoint_anchored_accelerometer_translation"
+                                "+calibrated_gyro_bridge:"
+                                f"source={source_status}"
+                            )
+                            accelerometer_assisted_side_frames[side] += 1
+                            accelerometer_bridge_maximum_deviation_m[side] = max(
+                                accelerometer_bridge_maximum_deviation_m[side],
+                                acceleration_bridge.maximum_deviation_from_linear_m,
+                            )
                 resolved[side] = {
                     "camera_x_m": f"{position[0]:.9f}",
                     "camera_y_m": f"{position[1]:.9f}",
@@ -1041,6 +1073,33 @@ def write_joint_pose_csv(
                         imu_bridge_maximum_endpoint_closure_deg[side],
                         bridge.endpoint_closure_deg,
                     )
+                    try:
+                        acceleration_bridge = stream.bridge_positions(
+                            float(series_times[lower]),
+                            series_positions[lower],
+                            valid_series[side][2][lower],
+                            float(series_times[upper]),
+                            series_positions[upper],
+                            valid_series[side][2][upper],
+                            np.asarray([now_s]),
+                        )
+                    except ImuAssistanceUnavailable as exc:
+                        reason = str(exc)
+                        accelerometer_fallback_reasons[side][reason] = (
+                            accelerometer_fallback_reasons[side].get(reason, 0) + 1
+                        )
+                    else:
+                        position = acceleration_bridge.positions_m[0]
+                        measurement_source = (
+                            "visual_endpoint_anchored_accelerometer_translation"
+                            "+calibrated_gyro_bridge:"
+                            f"source={source_status}"
+                        )
+                        accelerometer_assisted_side_frames[side] += 1
+                        accelerometer_bridge_maximum_deviation_m[side] = max(
+                            accelerometer_bridge_maximum_deviation_m[side],
+                            acceleration_bridge.maximum_deviation_from_linear_m,
+                        )
             resolved[side] = {
                 "camera_x_m": f"{position[0]:.9f}",
                 "camera_y_m": f"{position[1]:.9f}",
@@ -1156,6 +1215,16 @@ def write_joint_pose_csv(
                 imu_bridge_maximum_endpoint_closure_deg
             ),
             "fallback_reasons": imu_fallback_reasons,
+            "accelerometer_assisted_side_frames": (
+                accelerometer_assisted_side_frames
+            ),
+            "accelerometer_assisted_frames": sum(
+                accelerometer_assisted_side_frames.values()
+            ),
+            "accelerometer_bridge_maximum_deviation_from_linear_m": (
+                accelerometer_bridge_maximum_deviation_m
+            ),
+            "accelerometer_fallback_reasons": accelerometer_fallback_reasons,
         },
         "world_frame": "session_grid_A",
         "map_id": map_id,

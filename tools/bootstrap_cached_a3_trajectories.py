@@ -189,7 +189,7 @@ def main() -> int:
     }
     passed = all(gates.values())
     report = {
-        "schema_version": "cached-a3-self-calibrated-trajectories/1.4",
+        "schema_version": "cached-a3-self-calibrated-trajectories/1.5",
         "pair_id": args.pair_id,
         "status": "SELF_CALIBRATED_PASS" if passed else "SELF_CALIBRATED_GATE_FAILED",
         "claims": {
@@ -203,7 +203,15 @@ def main() -> int:
             "calibrated_per_side_imu_visual_attitude_gate_enabled": bool(
                 imu_streams
             ),
-            "accelerometer_translation_integration_used": False,
+            "accelerometer_translation_integration_used": (
+                trajectories["joint"]["imu_assistance"]
+                ["accelerometer_assisted_frames"] > 0
+            ),
+            "accelerometer_translation_policy": (
+                "timestamp-aligned specific force shapes only internal visual gaps; "
+                "mean world specific force is removed; both visual positions remain "
+                "exact metric anchors; deviation is capped at 0.15 m"
+            ),
             "visual_tracking_passes": visual_tracking_passes,
             "maximum_trusted_interpolation_gap_s": args.maximum_interpolation_gap_s,
             "absolute_visual_motion_limits": {
@@ -217,12 +225,14 @@ def main() -> int:
                 MINIMUM_TEMPORAL_RECOVERY_INLIER_TAGS
             ),
             "short_gap_policy": (
-                "visual position interpolation plus calibrated per-side gyro bridge "
-                "when available; otherwise visual position interpolation and SLERP"
+                "visual endpoint-anchored accelerometer translation plus calibrated "
+                "per-side gyro bridge when available; otherwise visual position "
+                "interpolation and SLERP"
             ),
             "long_gap_policy": (
-                "calibrated per-side gyro bridge when available; otherwise visual "
-                "INTERPOLATED_UNTRUSTED; numeric pose retained with explicit confidence"
+                "endpoint-anchored accelerometer/gyro bridge remains explicitly "
+                "untrusted; otherwise visual INTERPOLATED_UNTRUSTED; numeric pose "
+                "retained with explicit confidence"
             ),
         },
         "calibration": calibration,
