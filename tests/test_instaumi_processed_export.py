@@ -24,13 +24,16 @@ def _touch_inputs(root: Path) -> None:
 def test_signal_profile_is_hash_and_serial_bound() -> None:
     payload, profiles = export.load_profile()
 
-    assert payload["revision_id"] == "instaumi-pair01-gripper-signal-20260902-r2"
+    assert payload["revision_id"] == "instaumi-pair01-gripper-signal-20260902-r3"
     assert payload["prefer_h5_preview"] is False
+    assert payload["prefer_fused_trajectory_marker_cache"] is True
     assert payload["processing_width_px"] == 1920
     assert profiles["left"].camera_serial == "IAHEA2606M5WSK"
     assert profiles["right"].camera_serial == "IAHEA2606KKUKF"
     assert profiles["left"].base_tag_id == 2
     assert profiles["right"].base_tag_id == 3
+    assert profiles["right"].included_angle_range == (0.0, 80.0)
+    assert profiles["right"].dot_selection == "adaptive-black-pad"
     assert profiles["left"].closed_reference_deg > 0
     assert profiles["right"].width_m[-1] > profiles["right"].width_m[0]
 
@@ -44,9 +47,43 @@ def test_nearest_indices_returns_error_without_extrapolation_failure() -> None:
     assert error.tolist() == pytest.approx([0.049, 0.049, 0.2])
 
 
+def test_cached_yuv_markers_avoid_a_second_video_decode(tmp_path: Path) -> None:
+    _, profiles = export.load_profile()
+    cache = tmp_path / "right-lens-0.npz"
+    left = np.asarray([(800, 1200), (750, 1350), (700, 1500)], dtype=np.float32)
+    right = np.asarray([(1120, 1200), (1170, 1350), (1220, 1500)], dtype=np.float32)
+    angle = export.included_jaw_angle(left, right)
+    np.savez_compressed(
+        cache,
+        gripper_frame_index=np.arange(30, dtype=np.int32),
+        gripper_left_points_px=np.repeat(left[None], 30, axis=0),
+        gripper_right_points_px=np.repeat(right[None], 30, axis=0),
+        gripper_included_angle_deg=np.full(30, angle, dtype=np.float32),
+    )
+    source = export.SideInput(
+        side="right",
+        video=tmp_path / "intentionally-missing.mp4",
+        video_kind="fused_trajectory_yuv420_roi_cache",
+        timestamp_s=np.arange(30, dtype=np.float64) / 30,
+        marker_cache=cache,
+    )
+
+    signal = export._analyze_side(
+        source,
+        profiles["right"],
+        processing_width=1920,
+        maximum_gap_s=0.25,
+    )
+
+    assert signal.source_frame.tolist() == list(range(30))
+    assert signal.measured_ratio == 1.0
+    assert np.isfinite(signal.opening_deg).all()
+
+
 def test_h5_preview_missing_falls_back_to_required_back_videos(tmp_path: Path) -> None:
     _touch_inputs(tmp_path)
     metadata = {
+        "dataset_id": "instaumi_test_000001",
         "video": {
             "left": {"path": "video/Left.mp4", "sha256": "0" * 64},
             "right": {"path": "video/Right.mp4", "sha256": "0" * 64},
@@ -77,6 +114,7 @@ def test_profile_can_force_full_resolution_back_videos(tmp_path: Path) -> None:
     for side in ("Left", "Right"):
         (tmp_path / "video" / f"{side}.mp4").write_bytes(b"preview")
     metadata = {
+        "dataset_id": "instaumi_test_000001",
         "video": {
             "left": {"path": "video/Left.mp4", "sha256": "0" * 64},
             "right": {"path": "video/Right.mp4", "sha256": "0" * 64},
@@ -108,6 +146,10 @@ def test_export_writes_synchronized_csv_revision_without_removing_existing_files
     processed = tmp_path / "processed"
     processed.mkdir()
     (processed / "time_alignment.csv").write_text("existing\n", encoding="utf-8")
+    legacy = processed / "instaumi-csv-v1"
+    legacy.mkdir()
+    for name in export.CSV_NAMES:
+        (legacy / name).write_text("old\n", encoding="utf-8")
     source_trajectory = tmp_path / "source-trajectory.csv"
     trajectory_fields = [
         "frame",
@@ -188,15 +230,11 @@ def test_export_writes_synchronized_csv_revision_without_removing_existing_files
 
     result = export.export_processed_dataset(tmp_path)
 
-    output = processed / "instaumi-csv-v1"
+    output = processed
     assert result["status"] == "COMPLETE"
     assert (processed / "time_alignment.csv").read_text(encoding="utf-8") == "existing\n"
-    assert sorted(path.name for path in output.iterdir()) == [
-        "gripper.csv",
-        "metadata.csv",
-        "processed.csv",
-        "trajectory.csv",
-    ]
+    assert all((output / name).is_file() for name in export.CSV_NAMES)
+    assert not legacy.exists()
     with (output / "gripper.csv").open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     assert len(rows) == 3
@@ -208,7 +246,7 @@ def test_export_writes_synchronized_csv_revision_without_removing_existing_files
         combined = list(csv.DictReader(handle))
     assert combined[2]["left_camera_x_m"] == "3.0"
     assert combined[2]["right_opening_width_m"] == "0.006000000"
-    assert not list(processed.glob(".instaumi-csv-v1-*"))
+    assert not list(processed.glob(".instaumi-csv-v2-direct-*"))
 
 
 def test_export_rejects_processed_symlink(

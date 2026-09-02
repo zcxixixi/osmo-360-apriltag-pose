@@ -17,10 +17,11 @@ import cv2
 import h5py
 import numpy as np
 
+from osmo360.gripper_markers import marker_signature
 from osmo360.paths import ROOT
 from osmo360.pipeline.four_mp4 import PIPELINE_REVISION
 from osmo360.pipeline.instaumi import is_instaumi_dataset, load_instaumi_config
-from osmo360.pipeline.manifest import ManifestError, confined_path, publish_directory, sha256
+from osmo360.pipeline.manifest import ManifestError, confined_path, sha256
 from osmo360.visualization.render_gripper_force_angle_demo import (
     FrameObservation,
     apply_one_sided_opening_fallback,
@@ -32,10 +33,12 @@ from osmo360.visualization.render_gripper_force_angle_demo import (
 )
 
 
-EXPORT_REVISION = "instaumi-csv-v1"
+EXPORT_REVISION = "instaumi-csv-v2-direct"
+LEGACY_EXPORT_REVISION = "instaumi-csv-v1"
+CSV_NAMES = ("trajectory.csv", "gripper.csv", "processed.csv", "metadata.csv")
 PROFILE_PATH = (
     ROOT
-    / "config/rig_revisions/instaumi_pair01_gripper_signal_20260902_r2.json"
+    / "config/rig_revisions/instaumi_pair01_gripper_signal_20260902_r3.json"
 )
 SIDES = ("left", "right")
 
@@ -62,6 +65,7 @@ class SideInput:
     video: Path
     video_kind: str
     timestamp_s: np.ndarray
+    marker_cache: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -101,6 +105,14 @@ def load_profile(path: Path = PROFILE_PATH) -> tuple[dict[str, Any], dict[str, S
         raise ManifestError("gripper signal profile must use a 0.25 s recovery limit")
     if set(payload.get("sides", {})) != set(SIDES):
         raise ManifestError("gripper signal profile must define exactly left and right")
+    marker_detector = payload.get("marker_detector", {})
+    if payload.get("prefer_fused_trajectory_marker_cache", False):
+        if marker_detector.get("cache_signature") != marker_signature():
+            raise ManifestError(
+                "gripper signal profile cache signature does not match the implementation"
+            )
+    detector_range_override = marker_detector.get("included_angle_range_deg")
+    dot_selection_override = marker_detector.get("dot_selection")
 
     profiles: dict[str, SideProfile] = {}
     for side in SIDES:
@@ -141,7 +153,14 @@ def load_profile(path: Path = PROFILE_PATH) -> tuple[dict[str, Any], dict[str, S
             or robot.get("gripper_width_verified") is not True
         ):
             raise ManifestError(f"{side} has an invalid gripper width calibration")
-        included = tuple(map(float, detector.get("included_angle_range_deg", [])))
+        included = tuple(
+            map(
+                float,
+                detector_range_override
+                if detector_range_override is not None
+                else detector.get("included_angle_range_deg", []),
+            )
+        )
         if len(included) != 2 or included[0] >= included[1]:
             raise ManifestError(f"{side} has an invalid included-angle range")
         profiles[side] = SideProfile(
@@ -152,7 +171,11 @@ def load_profile(path: Path = PROFILE_PATH) -> tuple[dict[str, Any], dict[str, S
             angle_revision_sha256=angle_sha,
             detector_mode="physical-marker-triad",
             included_angle_range=included,
-            dot_selection=str(detector.get("dot_selection", "fixed-bands")),
+            dot_selection=str(
+                dot_selection_override
+                if dot_selection_override is not None
+                else detector.get("dot_selection", "fixed-bands")
+            ),
             closed_reference_deg=float(
                 angle_hardware["closed_reference_included_angle_deg"]
             ),
@@ -177,11 +200,93 @@ def _safe_dataset_file(root: Path, relative: str, *, field: str) -> Path:
     return path
 
 
+def _marker_cache_paths(
+    root: Path,
+    pair_id: str,
+    profile: dict[str, Any],
+) -> dict[str, Path]:
+    if not profile.get("prefer_fused_trajectory_marker_cache", False):
+        return {}
+    index_path = confined_path(
+        root,
+        "final",
+        PIPELINE_REVISION,
+        "pairs",
+        pair_id,
+        "cache-index.json",
+        field="four-MP4 cache index",
+    )
+    if not index_path.is_file():
+        return {}
+    try:
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ManifestError(f"invalid four-MP4 cache index: {index_path}") from exc
+    mapping = index.get("gripper_marker_cache")
+    if not isinstance(mapping, dict) or not mapping:
+        return {}
+    expected_signature = marker_signature()
+    if index.get("gripper_marker_signature") != expected_signature:
+        raise ManifestError("four-MP4 gripper marker cache signature mismatch")
+    h5_digest = sha256(root / "dataset.h5")
+    result: dict[str, Path] = {}
+    for side in SIDES:
+        raw = mapping.get(side)
+        if not isinstance(raw, str) or not raw:
+            raise ManifestError(f"four-MP4 gripper marker cache is missing {side}")
+        raw_candidate = Path(raw)
+        if not raw_candidate.is_absolute():
+            raw_candidate = root / raw_candidate
+        try:
+            relative = raw_candidate.absolute().relative_to(root)
+        except ValueError:
+            # Dataset directories are sometimes moved after processing.  The
+            # cache layout itself is deterministic, so relocate only to the
+            # exact in-dataset lens-0 path rather than trusting stale absolutes.
+            candidate = confined_path(
+                root,
+                ".osmo-cache",
+                pair_id,
+                PIPELINE_REVISION,
+                pair_id,
+                "observations",
+                side,
+                "lens-0-corners.npz",
+                field=f"{side} relocated gripper marker cache",
+            )
+        else:
+            candidate = confined_path(
+                root,
+                *relative.parts,
+                field=f"{side} gripper marker cache",
+            )
+        if not candidate.is_file() or candidate.is_symlink():
+            raise ManifestError(f"{side} gripper marker cache is missing: {candidate}")
+        metadata_path = candidate.with_suffix(".json")
+        if not metadata_path.is_file() or metadata_path.is_symlink():
+            raise ManifestError(f"{side} gripper marker cache sidecar is missing")
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if metadata.get("gripper_marker_signature") != expected_signature:
+            raise ManifestError(f"{side} gripper marker cache signature mismatch")
+        metadata_h5_digest = metadata.get("timeline_h5_sha256")
+        if metadata_h5_digest is None:
+            metadata_h5_digest = metadata.get("processing_signature", {}).get(
+                "timeline_h5_sha256"
+            )
+        if metadata_h5_digest != h5_digest:
+            raise ManifestError(f"{side} gripper marker cache H5 identity mismatch")
+        result[side] = candidate
+    return result
+
+
 def load_side_inputs(root: Path, profile: dict[str, Any]) -> dict[str, SideInput]:
     h5_path = root / "dataset.h5"
     result: dict[str, SideInput] = {}
     with h5py.File(h5_path, "r") as handle:
         metadata = json.loads(_decode_text(handle["/metadata/dataset.json"][()]))
+        pair_id = str(metadata.get("dataset_id", ""))
+        if not pair_id:
+            raise ManifestError("InstaUMI metadata.dataset_id is missing")
         for side in SIDES:
             timestamp_ns = np.asarray(
                 handle[f"/sensor/camera/{side}/timestamp_ns"], dtype=np.int64
@@ -230,7 +335,117 @@ def load_side_inputs(root: Path, profile: dict[str, Any]) -> dict[str, SideInput
                 video_kind=kind,
                 timestamp_s=timestamp_ns.astype(np.float64) / 1e9,
             )
+    marker_caches = _marker_cache_paths(root, pair_id, profile)
+    for side, cache in marker_caches.items():
+        source = result[side]
+        result[side] = SideInput(
+            side=source.side,
+            video=source.video,
+            video_kind="fused_trajectory_yuv420_roi_cache",
+            timestamp_s=source.timestamp_s,
+            marker_cache=cache,
+        )
     return result
+
+
+def _observations_to_signal(
+    source: SideInput,
+    profile: SideProfile,
+    observations: list[FrameObservation],
+    source_frame: np.ndarray,
+    *,
+    fps: float,
+    maximum_gap_s: float,
+) -> SideSignal:
+    opening, _ = opening_angles(observations, profile.closed_reference_deg)
+    opening, states, _ = apply_one_sided_opening_fallback(
+        observations, opening, profile.angle_hardware
+    )
+    direct = np.isfinite(opening)
+    maximum_gap_frames = max(1, round(maximum_gap_s * fps))
+    opening, recovered = bounded_interpolate(opening, maximum_gap_frames)
+    opening = np.where(np.isfinite(opening), nanmedian_filter(opening), np.nan)
+    states = states.astype(object)
+    states[recovered] = "RECOVERED_SHORT_GAP"
+    states[~np.isfinite(opening)] = "UNAVAILABLE"
+    width_values = np.full(len(opening), np.nan, dtype=np.float64)
+    available = np.isfinite(opening)
+    width_values[available] = np.interp(
+        opening[available], profile.width_angle_deg, profile.width_m
+    )
+    return SideSignal(
+        opening_deg=opening,
+        width_m=width_values,
+        state=states,
+        timestamp_s=source.timestamp_s,
+        source_frame=source_frame,
+        measured_ratio=float(direct.mean()),
+        available_ratio=float(available.mean()),
+    )
+
+
+def _cached_observations(
+    source: SideInput,
+    profile: SideProfile,
+) -> tuple[list[FrameObservation], np.ndarray]:
+    assert source.marker_cache is not None
+    required = {
+        "gripper_frame_index",
+        "gripper_left_points_px",
+        "gripper_right_points_px",
+        "gripper_included_angle_deg",
+    }
+    with np.load(source.marker_cache) as cache:
+        missing = sorted(required - set(cache.files))
+        if missing:
+            raise ManifestError(
+                f"{source.side} gripper marker cache arrays are missing: {missing}"
+            )
+        frames = np.asarray(cache["gripper_frame_index"], dtype=np.int64)
+        left_points = np.asarray(cache["gripper_left_points_px"], dtype=np.float64)
+        right_points = np.asarray(cache["gripper_right_points_px"], dtype=np.float64)
+        angles = np.asarray(cache["gripper_included_angle_deg"], dtype=np.float64)
+    count = len(source.timestamp_s)
+    if (
+        not np.array_equal(frames, np.arange(count, dtype=np.int64))
+        or left_points.shape != (count, 3, 2)
+        or right_points.shape != (count, 3, 2)
+        or angles.shape != (count,)
+    ):
+        raise ManifestError(f"{source.side} gripper marker cache timeline mismatch")
+    observations: list[FrameObservation] = []
+    low, high = profile.included_angle_range
+    for index in range(count):
+        left = left_points[index] if np.isfinite(left_points[index]).all() else None
+        right = right_points[index] if np.isfinite(right_points[index]).all() else None
+        included_angle = math.nan
+        if left is not None and right is not None:
+            recalculated = included_jaw_angle(left, right)
+            cached = float(angles[index])
+            if not math.isfinite(cached) or not math.isclose(
+                recalculated, cached, rel_tol=1e-4, abs_tol=1e-3
+            ):
+                raise ManifestError(
+                    f"{source.side} gripper marker cache angle mismatch at frame {index}"
+                )
+            if low <= cached <= high:
+                included_angle = cached
+            else:
+                left = right = None
+        elif math.isfinite(float(angles[index])):
+            raise ManifestError(
+                f"{source.side} cache has an angle without bilateral markers at frame {index}"
+            )
+        observations.append(
+            FrameObservation(
+                yellow_left=left,
+                yellow_right=right,
+                dot_left=None,
+                dot_right=None,
+                included_angle_deg=included_angle,
+            )
+        )
+    return observations, frames
 
 
 def _analyze_side(
@@ -240,6 +455,18 @@ def _analyze_side(
     processing_width: int,
     maximum_gap_s: float,
 ) -> SideSignal:
+    expected_fps = 1.0 / float(np.median(np.diff(source.timestamp_s)))
+    if source.marker_cache is not None:
+        observations, source_frame = _cached_observations(source, profile)
+        return _observations_to_signal(
+            source,
+            profile,
+            observations,
+            source_frame,
+            fps=expected_fps,
+            maximum_gap_s=maximum_gap_s,
+        )
+
     capture = cv2.VideoCapture(str(source.video), cv2.CAP_FFMPEG)
     if not capture.isOpened():
         raise ManifestError(f"cannot open {source.side} gripper video: {source.video}")
@@ -251,7 +478,6 @@ def _analyze_side(
         raise ManifestError(
             f"{source.side} gripper video must be a timed square fisheye track"
         )
-    expected_fps = 1.0 / float(np.median(np.diff(source.timestamp_s)))
     if not math.isclose(fps, expected_fps, rel_tol=1e-3, abs_tol=1e-2):
         capture.release()
         raise ManifestError(
@@ -306,31 +532,13 @@ def _analyze_side(
             f"{source.side} gripper video/H5 frame mismatch: "
             f"{len(observations)} != {len(source.timestamp_s)}"
         )
-
-    opening, _ = opening_angles(observations, profile.closed_reference_deg)
-    opening, states, _ = apply_one_sided_opening_fallback(
-        observations, opening, profile.angle_hardware
-    )
-    direct = np.isfinite(opening)
-    maximum_gap_frames = max(1, round(maximum_gap_s * fps))
-    opening, recovered = bounded_interpolate(opening, maximum_gap_frames)
-    opening = np.where(np.isfinite(opening), nanmedian_filter(opening), np.nan)
-    states = states.astype(object)
-    states[recovered] = "RECOVERED_SHORT_GAP"
-    states[~np.isfinite(opening)] = "UNAVAILABLE"
-    width_values = np.full(len(opening), np.nan, dtype=np.float64)
-    available = np.isfinite(opening)
-    width_values[available] = np.interp(
-        opening[available], profile.width_angle_deg, profile.width_m
-    )
-    return SideSignal(
-        opening_deg=opening,
-        width_m=width_values,
-        state=states,
-        timestamp_s=source.timestamp_s,
-        source_frame=np.arange(len(opening), dtype=np.int64),
-        measured_ratio=float(direct.mean()),
-        available_ratio=float(available.mean()),
+    return _observations_to_signal(
+        source,
+        profile,
+        observations,
+        np.arange(len(observations), dtype=np.int64),
+        fps=fps,
+        maximum_gap_s=maximum_gap_s,
     )
 
 
@@ -382,6 +590,50 @@ def _write_rows(path: Path, fields: list[str], rows: list[dict[str, Any]]) -> No
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="raise")
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _publish_csv_files(build_dir: Path, processed_root: Path) -> None:
+    for name in CSV_NAMES:
+        staged = build_dir / name
+        destination = processed_root / name
+        if not staged.is_file() or staged.is_symlink():
+            raise ManifestError(f"staged processed CSV is invalid: {staged}")
+        if destination.is_symlink() or (destination.exists() and not destination.is_file()):
+            raise ManifestError(f"processed CSV destination is unsafe: {destination}")
+    backup = Path(
+        tempfile.mkdtemp(prefix=f".{EXPORT_REVISION}-backup-", dir=processed_root)
+    )
+    published: list[str] = []
+    try:
+        for name in CSV_NAMES:
+            destination = processed_root / name
+            if destination.exists():
+                destination.replace(backup / name)
+        for name in CSV_NAMES:
+            (build_dir / name).replace(processed_root / name)
+            published.append(name)
+    except Exception:
+        for name in reversed(published):
+            destination = processed_root / name
+            if destination.exists():
+                destination.replace(build_dir / name)
+        for name in CSV_NAMES:
+            saved = backup / name
+            if saved.exists():
+                saved.replace(processed_root / name)
+        raise
+    finally:
+        if backup.exists():
+            shutil.rmtree(backup)
+
+    legacy = processed_root / LEGACY_EXPORT_REVISION
+    if legacy.is_dir() and not legacy.is_symlink():
+        entries = list(legacy.iterdir())
+        if all(
+            entry.name in CSV_NAMES and entry.is_file() and not entry.is_symlink()
+            for entry in entries
+        ):
+            shutil.rmtree(legacy)
 
 
 def export_processed_dataset(
@@ -510,9 +762,7 @@ def export_processed_dataset(
         gripper_rows.append(gripper_row)
         processed_rows.append({**trajectory_row, **{key: value for key, value in gripper_row.items() if key not in {"frame", "timestamp_s"}}})
 
-    output_dir = confined_path(
-        processed_root, EXPORT_REVISION, field="processed CSV revision"
-    )
+    output_dir = processed_root
     build_dir = Path(
         tempfile.mkdtemp(prefix=f".{EXPORT_REVISION}-build-", dir=processed_root)
     )
@@ -557,7 +807,7 @@ def export_processed_dataset(
         if not child_frames:
             child_frames = ["hand_camera_flu_back_x"]
         metadata_row = {
-            "schema_version": "instaumi-processed-csv/1.0",
+            "schema_version": "instaumi-processed-csv/2.0-direct",
             "dataset_id": pair_id,
             "dataset_directory": root.name,
             "pair_id": pair_id,
@@ -581,7 +831,7 @@ def export_processed_dataset(
             "right_available_ratio": f"{signals['right'].available_ratio:.9f}",
         }
         _write_rows(build_dir / "metadata.csv", metadata_fields, [metadata_row])
-        publish_directory(build_dir, output_dir, allowed_root=root)
+        _publish_csv_files(build_dir, processed_root)
     finally:
         if build_dir.exists():
             shutil.rmtree(build_dir)
@@ -591,7 +841,7 @@ def export_processed_dataset(
         "output_dir": str(output_dir),
         "files": [
             str(output_dir / name)
-            for name in ("trajectory.csv", "gripper.csv", "processed.csv", "metadata.csv")
+            for name in CSV_NAMES
         ],
         "rows": len(trajectory_rows),
         "trajectory_rate_hz": 1.0 / float(np.median(np.diff(query_time))),

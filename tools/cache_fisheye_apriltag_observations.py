@@ -21,7 +21,14 @@ from osmo360.pipeline.temporal_apriltag import (
 )
 from osmo360.pipeline.ffmpeg_gray_pipe import (
     FFmpegGrayPipe,
+    FFmpegYUV420Pipe,
+    YUV420Frame,
     probe_video_stream,
+)
+from osmo360.gripper_markers import (
+    detect_yuv420_gripper_triads,
+    included_angle_deg,
+    marker_signature,
 )
 from osmo360.localization.raw_fisheye_world_pose import (
     detect_rectified_tags,
@@ -97,6 +104,14 @@ def parse_args() -> argparse.Namespace:
         "--ffmpeg-gray-pipe",
         action="store_true",
         help="stream selected luma planes from the verified FFmpeg runtime into Python",
+    )
+    parser.add_argument(
+        "--gripper-yuv420-roi",
+        action="store_true",
+        help=(
+            "reuse the FFmpeg luma decode and cache fixed-ROI gripper marker "
+            "observations from the YUV420 chroma planes"
+        ),
     )
     parser.add_argument(
         "--optical-flow-scale",
@@ -250,6 +265,12 @@ def main() -> int:
         raise ValueError("--frame-stride must be a multiple of --decode-stride")
     if args.ffmpeg_gray_pipe and not args.temporal_tracking:
         raise ValueError("--ffmpeg-gray-pipe requires --temporal-tracking")
+    if args.gripper_yuv420_roi and not args.ffmpeg_gray_pipe:
+        raise ValueError("--gripper-yuv420-roi requires --ffmpeg-gray-pipe")
+    if args.gripper_yuv420_roi and args.decode_stride != 1:
+        raise ValueError("--gripper-yuv420-roi requires --decode-stride 1")
+    if args.gripper_yuv420_roi and (args.source_width, args.source_height) != (1920, 1920):
+        raise ValueError("--gripper-yuv420-roi requires a 1920x1920 source")
     if not 0.25 <= args.optical_flow_scale <= 1.0:
         raise ValueError("--optical-flow-scale must be between 0.25 and 1.0")
     if args.optical_flow_window_size < 9 or not args.optical_flow_window_size % 2:
@@ -391,7 +412,7 @@ def main() -> int:
     parameters.adaptiveThreshWinSizeMax = 63
     detector = cv2.aruco.ArucoDetector(dictionary, parameters)
     capture: cv2.VideoCapture | None = None
-    gray_pipe: FFmpegGrayPipe | None = None
+    gray_pipe: FFmpegGrayPipe | FFmpegYUV420Pipe | None = None
     decoder_provenance: dict[str, object]
     if args.ffmpeg_gray_pipe:
         stream_info = probe_video_stream(video)
@@ -404,6 +425,14 @@ def main() -> int:
                 "ffprobe/video geometry does not match the manifest: "
                 f"{stream_info.width}x{stream_info.height} != "
                 f"{args.source_width}x{args.source_height}"
+            )
+        if args.gripper_yuv420_roi and not (
+            stream_info.pixel_format == "yuvj420p"
+            or stream_info.color_range == "pc"
+        ):
+            raise RuntimeError(
+                "gripper YUV420 thresholds require the calibrated full-range "
+                f"source, got {stream_info.pixel_format}/{stream_info.color_range}"
             )
         decoder_provenance = {
             "decoder_transport": "ffmpeg_rawvideo_pipe",
@@ -470,7 +499,8 @@ def main() -> int:
             else min(args.end_frame, source_frame_count - 1)
         )
         image_stride = args.decode_stride if args.temporal_tracking else 1
-        gray_pipe = FFmpegGrayPipe(
+        pipe_type = FFmpegYUV420Pipe if args.gripper_yuv420_roi else FFmpegGrayPipe
+        gray_pipe = pipe_type(
             video,
             width=args.source_width,
             height=args.source_height,
@@ -513,6 +543,10 @@ def main() -> int:
     first_decoded_frame: int | None = None
     last_decoded_frame: int | None = None
     retrieved_frame_count = 0
+    gripper_frame_index: list[int] = []
+    gripper_left_points: list[np.ndarray] = []
+    gripper_right_points: list[np.ndarray] = []
+    gripper_angles: list[float] = []
     while True:
         if gray_pipe is not None and frame >= source_frame_count:
             break
@@ -525,14 +559,18 @@ def main() -> int:
             in_detection_range and (frame - args.start_frame) % args.decode_stride == 0
         )
         if retrieve_image and gray_pipe is not None:
-            image = gray_pipe.read()
+            decoded = gray_pipe.read()
+            yuv_frame = decoded if isinstance(decoded, YUV420Frame) else None
+            image = decoded.luma if yuv_frame is not None else decoded
             ok = True
         elif retrieve_image:
             assert capture is not None
             ok, image = capture.read()
+            yuv_frame = None
         else:
             ok = True if gray_pipe is not None else capture.grab()
             image = None
+            yuv_frame = None
         if not ok:
             break
         if first_decoded_frame is None:
@@ -552,6 +590,27 @@ def main() -> int:
             continue
         retrieved_frame_count += 1
         assert image is not None
+        if args.gripper_yuv420_roi:
+            if yuv_frame is None:  # pragma: no cover - validated decoder mode
+                raise RuntimeError("gripper marker cache did not receive a YUV420 frame")
+            left_points, right_points = detect_yuv420_gripper_triads(
+                yuv_frame.luma,
+                yuv_frame.chroma_u,
+                yuv_frame.chroma_v,
+            )
+            missing = np.full((3, 2), np.nan, dtype=np.float32)
+            gripper_frame_index.append(frame)
+            gripper_left_points.append(
+                missing if left_points is None else left_points.astype(np.float32)
+            )
+            gripper_right_points.append(
+                missing if right_points is None else right_points.astype(np.float32)
+            )
+            gripper_angles.append(
+                float("nan")
+                if left_points is None or right_points is None
+                else included_angle_deg(left_points, right_points)
+            )
         if image.ndim == 2:
             if image.shape != (args.source_height, args.source_width):
                 raise RuntimeError(
@@ -729,22 +788,33 @@ def main() -> int:
         capture.release()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     temporary = args.output.with_suffix(args.output.suffix + ".tmp")
-    with temporary.open("wb") as handle:
-        np.savez_compressed(
-            handle,
-            timeline_frame_index=np.asarray(timeline_frame, dtype=np.int32),
-            timeline_local_time_s=np.asarray(timeline_local, dtype=np.float64),
-            timeline_common_time_s=np.asarray(timeline_common, dtype=np.float64),
-            frame_index=np.asarray(frames, dtype=np.int32),
-            local_time_s=np.asarray(local_times, dtype=np.float64),
-            common_time_s=np.asarray(common_times, dtype=np.float64),
-            tag_id=np.asarray(tag_ids, dtype=np.int32),
-            corners_px=np.asarray(corners, dtype=np.float32).reshape(-1, 4, 2),
-            rays_camera=np.asarray(rays, dtype=np.float32).reshape(-1, 4, 3),
-            area_px2=np.asarray(areas, dtype=np.float32),
-            center_px=np.asarray(centers, dtype=np.float32).reshape(-1, 2),
-            detection_source=np.asarray(detection_sources, dtype="U24"),
+    arrays = {
+        "timeline_frame_index": np.asarray(timeline_frame, dtype=np.int32),
+        "timeline_local_time_s": np.asarray(timeline_local, dtype=np.float64),
+        "timeline_common_time_s": np.asarray(timeline_common, dtype=np.float64),
+        "frame_index": np.asarray(frames, dtype=np.int32),
+        "local_time_s": np.asarray(local_times, dtype=np.float64),
+        "common_time_s": np.asarray(common_times, dtype=np.float64),
+        "tag_id": np.asarray(tag_ids, dtype=np.int32),
+        "corners_px": np.asarray(corners, dtype=np.float32).reshape(-1, 4, 2),
+        "rays_camera": np.asarray(rays, dtype=np.float32).reshape(-1, 4, 3),
+        "area_px2": np.asarray(areas, dtype=np.float32),
+        "center_px": np.asarray(centers, dtype=np.float32).reshape(-1, 2),
+        "detection_source": np.asarray(detection_sources, dtype="U24"),
+    }
+    if args.gripper_yuv420_roi:
+        arrays.update(
+            gripper_frame_index=np.asarray(gripper_frame_index, dtype=np.int32),
+            gripper_left_points_px=np.asarray(
+                gripper_left_points, dtype=np.float32
+            ).reshape(-1, 3, 2),
+            gripper_right_points_px=np.asarray(
+                gripper_right_points, dtype=np.float32
+            ).reshape(-1, 3, 2),
+            gripper_included_angle_deg=np.asarray(gripper_angles, dtype=np.float32),
         )
+    with temporary.open("wb") as handle:
+        np.savez_compressed(handle, **arrays)
     temporary.replace(args.output)
     video_digest = args.video_sha256 or sha256(video)
     processing_signature = {
@@ -763,7 +833,14 @@ def main() -> int:
         "native_grayscale_decode": args.native_grayscale_decode,
         "ffmpeg_gray_pipe": args.ffmpeg_gray_pipe,
         "decoder_transport": decoder_provenance["decoder_transport"],
-        "decoder_pixel_format": decoder_provenance["pixel_format"],
+        # Y is byte-identical between the gray and YUV420 transports.  Keep
+        # the trajectory signature stable when chroma is additionally exposed
+        # for the gripper consumer.
+        "decoder_pixel_format": (
+            "gray8_luma"
+            if args.ffmpeg_gray_pipe
+            else decoder_provenance["pixel_format"]
+        ),
         "optical_flow_scale": args.optical_flow_scale,
         "forward_backward_check_interval_frames": (
             args.forward_backward_check_interval_frames
@@ -831,7 +908,13 @@ def main() -> int:
         "decode_stride": args.decode_stride,
         "native_grayscale_decode": args.native_grayscale_decode,
         "ffmpeg_gray_pipe": args.ffmpeg_gray_pipe,
+        "decoder_transport": decoder_provenance["decoder_transport"],
         "decoder": decoder_provenance,
+        "gripper_marker_signature": (
+            marker_signature() if args.gripper_yuv420_roi else None
+        ),
+        "gripper_marker_frame_count": len(gripper_frame_index),
+        "gripper_bilateral_detection_count": int(np.isfinite(gripper_angles).sum()),
         "optical_flow_scale": args.optical_flow_scale,
         "forward_backward_check_interval_frames": (
             args.forward_backward_check_interval_frames

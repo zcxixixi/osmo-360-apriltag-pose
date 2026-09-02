@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from osmo360.ffmpeg_runtime import project_ffmpeg_runtime
+from osmo360.gripper_markers import marker_signature
 
 from .dataset_worker import estimate_audio_offset
 from .four_mp4 import PIPELINE_REVISION, chunk_ranges
@@ -330,6 +331,13 @@ def build_chunk_tasks(
             use_h5_rear_calibration = bool(
                 stream == 0 and camera.get("rear_calibration")
             )
+            use_gripper_marker_cache = bool(
+                stream == 0
+                and camera.get("timeline_h5")
+                and use_ffmpeg_gray_pipe
+                and decode_stride == 1
+                and (int(lens["width"]), int(lens["height"])) == (1920, 1920)
+            )
             calibration_sha256 = (
                 str(camera["rear_calibration_sha256"])
                 if use_h5_rear_calibration
@@ -392,6 +400,8 @@ def build_chunk_tasks(
                 ]
                 if use_ffmpeg_gray_pipe:
                     command.append("--ffmpeg-gray-pipe")
+                if use_gripper_marker_cache:
+                    command.append("--gripper-yuv420-roi")
                 if camera.get("timeline_h5"):
                     command.extend([
                         "--timeline-h5", str(root / camera["timeline_h5"]),
@@ -422,6 +432,9 @@ def build_chunk_tasks(
                             "native_grayscale_decode": False,
                             "ffmpeg_gray_pipe": use_ffmpeg_gray_pipe,
                             "decoder_transport": "ffmpeg_rawvideo_pipe",
+                            "gripper_marker_signature": (
+                                marker_signature() if use_gripper_marker_cache else None
+                            ),
                             "optical_flow_scale": optical_flow_scale,
                             "forward_backward_check_interval_frames": forward_backward_interval,
                             "optical_flow_window_size": optical_flow_window_size,
@@ -484,8 +497,9 @@ def merge_observations(
     cache_root: Path,
     hashes: dict[str, str],
     logs: Path,
-) -> dict[str, Path]:
+) -> tuple[dict[str, Path], dict[str, Path]]:
     dual: dict[str, Path] = {}
+    gripper: dict[str, Path] = {}
     for side in ("left", "right"):
         lens_outputs = []
         for lens in pair[side]["lenses"]:
@@ -504,6 +518,11 @@ def merge_observations(
                     for task in tasks
                     if task.side == side and task.stream == stream
                 ),
+                "gripper_marker_signature": next(
+                    task.expected["gripper_marker_signature"]
+                    for task in tasks
+                    if task.side == side and task.stream == stream
+                ),
             }
             if not _valid_metadata(output, expected):
                 run(
@@ -514,6 +533,12 @@ def merge_observations(
                     logs / f"merge-{side}-{stream}-chunks.log",
                 )
             lens_outputs.append(output)
+            if stream == 0:
+                marker_metadata = json.loads(
+                    _sidecar(output).read_text(encoding="utf-8")
+                )
+                if marker_metadata.get("gripper_marker_signature") is not None:
+                    gripper[side] = output
         output = cache_root / "observations" / side / "dual-lens-corners.npz"
         expected_hashes = [hashes[lens["path"]] for lens in pair[side]["lenses"]]
         expected_signature = json.loads(
@@ -531,7 +556,7 @@ def merge_observations(
                 logs / f"merge-{side}-dual.log",
             )
         dual[side] = output
-    return dual
+    return dual, gripper
 
 
 def _tracking_path(root: Path, value: str) -> Path:
@@ -705,7 +730,7 @@ def process_pair(root: Path, pair: dict[str, Any], cache_root: Path, budget: dic
     status_update(status, "sync", "PASS", **sync)
     tasks = build_chunk_tasks(root, pair, cache_root, hashes, sync, budget)
     run_chunks(tasks, budget, status)
-    dual = merge_observations(pair, tasks, cache_root, hashes, logs)
+    dual, gripper = merge_observations(pair, tasks, cache_root, hashes, logs)
     status_update(
         status,
         "dual_lens_observations",
@@ -732,6 +757,10 @@ def process_pair(root: Path, pair: dict[str, Any], cache_root: Path, budget: dic
             "schema_version": "four-mp4-cache-index/1.0",
             "source_sha256": hashes,
             "observation_cache": {side: str(path) for side, path in dual.items()},
+            "gripper_marker_cache": {
+                side: str(path) for side, path in gripper.items()
+            },
+            "gripper_marker_signature": marker_signature() if gripper else None,
             "resource_budget": budget,
             "sync": sync,
         },

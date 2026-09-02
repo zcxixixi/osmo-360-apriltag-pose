@@ -27,6 +27,13 @@ TRACKING_COUNTERS = (
     "tracked_output_observation_count",
 )
 
+GRIPPER_KEYS = (
+    "gripper_frame_index",
+    "gripper_left_points_px",
+    "gripper_right_points_px",
+    "gripper_included_angle_deg",
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -86,7 +93,9 @@ def merge_chunks(paths: list[Path], output: Path) -> dict[str, Any]:
         "rectified_view_size",
         "rectification_radial_model",
         "frame_stride",
+        "timeline_h5_sha256",
         "processing_signature",
+        "gripper_marker_signature",
         "temporal_tracking",
         "ray_frame",
     )
@@ -135,6 +144,24 @@ def merge_chunks(paths: list[Path], output: Path) -> dict[str, Any]:
             key: np.concatenate([cache[key] for cache in caches])
             for key in DETECTION_KEYS
         }
+        has_gripper = pairs[0][1].get("gripper_marker_signature") is not None
+        gripper = (
+            {
+                key: np.concatenate([cache[key] for cache in caches])
+                for key in GRIPPER_KEYS
+            }
+            if has_gripper
+            else {}
+        )
+        if has_gripper:
+            actual_gripper_frames = gripper["gripper_frame_index"]
+            expected_gripper_frames = np.arange(
+                expected_frame_count, dtype=actual_gripper_frames.dtype
+            )
+            if not np.array_equal(actual_gripper_frames, expected_gripper_frames):
+                raise ValueError(
+                    "merged gripper marker timeline is not a complete zero-based sequence"
+                )
         if len(timeline["timeline_frame_index"]):
             actual = timeline["timeline_frame_index"]
             expected = np.arange(len(actual), dtype=actual.dtype)
@@ -143,7 +170,7 @@ def merge_chunks(paths: list[Path], output: Path) -> dict[str, Any]:
         output.parent.mkdir(parents=True, exist_ok=True)
         temporary = output.with_suffix(output.suffix + ".tmp")
         with temporary.open("wb") as handle:
-            np.savez_compressed(handle, **timeline, **detections)
+            np.savez_compressed(handle, **timeline, **detections, **gripper)
         temporary.replace(output)
     finally:
         for cache in caches:
@@ -176,7 +203,9 @@ def merge_chunks(paths: list[Path], output: Path) -> dict[str, Any]:
             "rectified_view_size",
             "rectification_radial_model",
             "frame_stride",
+            "timeline_h5_sha256",
             "processing_signature",
+            "gripper_marker_signature",
             "temporal_tracking",
             "corner_order",
             "ray_frame",
@@ -188,6 +217,12 @@ def merge_chunks(paths: list[Path], output: Path) -> dict[str, Any]:
             "decoded_frame_range": [0, expected_last],
             "detection_frame_range": [0, expected_last],
             "detection_count": int(len(detections["tag_id"])),
+            "gripper_marker_frame_count": int(
+                len(gripper.get("gripper_frame_index", ()))
+            ),
+            "gripper_bilateral_detection_count": int(
+                np.isfinite(gripper.get("gripper_included_angle_deg", ())).sum()
+            ),
             "detected_ids": sorted(set(map(int, detections["tag_id"]))),
             "detection_source_counts": {
                 source: detection_sources.count(source)

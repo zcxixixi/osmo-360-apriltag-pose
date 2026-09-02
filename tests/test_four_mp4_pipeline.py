@@ -10,6 +10,7 @@ import pytest
 from osmo360.pipeline import dataset, four_mp4
 from osmo360.pipeline.four_mp4_worker import _worker_environment, build_chunk_tasks
 from osmo360.pipeline.manifest import ManifestError
+from osmo360.gripper_markers import marker_signature
 from tools.merge_fisheye_observation_chunks import merge_chunks
 from tools.cache_fisheye_apriltag_observations import (
     ignored_trailing_video_frames,
@@ -179,7 +180,11 @@ def test_four_mp4_discovery_and_dataset_dry_run(monkeypatch, tmp_path: Path):
 
 def test_instaumi_h5_is_native_four_mp4_input(monkeypatch, tmp_path: Path):
     root = _make_instaumi_dataset(tmp_path)
-    monkeypatch.setattr(four_mp4, "_probe_mp4", _probe)
+    monkeypatch.setattr(
+        four_mp4,
+        "_probe_mp4",
+        lambda path: {**_probe(path), "width": 1920, "height": 1920},
+    )
     monkeypatch.setattr(four_mp4, "_embedded_identity", lambda _path: (None, None))
 
     lock = four_mp4.discover_four_mp4_dataset(root)
@@ -217,6 +222,15 @@ def test_instaumi_h5_is_native_four_mp4_input(monkeypatch, tmp_path: Path):
     assert all(task.expected["frame_stride"] == 1 for task in tasks)
     assert all(task.expected["decode_stride"] == 1 for task in tasks)
     assert all(task.expected["timestamp_source"].startswith("instaumi_h5:") for task in tasks)
+    assert all(
+        ("--gripper-yuv420-roi" in task.command) == (task.stream == 0)
+        for task in tasks
+    )
+    assert all(
+        task.expected["gripper_marker_signature"]
+        == (marker_signature() if task.stream == 0 else None)
+        for task in tasks
+    )
 
     for lens in pair["right"]["lenses"]:
         lens["frame_count"] = 316
@@ -383,12 +397,11 @@ def test_adaptive_rectification_fails_closed_when_a_critical_tag_is_missing():
     )
 
 
-def _write_chunk(path: Path, start: int, end: int) -> None:
+def _write_chunk(path: Path, start: int, end: int, *, gripper: bool = False) -> None:
     frames = np.arange(start, end + 1, dtype=np.int32)
     detection_frames = np.asarray([start], dtype=np.int32)
     path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(
-        path,
+    arrays = dict(
         timeline_frame_index=frames,
         timeline_local_time_s=frames.astype(np.float64) / 30,
         timeline_common_time_s=frames.astype(np.float64) / 30,
@@ -402,6 +415,16 @@ def _write_chunk(path: Path, start: int, end: int) -> None:
         center_px=np.zeros((1, 2), dtype=np.float32),
         detection_source=np.asarray(["direct_raw"], dtype="U24"),
     )
+    if gripper:
+        arrays.update(
+            gripper_frame_index=frames,
+            gripper_left_points_px=np.zeros((len(frames), 3, 2), dtype=np.float32),
+            gripper_right_points_px=np.ones((len(frames), 3, 2), dtype=np.float32),
+            gripper_included_angle_deg=np.arange(
+                start, end + 1, dtype=np.float32
+            ),
+        )
+    np.savez_compressed(path, **arrays)
     metadata = {
         "schema_version": "fisheye-apriltag-observation-cache/1.0",
         "video": "/data/lens-0.mp4",
@@ -427,9 +450,11 @@ def _write_chunk(path: Path, start: int, end: int) -> None:
         "rectified_view_size": 720,
         "rectification_radial_model": "stitch",
         "frame_stride": 2,
+        "timeline_h5_sha256": "c" * 64,
         "corner_order": "opencv_aruco_apriltag_canonical",
         "ray_frame": "x5_dual_fisheye_rig_stream0",
         "decoded_frame_range": [start, end],
+        "gripper_marker_signature": marker_signature() if gripper else None,
     }
     path.with_suffix(".json").write_text(json.dumps(metadata))
 
@@ -448,6 +473,23 @@ def test_chunk_merge_reconstructs_one_monotonic_cache(tmp_path: Path):
         assert cache["frame_index"].tolist() == [0, 2]
     assert report["chunk_count"] == 2
     assert report["decoded_frame_count"] == 4
+
+
+def test_chunk_merge_reconstructs_gripper_marker_cache(tmp_path: Path):
+    first = tmp_path / "chunk-0.npz"
+    second = tmp_path / "chunk-1.npz"
+    output = tmp_path / "lens.npz"
+    _write_chunk(first, 0, 1, gripper=True)
+    _write_chunk(second, 2, 3, gripper=True)
+
+    report = merge_chunks([second, first], output)
+
+    with np.load(output) as cache:
+        assert cache["gripper_frame_index"].tolist() == [0, 1, 2, 3]
+        assert cache["gripper_included_angle_deg"].tolist() == [0, 1, 2, 3]
+    assert report["gripper_marker_signature"] == marker_signature()
+    assert report["gripper_marker_frame_count"] == 4
+    assert report["timeline_h5_sha256"] == "c" * 64
 
 
 def test_chunk_merge_uses_bounded_h5_timeline_instead_of_encoded_tail(
