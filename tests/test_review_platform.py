@@ -51,17 +51,100 @@ def write_pair(root: Path, pair_id: str = "pair-01-test") -> Path:
     return directory
 
 
+def write_instaumi(root: Path) -> Path:
+    directory = root / "instaumi_000001"
+    (directory / "video").mkdir(parents=True)
+    (directory / "processed").mkdir()
+    (directory / "dataset.h5").write_bytes(b"h5")
+    (directory / "video" / "Left.mp4").write_bytes(b"left")
+    (directory / "video" / "Right.mp4").write_bytes(b"right")
+    (directory / "processed" / "review.json").write_text(json.dumps({
+        "duration_s": 12.5, "video_fps": 30.0,
+        "sync": {"offset_s": 0.025},
+    }))
+    return directory
+
+
+def test_instaumi_aligned_videos_are_reviewable(tmp_path: Path) -> None:
+    write_instaumi(tmp_path)
+    store = ReviewStore(tmp_path)
+    item = store.scan()[0]
+    assert item["pair_id"] == "instaumi_000001"
+    assert item["metrics"]["aligned_video_ready"]
+    assert item["metrics"]["duration_s"] == 12.5
+    store.add_review(
+        item["pair_id"], decision="approved", reasons=[], notes="左右同步",
+        reviewer="审核员",
+    )
+    assert store.history(item["pair_id"])[0]["decision"] == "approved"
+    assert "数据能用吗？" in PAGE
+    assert "左右对齐微调" in PAGE
+
+
+def test_manual_alignment_is_saved_and_exported(tmp_path: Path) -> None:
+    write_instaumi(tmp_path)
+    state = tmp_path / "local-review-state"
+    store = ReviewStore(tmp_path, state_root=state)
+    pair_id = store.scan()[0]["pair_id"]
+    saved = store.save_alignment(
+        pair_id, right_time_offset_s=0.117, reviewer="审核员A", notes="敲击对齐"
+    )
+    assert saved["right_time_offset_s"] == pytest.approx(0.117)
+    assert store.get_alignment(pair_id)["right_time_offset_s"] == pytest.approx(0.117)
+    exported = json.loads(store.alignment_path.read_text())
+    assert exported["mapping"] == "right_video_time_s = left_video_time_s + right_time_offset_s"
+    assert exported["items"][0]["right_time_offset_s"] == pytest.approx(0.117)
+
+
 def test_pair_summary_and_simple_page(tmp_path: Path) -> None:
     directory = write_pair(tmp_path)
     summary = summarize_pair(directory)
     assert summary["auto_status"] == "pass_candidate"
     assert summary["tag_usable_ratio"] == 1.0
     assert summary["gripper_candidate_ratio"] == 1.0
-    assert "画面正常，通过并看下一条" in PAGE
+    assert ">能用</button>" in PAGE
+    assert ">开始</button>" in PAGE
+    assert ">结束</button>" in PAGE
+    assert "自动找动作" not in PAGE
+    assert "这一步成功了" not in PAGE
+    assert "还没有保存动作步骤" not in PAGE
+    assert "height:calc(100vh - 64px)" in PAGE
     assert REASONS["sync"] == "左右对不上"
     timeline = pair_timeline(directory)
     assert timeline["tags"] == [[0, 3.0], [1, 3.0], [2, 3.0]]
     assert timeline["gripper"] == [[0, 4.0], [1, 4.0], [2, 4.0]]
+
+
+def test_keyframes_require_usable_video_and_export_requested_json(tmp_path: Path) -> None:
+    write_instaumi(tmp_path)
+    state = tmp_path / "state"
+    store = ReviewStore(tmp_path, state_root=state)
+    pair_id = store.scan()[0]["pair_id"]
+    with pytest.raises(ValueError, match="整条数据能用"):
+        store.add_keyframe(
+            pair_id, time_sec=1.767, label="useful_start", reviewer="审核员"
+        )
+
+    store.add_review(
+        pair_id, decision="approved", reasons=[], notes="", reviewer="审核员"
+    )
+    start = store.add_keyframe(
+        pair_id, time_sec=1.767, label="useful_start", reviewer="审核员"
+    )
+    end = store.add_keyframe(
+        pair_id, time_sec=5.767, label="useful_end", reviewer="审核员"
+    )
+    assert start["frame"] == 53
+    assert end["frame"] == 173
+    exported = json.loads(store.keyframes_path.read_text())
+    assert list(exported) == [pair_id]
+    assert exported[pair_id] == [start, end]
+    assert set(start) == {"id", "frame", "time_sec", "label", "created_at"}
+    assert start["created_at"].endswith("Z")
+
+    store.delete_keyframe(start["id"])
+    assert store.list_keyframes(pair_id) == [end]
+    assert json.loads(store.keyframes_path.read_text())[pair_id] == [end]
 
 
 def test_review_history_reprocess_queue_and_stale_hash(tmp_path: Path) -> None:

@@ -17,23 +17,24 @@ import numpy as np
 from .review_store import DECISIONS, REASONS, SEGMENT_LABELS, ReviewStore
 
 PAGE = r'''<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>UMI 数据审核</title><style>
-[hidden]{display:none!important}
-.threed{margin-top:8px;padding:10px 12px;border-radius:10px;background:#fff0c9;color:#6d4300;font-weight:700}.threed.ready{background:#dff5e4;color:#17662b}.threed a{color:inherit}.segment{background:white;border-radius:16px;padding:18px;margin-top:14px}.segment-actions{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.segment-actions button,.segment-actions select{padding:10px 12px;border:1px solid #cbd7dd;border-radius:9px;background:white}.segment-row{padding:8px;border-top:1px solid #e1e7ea}.actions button:disabled{opacity:.4;cursor:not-allowed}
-:root{font-family:Inter,"Noto Sans SC",system-ui,sans-serif;color:#17202a;background:#f3f6f8}*{box-sizing:border-box}body{margin:0}button,input,textarea{font:inherit}.top{height:72px;background:#122431;color:white;display:flex;align-items:center;justify-content:space-between;padding:0 24px}.top h1{font-size:22px;margin:0}.top .hint{color:#b8c7d0}.layout{display:grid;grid-template-columns:340px 1fr;min-height:calc(100vh - 72px)}aside{background:white;border-right:1px solid #dce4e8;padding:16px;overflow:auto}.filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}.filters button{border:1px solid #ccd7dd;background:white;border-radius:20px;padding:7px 11px;cursor:pointer}.filters button.active{background:#173d52;color:white}.item{border:2px solid #e2e9ed;border-radius:14px;padding:13px;margin:8px 0;cursor:pointer}.item.active{border-color:#168bd2;background:#eef8fe}.item h3{margin:0 0 7px;font-size:16px}.row{display:flex;align-items:center;justify-content:space-between;gap:10px}.badge{font-size:12px;padding:4px 9px;border-radius:20px;background:#e8edf0}.approved{background:#dff5e4;color:#17662b}.reprocess{background:#fff0c9;color:#7c4c00}.rejected{background:#fee1e1;color:#8d2020}.pending{background:#e9eef1;color:#53636d}main{padding:20px;overflow:auto}.empty{display:grid;place-items:center;height:60vh;color:#6c7d87}.step{font-size:18px;font-weight:700}.viewer{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0}.view{background:#0b1115;border-radius:16px;overflow:hidden;min-height:260px;position:relative}.view label{position:absolute;z-index:1;left:12px;top:10px;background:rgba(0,0,0,.65);color:white;padding:5px 10px;border-radius:12px}.view img{width:100%;height:100%;object-fit:contain;display:block}.timebox{background:white;border-radius:14px;padding:14px}.timebox input{width:100%}.chart{width:100%;height:110px;background:#f7fafb;border-radius:9px}.simple{background:white;border-radius:16px;padding:18px;margin-top:14px}.simple h2{margin:0 0 8px;font-size:20px}.reasons{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.reason{border:2px solid #d8e1e6;background:white;border-radius:10px;padding:10px 13px;cursor:pointer}.reason.selected{border-color:#e18b00;background:#fff5dc}.name{display:grid;grid-template-columns:220px 1fr;gap:10px}.name input,.name textarea{width:100%;border:1px solid #cbd7dd;border-radius:9px;padding:10px}.actions{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:10px;margin-top:14px}.actions button{border:0;border-radius:13px;padding:17px 12px;font-weight:800;font-size:17px;cursor:pointer}.pass{background:#24a148;color:white}.redo{background:#f2a900;color:#2d2100}.reject{background:#da3b3b;color:white}.message{min-height:24px;margin-top:10px;color:#a33220;font-weight:600}details{margin-top:14px;background:white;border-radius:12px;padding:12px}pre{white-space:pre-wrap;font-size:12px}.history{font-size:13px;border-top:1px solid #e1e7ea;padding:7px 0}@media(max-width:900px){.layout{grid-template-columns:1fr}aside{max-height:300px;border-right:0}.viewer{grid-template-columns:1fr}.name,.actions{grid-template-columns:1fr}}
-</style></head><body><header class="top"><div><h1>UMI 数据人工审核</h1><div class="hint">看画面，选结果，自动保存</div></div><div id="summary"></div></header><div class="layout"><aside><div class="filters" id="filters"></div><div id="list"></div></aside><main><div id="empty" class="empty">请从左边选择一条数据</div><div id="detail" hidden><div class="row"><div><div class="step" id="step"></div><div id="auto"></div><div id="threeD" class="threed"></div></div><button onclick="nextItem()">跳过，看下一条</button></div><div class="viewer"><div class="view"><label>左手画面</label><img id="left"></div><div class="view"><label>右手画面</label><img id="right"></div></div><div class="timebox"><div class="row"><b id="time">第 1 秒</b><span>拖动查看整段数据</span></div><input id="slider" type="range" min="0" max="0" value="0"><canvas id="chart" class="chart" width="900" height="110"></canvas></div><section class="segment"><h2>把长视频分成动作步骤</h2><div>拖到动作开始和结束的位置，各点一次。然后选择这一步做了什么。</div><div class="segment-actions"><button onclick="loadSuggestions()">自动找动作</button><button onclick="markStart()">从这里开始</button><button onclick="markEnd()">到这里结束</button><b id="segmentRange">还没有选择时间</b><select id="segmentLabel"></select><label><input id="segmentSuccess" type="checkbox" checked> 这一步成功了</label><button onclick="saveSegment()">保存这一步</button></div><div class="message" id="segmentMessage"></div><div id="segments"></div></section><section class="simple"><h2>这条数据能用吗？</h2><div>如果有问题，先选择原因。可以多选。</div><div class="reasons" id="reasons"></div><div class="name"><input id="reviewer" placeholder="审核人姓名（只填一次）"><textarea id="notes" rows="2" placeholder="补充说明（可不填）"></textarea></div><div class="actions"><button class="pass" id="passButton" onclick="save('approved')">画面正常，通过并看下一条</button><button class="redo" onclick="save('reprocess')">有问题，重新处理</button><button class="reject" onclick="save('rejected')">数据不能使用</button></div><div class="message" id="message"></div></section><details><summary>高级信息（普通审核员不用看）</summary><pre id="advanced"></pre><div id="history"></div></details></div></main></div><script>
-let items=[],current=null,filter='all',selectedReasons=new Set(),timeline=null,segStart=null,segEnd=null;const labels={approved:'已通过',reprocess:'需重处理',rejected:'不能使用',reprocessed:'已重处理'};const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+[hidden]{display:none!important}:root{font-family:Inter,"Noto Sans SC",system-ui,sans-serif;color:#17202a;background:#f3f6f8}*{box-sizing:border-box}body{margin:0;overflow:hidden}button,input{font:inherit}.top{height:64px;background:#122431;color:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 20px}.top h1{font-size:20px;margin:0}.layout{display:grid;grid-template-columns:330px 1fr;height:calc(100vh - 64px);min-height:0}aside{background:#fff;border-right:1px solid #dce4e8;padding:12px;overflow-y:auto;min-height:0}.filters{display:flex;gap:6px;flex-wrap:wrap;position:sticky;top:-12px;background:#fff;padding:12px 0 8px;z-index:2}.filters button{border:1px solid #ccd7dd;background:#fff;border-radius:18px;padding:6px 10px;cursor:pointer}.filters button.active{background:#173d52;color:#fff}.item{border:2px solid #e2e9ed;border-radius:12px;padding:11px;margin:7px 0;cursor:pointer}.item.active{border-color:#168bd2;background:#eef8fe}.item h3{margin:0;font-size:15px}.row{display:flex;align-items:center;justify-content:space-between;gap:10px}.badge{font-size:12px;padding:4px 8px;border-radius:16px;background:#e9eef1}.approved{background:#dff5e4;color:#17662b}.rejected{background:#fee1e1;color:#8d2020}.pending{color:#53636d}main{padding:14px 18px;overflow-y:auto;min-height:0}.empty{display:grid;place-items:center;height:100%;color:#6c7d87}.title{font-size:18px;font-weight:800}.viewer{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:10px 0}.view{background:#0b1115;border-radius:12px;overflow:hidden;position:relative;height:min(38vh,430px)}.view label{position:absolute;z-index:1;left:9px;top:8px;background:#0009;color:#fff;padding:4px 8px;border-radius:10px}.view video,.view img{width:100%;height:100%;object-fit:contain;display:block}.panel{background:#fff;border-radius:12px;padding:12px;margin-top:10px}.timebar{display:grid;grid-template-columns:90px 1fr;align-items:center;gap:10px}.timebar input{width:100%}.review{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.review input{width:150px;border:1px solid #cbd7dd;border-radius:8px;padding:9px}.review button,.trim button,.align button,.marker button{border:0;border-radius:9px;padding:10px 14px;font-weight:750;cursor:pointer}.yes{background:#24a148;color:#fff}.no{background:#da3b3b;color:#fff}.next{background:#e8edf0}.trim{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.start{background:#168bd2;color:#fff}.end{background:#e18b00;color:#fff}.marker{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid #e2e9ed}.marker .seek{background:#eef8fe;color:#075f91}.marker .delete{margin-left:auto;background:#f5f5f5;color:#8d2020;padding:6px 9px}.message{min-height:20px;margin-top:7px;color:#a33220;font-weight:650}.align{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:8px}.align input{width:100px;padding:7px}.align button{border:1px solid #cbd7dd;background:#fff;padding:7px 9px}details{margin-top:10px;color:#53636d}@media(max-width:900px){body{overflow:auto}.layout{display:block;height:auto}aside{max-height:260px}.viewer{grid-template-columns:1fr}.view{height:300px}main{overflow:visible}}
+</style></head><body><header class="top"><h1>UMI 数据审核</h1><div id="summary"></div></header><div class="layout"><aside><div class="filters" id="filters"></div><div id="list"></div></aside><main><div id="empty" class="empty">请选择一条数据</div><div id="detail" hidden><div class="row"><div class="title" id="title"></div><button class="next" onclick="nextItem()">下一条</button></div><div class="viewer"><div class="view"><label>左</label><img id="left"><video id="leftVideo" controls muted playsinline hidden></video></div><div class="view"><label>右</label><img id="right"><video id="rightVideo" controls muted playsinline hidden></video></div></div><div class="panel timebar"><b id="time">0.000 秒</b><input id="slider" type="range" min="0" max="0" step="0.033333" value="0"></div><section class="panel"><div class="review"><b>数据能用吗？</b><input id="reviewer" placeholder="审核人"><button class="yes" id="yesButton" onclick="saveUsability(true)">能用</button><button class="no" onclick="saveUsability(false)">不能用</button><span id="reviewState"></span></div><div class="message" id="message"></div></section><section class="panel" id="trimPanel" hidden><div class="trim"><b>裁剪点</b><button class="start" onclick="addKeyframe('useful_start')">开始</button><button class="end" onclick="addKeyframe('useful_end')">结束</button><span>当前 <b id="cutTime">0.000 秒</b></span></div><div class="message" id="keyframeMessage"></div><div id="keyframes"></div></section><details class="panel" id="alignmentDetails"><summary>左右对齐微调</summary><div class="align"><button onclick="adjustAlignment(1/videoFps)">右提前1帧</button><button onclick="adjustAlignment(-1/videoFps)">右延后1帧</button><input id="alignmentOffset" type="number" min="-30" max="30" step="0.001" onchange="setAlignment(Number(this.value))"><span id="alignmentValue"></span><button onclick="saveAlignment()">保存</button></div><div class="message" id="alignmentMessage"></div></details></div></main></div><script>
+let items=[],current=null,currentData=null,filter='all',manualOffset=0,videoFps=30;const labels={approved:'可用',rejected:'不可用',reprocess:'需处理',reprocessed:'已处理',pending:'待审核'};const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 async function api(url,opt){const r=await fetch(url,opt);const j=await r.json();if(!r.ok)throw Error(j.error||'操作失败');return j}function status(i){return i.decision&&!i.stale_review?i.decision:'pending'}
-function renderFilters(){const f=[['all','全部'],['pending','待审核'],['approved','已通过'],['reprocess','需重处理'],['rejected','不能使用']];filters.innerHTML=f.map(x=>`<button class="${filter===x[0]?'active':''}" onclick="filter='${x[0]}';renderList()">${x[1]}</button>`).join('')}
-function renderList(){renderFilters();const shown=items.filter(i=>filter==='all'||status(i)===filter);list.innerHTML=shown.map(i=>`<div class="item ${current===i.pair_id?'active':''}" onclick="openItem('${i.pair_id}')"><div class="row"><h3>${esc(i.pair_id)}</h3><span class="badge ${status(i)}">${labels[status(i)]||'待审核'}</span></div><div>画面 ${i.metrics.rgb_samples} 秒 · Tag可用 ${(i.metrics.tag_usable_ratio*100).toFixed(0)}%</div></div>`).join('');const done=items.filter(i=>status(i)!=='pending').length;summary.textContent=`已审核 ${done} / ${items.length}`}
-async function load(){items=await api('/api/items');renderList();if(items.length)openItem(items.find(i=>status(i)==='pending')?.pair_id||items[0].pair_id)}
-async function openItem(id){current=id;selectedReasons.clear();const data=await api(`/api/items/${id}`);const index=items.findIndex(i=>i.pair_id===id);empty.hidden=true;detail.hidden=false;step.textContent=`第 ${index+1} 条，共 ${items.length} 条：${id}`;auto.textContent=data.metrics.auto_status==='pass_candidate'?'系统初检：没有发现明显问题':'系统初检：建议认真检查';threeD.className='threed '+(data.metrics.three_d_ready?'ready':'');threeD.innerHTML=data.metrics.three_d_ready?`3D与视频同步审核已就绪：<a href="${esc(data.metrics.three_d_url)}" target="_blank">打开3D审核画面</a>`:'尚未生成3D与视频同步审核画面，当前数据不能点“通过”';passButton.disabled=!data.metrics.three_d_ready;slider.max=Math.max(0,data.metrics.rgb_samples-1);slider.value=0;reviewer.value=localStorage.reviewer||data.reviewer||'';notes.value=data.notes||'';renderReasons();advanced.textContent=JSON.stringify(data.metrics,null,2);timeline=await api(`/api/items/${id}/timeline`);drawChart();updateFrame();await loadSegments();const h=await api(`/api/items/${id}/history`);history.innerHTML='<h3>审核历史</h3>'+h.map(x=>`<div class="history">${esc(x.created_at)} · ${esc(x.reviewer)} · ${labels[x.decision]||x.decision}<br>${esc(x.notes)}</div>`).join('');renderList()}
-function renderReasons(){reasons.innerHTML=Object.entries(window.REASONS||{}).map(([k,v])=>`<button class="reason ${selectedReasons.has(k)?'selected':''}" onclick="toggleReason('${k}')">${v}</button>`).join('')}function toggleReason(k){selectedReasons.has(k)?selectedReasons.delete(k):selectedReasons.add(k);renderReasons()}
-function updateFrame(){if(!current)return;const i=slider.value;time.textContent=`第 ${Number(i)+1} 秒`;left.src=`/api/items/${current}/frame?role=left&index=${i}`;right.src=`/api/items/${current}/frame?role=right&index=${i}`}slider.oninput=updateFrame;
-async function loadSuggestions(){const rows=await api(`/api/items/${current}/suggestions`);segments.innerHTML=rows.length?'<h3>系统建议的动作片段</h3>'+rows.map((x,i)=>`<button class="reason" onclick="useSuggestion(${x.start_s},${x.end_s})">建议 ${i+1}：${x.start_s.toFixed(1)}–${x.end_s.toFixed(1)}秒</button>`).join(''):'3D轨迹未就绪，暂时不能自动找动作'}function useSuggestion(a,b){segStart=a;segEnd=b;slider.value=Math.floor(a);updateFrame();renderSegmentRange()}function markStart(){segStart=Number(slider.value);renderSegmentRange()}function markEnd(){segEnd=Number(slider.value)+1;renderSegmentRange()}function renderSegmentRange(){segmentRange.textContent=segStart===null||segEnd===null?'还没有选择时间':`${segStart}秒 到 ${segEnd}秒`}async function loadSegments(){const rows=await api(`/api/items/${current}/segments`);segments.innerHTML=rows.length?rows.map(x=>`<div class="segment-row"><b>${x.start_s.toFixed(1)}–${x.end_s.toFixed(1)}秒 · ${esc((window.SEGMENT_LABELS||{})[x.label]||x.label)}</b> · ${labels[x.decision]||'待审核'}<br>${esc(x.notes||'')}<div class="segment-actions"><button onclick="reviewSegment(${x.id},'approved')">这一步通过</button><button onclick="reviewSegment(${x.id},'reprocess')">这一步重处理</button><button onclick="reviewSegment(${x.id},'rejected')">这一步不用</button></div></div>`).join(''):'还没有保存动作步骤'}async function saveSegment(){segmentMessage.textContent='';const name=reviewer.value.trim();if(!name){segmentMessage.textContent='请先填写审核人姓名';return}if(segStart===null||segEnd===null||segEnd<=segStart){segmentMessage.textContent='请先选择正确的开始和结束时间';return}try{await api(`/api/items/${current}/segments`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({start_s:segStart,end_s:segEnd,label:segmentLabel.value,success:segmentSuccess.checked,notes:notes.value,reviewer:name})});segStart=segEnd=null;renderSegmentRange();await loadSegments()}catch(e){segmentMessage.textContent=e.message}}
-async function reviewSegment(id,decision){segmentMessage.textContent='';const name=reviewer.value.trim();if(!name){segmentMessage.textContent='请先填写审核人姓名';return}if(decision!=='approved'&&!selectedReasons.size){segmentMessage.textContent='请先选择问题原因';return}try{await api(`/api/segments/${id}/review`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision,reasons:[...selectedReasons],notes:notes.value,reviewer:name})});await loadSegments()}catch(e){segmentMessage.textContent=e.message}}function drawChart(){const c=chart,ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);if(!timeline)return;const series=[timeline.tags,timeline.gripper];const colors=['#168bd2','#e18b00'];series.forEach((s,n)=>{if(!s.length)return;const max=Math.max(...s.map(x=>x[1]),1);ctx.strokeStyle=colors[n];ctx.lineWidth=2;ctx.beginPath();s.forEach((p,i)=>{const x=i/(s.length-1||1)*c.width,y=c.height-8-p[1]/max*(c.height-16);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.stroke()})}
-async function save(decision){message.textContent='';const name=reviewer.value.trim();if(!name){message.textContent='请先填写审核人姓名';return}if(decision!=='approved'&&!selectedReasons.size){message.textContent='请先选择一个问题原因';return}localStorage.reviewer=name;try{await api(`/api/items/${current}/review`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision,reasons:[...selectedReasons],notes:notes.value,reviewer:name})});items=await api('/api/items');renderList();nextItem()}catch(e){message.textContent=e.message}}
-function nextItem(){const i=items.findIndex(x=>x.pair_id===current);const pending=items.slice(i+1).find(x=>status(x)==='pending')||items.find(x=>status(x)==='pending');if(pending)openItem(pending.pair_id);else if(items.length)openItem(items[(i+1)%items.length].pair_id)}
-(async()=>{const c=await api('/api/config');window.REASONS=c.reasons;window.SEGMENT_LABELS=c.segment_labels;segmentLabel.innerHTML=Object.entries(c.segment_labels).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');await load()})().catch(e=>{empty.textContent=e.message});
+function renderFilters(){const fs=[['all','全部'],['pending','待审核'],['approved','可用'],['rejected','不可用']];filters.innerHTML=fs.map(x=>`<button class="${filter===x[0]?'active':''}" onclick="filter='${x[0]}';renderList()">${x[1]}</button>`).join('')}
+function renderList(){renderFilters();const shown=items.filter(i=>filter==='all'||status(i)===filter);list.innerHTML=shown.map(i=>`<div class="item ${current===i.pair_id?'active':''}" onclick="openItem('${i.pair_id}')"><div class="row"><h3>${esc(i.pair_id)}</h3><span class="badge ${status(i)}">${labels[status(i)]||labels.pending}</span></div><small>${Math.round(i.metrics.duration_s||i.metrics.rgb_samples||0)} 秒</small></div>`).join('');summary.textContent=`${items.filter(i=>status(i)!=='pending').length} / ${items.length}`}
+async function load(){items=await api('/api/items');renderList();if(items.length)await openItem(items.find(i=>status(i)==='pending')?.pair_id||items[0].pair_id)}
+function commonTime(){return leftVideo.hidden?Number(slider.value):Number(leftVideo.currentTime||slider.value)}function updateTime(value){const v=Math.max(0,Number(value)||0);time.textContent=`${v.toFixed(3)} 秒`;cutTime.textContent=`${v.toFixed(3)} 秒`;slider.value=v}
+function rightTarget(){return Math.max(0,Math.min(rightVideo.duration||Infinity,commonTime()+manualOffset))}function syncRight(force=false){const target=rightTarget();if(force||Math.abs(rightVideo.currentTime-target)>.06)rightVideo.currentTime=target}
+async function openItem(id){current=id;currentData=await api(`/api/items/${id}`);const saved=await api(`/api/items/${id}/alignment`);manualOffset=Number(saved.right_time_offset_s||0);videoFps=Number(currentData.metrics.video_fps||30);alignmentOffset.value=manualOffset.toFixed(3);renderAlignment();empty.hidden=true;detail.hidden=false;title.textContent=id;const aligned=!!currentData.metrics.aligned_video_ready;left.hidden=right.hidden=aligned;leftVideo.hidden=rightVideo.hidden=!aligned;alignmentDetails.hidden=!aligned;if(aligned){leftVideo.src=`/api/items/${id}/video?role=left`;rightVideo.src=`/api/items/${id}/video?role=right`;leftVideo.onplay=()=>{syncRight(true);rightVideo.play().catch(()=>{})};leftVideo.onpause=()=>rightVideo.pause();leftVideo.ontimeupdate=()=>{syncRight();updateTime(leftVideo.currentTime)}}slider.max=Math.max(0,Number(currentData.metrics.duration_s||currentData.metrics.rgb_samples||0));slider.step=(1/videoFps).toFixed(6);slider.value=0;reviewer.value=localStorage.reviewer||currentData.reviewer||'';updateTime(0);const s=status(currentData);reviewState.textContent=labels[s]||labels.pending;trimPanel.hidden=s!=='approved';yesButton.disabled=!currentData.metrics.review_ready;await loadKeyframes();renderList()}
+slider.oninput=()=>{const v=Number(slider.value);if(!leftVideo.hidden){leftVideo.currentTime=v;syncRight(true)}else{left.src=`/api/items/${current}/frame?role=left&index=${Math.floor(v)}`;right.src=`/api/items/${current}/frame?role=right&index=${Math.floor(v)}`}updateTime(v)};
+async function saveUsability(usable){message.textContent='';const name=reviewer.value.trim();if(!name){message.textContent='请填写审核人';return}localStorage.reviewer=name;try{await api(`/api/items/${current}/review`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision:usable?'approved':'rejected',reasons:usable?[]:['other'],notes:'',reviewer:name})});items=await api('/api/items');if(usable)await openItem(current);else nextItem()}catch(e){message.textContent=e.message}}
+async function addKeyframe(label){keyframeMessage.textContent='';const name=reviewer.value.trim();if(!name){keyframeMessage.textContent='请填写审核人';return}try{await api(`/api/items/${current}/keyframes`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({time_sec:commonTime(),label,reviewer:name})});await loadKeyframes()}catch(e){keyframeMessage.textContent=e.message}}
+async function loadKeyframes(){if(!current)return;const rows=await api(`/api/items/${current}/keyframes`);keyframes.innerHTML=rows.map(x=>`<div class="marker"><button class="seek" onclick="seekTo(${x.time_sec})">${x.label==='useful_start'?'开始':'结束'} ${x.time_sec.toFixed(3)} 秒 · 帧 ${x.frame}</button><button class="delete" onclick="deleteKeyframe('${x.id}')">删除</button></div>`).join('')}
+function seekTo(v){slider.value=v;slider.oninput()}async function deleteKeyframe(id){try{await api(`/api/keyframes/${id}`,{method:'DELETE'});await loadKeyframes()}catch(e){keyframeMessage.textContent=e.message}}
+function renderAlignment(){alignmentValue.textContent=`${manualOffset>=0?'+':''}${manualOffset.toFixed(3)} 秒`;alignmentOffset.value=manualOffset.toFixed(3)}function setAlignment(v){manualOffset=Math.max(-30,Math.min(30,Number(v)||0));renderAlignment();syncRight(true)}function adjustAlignment(v){setAlignment(manualOffset+v)}async function saveAlignment(){alignmentMessage.textContent='';const name=reviewer.value.trim();if(!name){alignmentMessage.textContent='请填写审核人';return}try{await api(`/api/items/${current}/alignment`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({right_time_offset_s:manualOffset,reviewer:name,notes:''})});alignmentMessage.textContent='已保存'}catch(e){alignmentMessage.textContent=e.message}}
+function nextItem(){const i=items.findIndex(x=>x.pair_id===current);const next=items.slice(i+1).find(x=>status(x)==='pending')||items.find(x=>status(x)==='pending')||items[(i+1)%items.length];if(next)openItem(next.pair_id)}
+load().catch(e=>{empty.textContent=e.message});
 </script></body></html>'''
 
 
@@ -53,10 +54,12 @@ def pair_timeline(directory: Path) -> dict[str, list[list[float]]]:
             second = int(float(row["common_time_s"]))
             tag_values.setdefault(second, []).append(len(row.get("ids", [])))
     gripper_values: dict[int, list[int]] = {}
-    with (directory / "gripper_stats.csv").open(newline="", encoding="utf-8") as handle:
-        for row in csv.DictReader(handle):
-            second = int(float(row["common_time_s"]))
-            gripper_values.setdefault(second, []).append(int(row["candidate_count"]))
+    gripper_path = directory / "gripper_stats.csv"
+    if gripper_path.is_file():
+        with gripper_path.open(newline="", encoding="utf-8") as handle:
+            for row in csv.DictReader(handle):
+                second = int(float(row["common_time_s"]))
+                gripper_values.setdefault(second, []).append(int(row["candidate_count"]))
     return {
         "tags": [[second, sum(values) / len(values)] for second, values in sorted(tag_values.items())],
         "gripper": [[second, sum(values) / len(values)] for second, values in sorted(gripper_values.items())],
@@ -98,9 +101,9 @@ def suggest_segments(directory: Path) -> list[dict[str, float | str]]:
 
 def serve_review_ui(
     dataset_root: Path, *, host: str = "127.0.0.1", port: int = 7869,
-    open_browser: bool = True,
+    open_browser: bool = True, state_root: Path | None = None,
 ) -> None:
-    store = ReviewStore(dataset_root)
+    store = ReviewStore(dataset_root, state_root=state_root)
     store.scan()
 
     class Handler(BaseHTTPRequestHandler):
@@ -112,6 +115,33 @@ def serve_review_ui(
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def file_response(self, path: Path, content_type: str) -> None:
+            size = path.stat().st_size
+            start, end = 0, size - 1
+            range_header = self.headers.get("Range", "")
+            status = HTTPStatus.OK
+            if range_header.startswith("bytes="):
+                bounds = range_header[6:].split("-", 1)
+                start = int(bounds[0] or 0)
+                end = min(int(bounds[1]) if bounds[1] else size - 1, size - 1)
+                if start < 0 or start > end:
+                    raise ValueError("invalid byte range")
+                status = HTTPStatus.PARTIAL_CONTENT
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(end - start + 1))
+            if status == HTTPStatus.PARTIAL_CONTENT:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            self.end_headers()
+            with path.open("rb") as handle:
+                handle.seek(start)
+                remaining = end - start + 1
+                while remaining:
+                    chunk = handle.read(min(1024 * 1024, remaining))
+                    if not chunk: break
+                    self.wfile.write(chunk); remaining -= len(chunk)
 
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
@@ -132,7 +162,7 @@ def serve_review_ui(
                         "segment_labels": SEGMENT_LABELS,
                     })
                 if path == "/api/items":
-                    return self.json_response(store.list_items())
+                    return self.json_response(store.scan())
                 if path == "/api/reprocess-queue":
                     value = json.loads(store.queue_path.read_text()) if store.queue_path.is_file() else {"items": []}
                     return self.json_response(value)
@@ -144,14 +174,25 @@ def serve_review_ui(
                         return self.json_response(item)
                     if parts[3] == "history":
                         return self.json_response(store.history(pair_id))
+                    if parts[3] == "alignment":
+                        return self.json_response(store.get_alignment(pair_id))
                     if parts[3] == "timeline":
                         return self.json_response(pair_timeline(Path(item["source_dir"])))
                     if parts[3] == "segments":
                         return self.json_response(store.list_segments(pair_id))
+                    if parts[3] == "keyframes":
+                        return self.json_response(store.list_keyframes(pair_id))
                     if parts[3] == "suggestions":
                         return self.json_response(
                             suggest_segments(Path(item["source_dir"]))
                         )
+                    if parts[3] == "video":
+                        query = parse_qs(parsed.query)
+                        role = query.get("role", [""])[0]
+                        if role not in {"left", "right"}:
+                            raise ValueError("invalid role")
+                        video = Path(item["source_dir"]) / "video" / f"{role.title()}.mp4"
+                        return self.file_response(video, "video/mp4")
                     if parts[3] == "frame":
                         query = parse_qs(parsed.query)
                         role = query.get("role", [""])[0]
@@ -183,7 +224,7 @@ def serve_review_ui(
             item_action = (
                 len(parts) == 4
                 and parts[:2] == ["api", "items"]
-                and parts[3] in {"review", "segments"}
+                and parts[3] in {"review", "segments", "alignment", "keyframes"}
             )
             segment_action = (
                 len(parts) == 4
@@ -204,11 +245,24 @@ def serve_review_ui(
                         notes=str(payload.get("notes", "")),
                         reviewer=str(payload.get("reviewer", "")),
                     )
+                elif parts[3] == "alignment":
+                    result = store.save_alignment(
+                        parts[2],
+                        right_time_offset_s=float(payload.get("right_time_offset_s", 0)),
+                        reviewer=str(payload.get("reviewer", "")),
+                        notes=str(payload.get("notes", "")),
+                    )
                 elif parts[3] == "review":
                     result = store.add_review(
                         parts[2], decision=str(payload.get("decision", "")),
                         reasons=list(payload.get("reasons", [])),
                         notes=str(payload.get("notes", "")),
+                        reviewer=str(payload.get("reviewer", "")),
+                    )
+                elif parts[3] == "keyframes":
+                    result = store.add_keyframe(
+                        parts[2], time_sec=float(payload.get("time_sec", -1)),
+                        label=str(payload.get("label", "")),
                         reviewer=str(payload.get("reviewer", "")),
                     )
                 else:
@@ -223,6 +277,16 @@ def serve_review_ui(
                 self.json_response(result, HTTPStatus.CREATED)
             except (KeyError, ValueError, json.JSONDecodeError) as error:
                 self.json_response({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def do_DELETE(self) -> None:
+            parts = unquote(urlparse(self.path).path).strip("/").split("/")
+            if len(parts) != 3 or parts[:2] != ["api", "keyframes"]:
+                return self.json_response({"error": "not found"}, HTTPStatus.NOT_FOUND)
+            try:
+                store.delete_keyframe(parts[2])
+                self.json_response({"deleted": True})
+            except KeyError as error:
+                self.json_response({"error": str(error)}, HTTPStatus.NOT_FOUND)
 
         def log_message(self, format: str, *args: Any) -> None:
             return
