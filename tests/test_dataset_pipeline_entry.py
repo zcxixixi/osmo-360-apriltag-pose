@@ -17,7 +17,11 @@ from osmo360.pipeline.dataset_worker import (
     trajectory_sample_stride,
 )
 from osmo360.pipeline.insta360_telemetry import ImuSamples
-from osmo360.pipeline.instaumi_format import common_window, write_dataset_h5
+from osmo360.pipeline.instaumi_format import (
+    common_window,
+    packet_timeline,
+    write_dataset_h5,
+)
 from osmo360.pipeline.manifest import ManifestError
 
 
@@ -99,6 +103,44 @@ def test_audio_sync_reports_right_time_from_left_offset(tmp_path: Path):
 def test_common_window_trims_the_leading_side() -> None:
     assert common_window(10.0, 12.0, 0.25) == pytest.approx((0.0, 0.25, 10.0))
     assert common_window(10.0, 12.0, -0.25) == pytest.approx((0.25, 0.0, 9.75))
+
+
+def test_packet_timeline_sorts_hevc_decode_order_by_pts(monkeypatch) -> None:
+    output = "\n".join((
+        "0,0.000000,K__",
+        "2048,0.133333,___",
+        "1024,0.066667,___",
+        "512,0.033333,___",
+        "1536,0.100000,___",
+    ))
+    monkeypatch.setattr(
+        "osmo360.pipeline.instaumi_format.subprocess.run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, output, ""),
+    )
+
+    timeline = packet_timeline(Path("ffprobe"), Path("aligned.mp4"), 1.25)
+
+    assert timeline["frame_index"].tolist() == [0, 1, 2, 3, 4]
+    assert timeline["pts"].tolist() == [0, 512, 1024, 1536, 2048]
+    assert timeline["timestamp_ns"].tolist() == [
+        0, 33_333_000, 66_667_000, 100_000_000, 133_333_000,
+    ]
+    assert timeline["source_timestamp_ns"].tolist() == [
+        1_250_000_000, 1_283_333_000, 1_316_667_000,
+        1_350_000_000, 1_383_333_000,
+    ]
+    assert timeline["keyframe"].tolist() == [1, 0, 0, 0, 0]
+
+
+def test_packet_timeline_rejects_duplicate_pts(monkeypatch) -> None:
+    output = "0,0.000000,K__\n0,0.000000,___"
+    monkeypatch.setattr(
+        "osmo360.pipeline.instaumi_format.subprocess.run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, output, ""),
+    )
+
+    with pytest.raises(ManifestError, match="duplicate or invalid PTS"):
+        packet_timeline(Path("ffprobe"), Path("aligned.mp4"), 0.0)
 
 
 def test_trajectory_sampling_targets_thirty_hz_without_upsampling() -> None:
