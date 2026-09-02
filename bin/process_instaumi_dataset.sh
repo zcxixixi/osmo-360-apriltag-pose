@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+TRAJECTORY_ONLY=0
+if [[ $# -eq 2 && "$1" == "--trajectory-only" ]]; then
+    TRAJECTORY_ONLY=1
+    shift
+fi
 if [[ $# -ne 1 ]]; then
-    printf 'Usage: %s /absolute/path/to/instaumi-dataset\n' "$0" >&2
+    printf 'Usage: %s [--trajectory-only] /absolute/path/to/instaumi-dataset\n' "$0" >&2
     exit 2
 fi
 
@@ -62,9 +67,15 @@ else
 fi
 printf '[轨迹 1/2] 完成；累计耗时：%ss\n' "$(elapsed_seconds)" >&2
 
-printf '[导出 2/2] 正在原子发布轨迹与夹爪 CSV\n' >&2
+if [[ "$TRAJECTORY_ONLY" -eq 1 ]]; then
+    printf '[导出 2/2] 正在原子发布世界 FLU 联合轨迹 CSV\n' >&2
+    EXPORT_MODE=(--trajectory-only)
+else
+    printf '[导出 2/2] 正在原子发布轨迹与夹爪 CSV\n' >&2
+    EXPORT_MODE=()
+fi
 if "$REPO_ROOT/.venv/bin/python" -m osmo360.datasets.instaumi_processed_export \
-    --remove-pipeline-final "$DATASET_ROOT" >/dev/null
+    --remove-pipeline-final "${EXPORT_MODE[@]}" "$DATASET_ROOT" >/dev/null
 then
     :
 else
@@ -75,5 +86,9 @@ else
 fi
 
 printf '[完成] 整条处理耗时：%ss\n' "$(elapsed_seconds)" >&2
-printf '[输出] %s/{trajectory,gripper,processed,metadata}.csv\n' \
-    "$DATASET_ROOT/processed" >&2
+if [[ "$TRAJECTORY_ONLY" -eq 1 ]]; then
+    printf '[输出] %s/trajectory.csv\n' "$DATASET_ROOT/processed" >&2
+else
+    printf '[输出] %s/{trajectory,gripper,processed,metadata}.csv\n' \
+        "$DATASET_ROOT/processed" >&2
+fi

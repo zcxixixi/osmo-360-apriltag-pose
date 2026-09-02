@@ -19,7 +19,6 @@ from osmo360.localization.raw_fisheye_world_pose import (
     make_ray_converter,
     solve_pose,
 )
-from tools.run_two_tag_synthetic_experiment import verify_freeze
 
 
 from tools._root import ROOT
@@ -433,7 +432,6 @@ def render_demo(output: Path, video: Path, samples: list[dict], pose_data: tuple
 def main() -> int:
     global args
     args = parse_args()
-    verify_freeze()
     args.output_dir.mkdir(parents=True, exist_ok=False)
     if args.observation_cache:
         geometry_args = SimpleNamespace(

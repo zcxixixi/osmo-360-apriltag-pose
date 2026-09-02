@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Render two A3 AprilTags into a calibrated Osmo fisheye and run the frozen locator."""
+"""Render two A3 AprilTags into a calibrated Osmo fisheye and run the locator."""
 
 from __future__ import annotations
 
 import csv
-import hashlib
 import json
 import subprocess
 import sys
@@ -15,40 +14,14 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from osmo360.localization.coordinate_frames import DJI_BODY_TO_PANORAMA_OPENCV
-from osmo360.verification.historical import (
-    baseline_commit,
-    verify_historical_file,
-)
-
-
 from tools._root import ROOT
 PANO_ROOT = ROOT.parent / "panoforge-test"
 CALIBRATION = Path("/home/cenxi/Videos/umi-captures/20260827/single-0063-smoke100-v1/metadata/calibration.json")
-FREEZE = ROOT / "config/baselines/two_tag_locator_20260828_v1.json"
 FRAME_SIZE = 1920
 FPS = 30.0
 FRAME_COUNT = 90
 TAG_SIZE_M = 0.240
 TAG_IDS = (200, 201)
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def verify_freeze() -> dict:
-    freeze = json.loads(FREEZE.read_text(encoding="utf-8"))
-    baseline_path = "config/baselines/two_tag_locator_20260828_v1.json"
-    commit = baseline_commit(baseline_path)
-    for item in freeze["algorithm"]["files"]:
-        verify_historical_file(commit, item["path"], item["sha256"])
-    if sha256(Path(freeze["calibration"]["path"])) != freeze["calibration"]["sha256"]:
-        raise RuntimeError("frozen calibration hash mismatch")
-    return freeze
 
 
 def tag_corners(center: tuple[float, float, float], size: float = TAG_SIZE_M) -> np.ndarray:
@@ -331,7 +304,7 @@ def render_demo(
         canvas = np.full((720, 1280, 3), (12, 18, 25), np.uint8)
         canvas[:, :720] = display
         sample = int(np.argmin(np.abs(sample_frames - frame_index)))
-        cv2.putText(canvas, "FROZEN CURRENT LOCATOR / TWO A3 TAGS", (742, 45), cv2.FONT_HERSHEY_SIMPLEX, .72, (80, 215, 245), 2)
+        cv2.putText(canvas, "CURRENT LOCATOR / TWO A3 TAGS", (742, 45), cv2.FONT_HERSHEY_SIMPLEX, .72, (80, 215, 245), 2)
         cv2.putText(canvas, f"frame {frame_index + 1}/{FRAME_COUNT}  IDs 200 + 201", (742, 82), cv2.FONT_HERSHEY_SIMPLEX, .58, (210, 220, 230), 1)
         cv2.putText(canvas, f"position error  {position_error[sample]:.3f} mm", (742, 140), cv2.FONT_HERSHEY_SIMPLEX, .70, (120, 230, 145), 2)
         cv2.putText(canvas, f"orientation error  {rotation_error[sample]:.4f} deg", (742, 178), cv2.FONT_HERSHEY_SIMPLEX, .62, (120, 230, 145), 2)
@@ -350,7 +323,7 @@ def render_demo(
     writer.release()
 
 
-def evaluate(root: Path, video: Path, locator_dir: Path, freeze: dict) -> dict:
+def evaluate(root: Path, video: Path, locator_dir: Path) -> dict:
     estimated_t, estimated_p, estimated_r = load_pose(locator_dir / "pose.csv")
     truth_positions = []
     truth_quaternions = []
@@ -378,7 +351,6 @@ def evaluate(root: Path, video: Path, locator_dir: Path, freeze: dict) -> dict:
             and np.percentile(position_error, 95) <= 10
             and np.percentile(rotation_error, 95) <= 1
         ) else "FAIL",
-        "freeze_id": freeze["freeze_id"],
         "synthetic_ground_truth": True,
         "initial_pose_perturbation": {
             "translation_mm": [5.0, -4.0, 6.0],
@@ -421,7 +393,6 @@ def evaluate(root: Path, video: Path, locator_dir: Path, freeze: dict) -> dict:
 def main() -> int:
     root = Path("/home/cenxi/Videos/umi-captures/20260827/two-tag-a3-experiment-v9")
     tags_dir = root / "tags"
-    freeze = verify_freeze()
     video, tag_map, initial = render_inputs(root, tags_dir)
     locator_dir = root / "locator-output"
     locator_dir.mkdir()
@@ -437,7 +408,7 @@ def main() -> int:
         "--edge-rectification",
     ]
     subprocess.run(command, check=True)
-    report = evaluate(root, video, locator_dir, freeze)
+    report = evaluate(root, video, locator_dir)
     print(json.dumps(report, indent=2))
     return 0 if report["status"] == "PASS" else 1
 

@@ -49,6 +49,10 @@ STREAM0_FROM_HAND_FLU = Rotation.from_matrix(
     X5_STREAM0_OPENCV_FROM_HAND_CAMERA_FLU
 )
 MAXIMUM_TRUSTED_INTERPOLATION_GAP_S = 0.25
+MAXIMUM_ABSOLUTE_SPEED_M_S = 3.0
+MAXIMUM_ABSOLUTE_ANGULAR_SPEED_DEG_S = 540.0
+MAXIMUM_IMU_VISUAL_ROTATION_RESIDUAL_DEG = 15.0
+MINIMUM_TEMPORAL_RECOVERY_INLIER_TAGS = 5
 
 
 def pose_to_hand_camera_flu(pose: Pose) -> Pose:
@@ -398,16 +402,21 @@ def _temporal_gate(
     sources: set[str],
     dominant_lens_stream: int | None = None,
     previous_dominant_lens_stream: int | None = None,
+    imu_stream: ImuSeries | None = None,
+    recovery_required: bool = False,
 ) -> dict[str, Any]:
-    """Reject implausible weak planar-PnP branches without smoothing motion.
+    """Reject physically implausible or IMU-inconsistent visual branches.
 
     Two co-planar Tags carried only by LK optical flow are useful for filling
     ordinary motion, but they do not provide enough independent evidence to
     accept a sudden IPPE branch change. A dominant calibrated-lens handoff is
     also treated as weak evidence for one frame: the two fisheye lenses have
     distinct optical centres, and a solve change at that exact boundary can
-    otherwise become a false measured jump. Fast same-lens direct
-    re-detections remain unrestricted.
+    otherwise become a false measured jump. Every solve also has a deliberately
+    generous absolute motion ceiling. After such a rejection, the tracker only
+    reacquires on strong geometry that is consistent with the last accepted
+    pose. When a calibrated per-side gyro is available, weak visual attitude is
+    checked against its short-horizon prediction.
     """
     result: dict[str, Any] = {
         "delta_s": None,
@@ -415,6 +424,11 @@ def _temporal_gate(
         "angular_speed_deg_s": None,
         "weak_flow_only_measurement": False,
         "lens_handoff_measurement": False,
+        "absolute_motion_outlier": False,
+        "recovery_required": recovery_required,
+        "imu_prediction_available": False,
+        "imu_prediction_reason": "not_requested",
+        "imu_visual_rotation_residual_deg": None,
         "dominant_lens_stream": dominant_lens_stream,
         "previous_dominant_lens_stream": previous_dominant_lens_stream,
         "rejected": False,
@@ -438,22 +452,66 @@ def _temporal_gate(
         and dominant_lens_stream != previous_dominant_lens_stream
     )
     exceeds_motion_limit = speed > 1.5 or angular_speed > 180.0
-    rejected = (weak or lens_handoff) and exceeds_motion_limit
+    absolute_motion_outlier = (
+        speed > MAXIMUM_ABSOLUTE_SPEED_M_S
+        or angular_speed > MAXIMUM_ABSOLUTE_ANGULAR_SPEED_DEG_S
+    )
+    recovery_outlier = recovery_required and (
+        inlier_tag_count < MINIMUM_TEMPORAL_RECOVERY_INLIER_TAGS
+        or exceeds_motion_limit
+    )
+    imu_residual = None
+    imu_reason = "stream_unavailable"
+    if imu_stream is not None:
+        try:
+            prediction = imu_stream.predict_orientation(
+                previous_time,
+                pose_to_hand_camera_flu(previous_pose).rotation,
+                now_s,
+            )
+        except (ImuAssistanceUnavailable, ValueError) as exc:
+            imu_reason = str(exc)
+        else:
+            candidate_rotation = pose_to_hand_camera_flu(pose).rotation
+            imu_residual = float(np.degrees(
+                (prediction.rotation.inv() * candidate_rotation).magnitude()
+            ))
+            imu_reason = "available"
+    imu_inconsistent = bool(
+        imu_residual is not None
+        and imu_residual > MAXIMUM_IMU_VISUAL_ROTATION_RESIDUAL_DEG
+        and (inlier_tag_count <= 4 or flow_only or lens_handoff)
+    )
+    rejected = bool(
+        absolute_motion_outlier
+        or recovery_outlier
+        or ((weak or lens_handoff) and exceeds_motion_limit)
+        or imu_inconsistent
+    )
+    if absolute_motion_outlier:
+        reason = "pose_exceeds_absolute_temporal_limits"
+    elif recovery_outlier:
+        reason = "temporal_recovery_requires_strong_consistent_geometry"
+    elif lens_handoff and exceeds_motion_limit:
+        reason = "lens_handoff_pose_exceeds_temporal_limits"
+    elif weak and exceeds_motion_limit:
+        reason = "sparse_flow_planar_pose_exceeds_temporal_limits"
+    elif imu_inconsistent:
+        reason = "weak_visual_rotation_disagrees_with_imu"
+    else:
+        reason = "accepted"
     result.update({
         "delta_s": delta_s,
         "speed_m_s": speed,
         "angular_speed_deg_s": angular_speed,
         "weak_flow_only_measurement": weak,
         "lens_handoff_measurement": lens_handoff,
+        "absolute_motion_outlier": absolute_motion_outlier,
+        "imu_prediction_available": imu_residual is not None,
+        "imu_prediction_reason": imu_reason,
+        "imu_visual_rotation_residual_deg": imu_residual,
         "rejected": rejected,
-        "reason": (
-            "lens_handoff_pose_exceeds_temporal_limits"
-            if lens_handoff and exceeds_motion_limit
-            else (
-                "sparse_flow_planar_pose_exceeds_temporal_limits"
-                if weak and exceeds_motion_limit else "accepted"
-            )
-        ),
+        "reason": reason,
     })
     return result
 
@@ -483,6 +541,7 @@ def track_cache(
     *,
     minimum_tags: int = 2,
     max_angular_rmse_deg: float = 2.0,
+    imu_stream: ImuSeries | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     frames, times = load_cache_frames(cache_path)
     world_corners = dict(panel_a)
@@ -493,6 +552,7 @@ def track_cache(
     rows: list[dict[str, Any]] = []
     previous: tuple[float, Pose] | None = None
     previous_observed_dominant_lens: int | None = None
+    temporal_recovery_required = False
     for frame, detections in sorted(frames.items()):
         ids = sorted(set(detections) & set(world_corners))
         if len(ids) < minimum_tags:
@@ -556,6 +616,8 @@ def track_cache(
             sources=sources,
             dominant_lens_stream=dominant_lens,
             previous_dominant_lens_stream=previous_observed_dominant_lens,
+            imu_stream=imu_stream,
+            recovery_required=temporal_recovery_required,
         )
         quality = "valid" if rmse <= max_angular_rmse_deg else "angular_rmse_rejected"
         if quality != "valid":
@@ -570,6 +632,9 @@ def track_cache(
             previous_observed_dominant_lens = dominant_lens
         if quality == "valid":
             previous = (now_s, pose)
+            temporal_recovery_required = False
+        elif temporal["rejected"]:
+            temporal_recovery_required = True
         output_pose = pose_to_hand_camera_flu(pose)
         quaternion = output_pose.rotation.as_quat()
         euler = output_pose.rotation.as_euler("xyz", degrees=True)
@@ -618,6 +683,11 @@ def track_cache(
                 "" if temporal["angular_speed_deg_s"] is None
                 else f"{temporal['angular_speed_deg_s']:.6f}"
             ),
+            "temporal_imu_rotation_residual_deg": (
+                "" if temporal["imu_visual_rotation_residual_deg"] is None
+                else f"{temporal['imu_visual_rotation_residual_deg']:.6f}"
+            ),
+            "temporal_imu_prediction_status": temporal["imu_prediction_reason"],
             "temporal_gate_reason": temporal["reason"],
             "quality_status": quality,
         })
@@ -642,6 +712,24 @@ def track_cache(
                 == "lens_handoff_pose_exceeds_temporal_limits"
             for row in rows
         ),
+        "absolute_motion_temporal_outlier_rejected_frames": sum(
+            row["quality_status"] == "temporal_outlier_rejected"
+            and row["temporal_gate_reason"]
+                == "pose_exceeds_absolute_temporal_limits"
+            for row in rows
+        ),
+        "imu_inconsistent_temporal_outlier_rejected_frames": sum(
+            row["quality_status"] == "temporal_outlier_rejected"
+            and row["temporal_gate_reason"]
+                == "weak_visual_rotation_disagrees_with_imu"
+            for row in rows
+        ),
+        "temporal_recovery_rejected_frames": sum(
+            row["quality_status"] == "temporal_outlier_rejected"
+            and row["temporal_gate_reason"]
+                == "temporal_recovery_requires_strong_consistent_geometry"
+            for row in rows
+        ),
         "angular_rmse_deg": {
             "median": float(np.median(residuals)) if len(residuals) else None,
             "p95": float(np.percentile(residuals, 95)) if len(residuals) else None,
@@ -664,7 +752,8 @@ POSE_FIELDS = [
     "inlier_count", "angular_rmse_deg", "detected_ids", "inlier_ids",
     "measurement_source", "dominant_lens_stream", "inlier_lens_stream_counts",
     "temporal_delta_s", "temporal_speed_m_s",
-    "temporal_angular_speed_deg_s", "temporal_gate_reason", "quality_status",
+    "temporal_angular_speed_deg_s", "temporal_imu_rotation_residual_deg",
+    "temporal_imu_prediction_status", "temporal_gate_reason", "quality_status",
 ]
 
 
@@ -731,6 +820,8 @@ def write_joint_pose_csv(
     untrusted_joint_frames = 0
     held_untrusted_side_frames = {"left": 0, "right": 0}
     imu_assisted_side_frames = {"left": 0, "right": 0}
+    trusted_imu_assisted_side_frames = {"left": 0, "right": 0}
+    untrusted_imu_assisted_side_frames = {"left": 0, "right": 0}
     visual_long_gap_fallback_side_frames = {"left": 0, "right": 0}
     imu_bridge_maximum_sample_gap_s = {"left": 0.0, "right": 0.0}
     imu_bridge_maximum_endpoint_closure_deg = {"left": 0.0, "right": 0.0}
@@ -815,12 +906,14 @@ def write_joint_pose_csv(
             if lower < 0 or upper >= len(series_times):
                 continue
             gap = float(series_times[upper] - series_times[lower])
+            source_status = (
+                "missing"
+                if source is None
+                else str(source.get("quality_status", "rejected"))
+            )
             if gap > maximum_interpolation_gap_s + 1e-12:
                 rejected_interpolation_gaps[side].append(gap)
                 untrusted_side_frames[side] += 1
-                source_status = (
-                    "missing" if source is None else str(source.get("quality_status", "rejected"))
-                )
                 position = np.asarray([
                     np.interp(now_s, series_times, series_positions[:, axis])
                     for axis in range(3)
@@ -863,6 +956,7 @@ def write_joint_pose_csv(
                             f"source={source_status}"
                         )
                         imu_assisted_side_frames[side] += 1
+                        untrusted_imu_assisted_side_frames[side] += 1
                         imu_bridge_maximum_sample_gap_s[side] = max(
                             imu_bridge_maximum_sample_gap_s[side],
                             bridge.maximum_sample_gap_s,
@@ -893,6 +987,44 @@ def write_joint_pose_csv(
             ])
             quaternion = slerp([now_s]).as_quat()[0]
             trusted_interpolation_gaps[side].append(gap)
+            pose_state = "INTERPOLATED"
+            quality_status = "interpolated"
+            measurement_source = (
+                "temporal_interpolation_between_cached_bearing_poses"
+            )
+            stream = imu_streams.get(side)
+            if stream is not None:
+                try:
+                    bridge = stream.bridge_orientations(
+                        float(series_times[lower]),
+                        valid_series[side][2][lower],
+                        float(series_times[upper]),
+                        valid_series[side][2][upper],
+                        np.asarray([now_s]),
+                    )
+                except ImuAssistanceUnavailable as exc:
+                    reason = str(exc)
+                    imu_fallback_reasons[side][reason] = (
+                        imu_fallback_reasons[side].get(reason, 0) + 1
+                    )
+                else:
+                    quaternion = bridge.rotations.as_quat()[0]
+                    pose_state = "IMU_ASSISTED"
+                    quality_status = "imu_assisted"
+                    measurement_source = (
+                        "visual_position_interpolation+calibrated_gyro_bridge:"
+                        f"source={source_status}"
+                    )
+                    imu_assisted_side_frames[side] += 1
+                    trusted_imu_assisted_side_frames[side] += 1
+                    imu_bridge_maximum_sample_gap_s[side] = max(
+                        imu_bridge_maximum_sample_gap_s[side],
+                        bridge.maximum_sample_gap_s,
+                    )
+                    imu_bridge_maximum_endpoint_closure_deg[side] = max(
+                        imu_bridge_maximum_endpoint_closure_deg[side],
+                        bridge.endpoint_closure_deg,
+                    )
             resolved[side] = {
                 "camera_x_m": f"{position[0]:.9f}",
                 "camera_y_m": f"{position[1]:.9f}",
@@ -901,12 +1033,12 @@ def write_joint_pose_csv(
                 "qy": f"{quaternion[1]:.12f}",
                 "qz": f"{quaternion[2]:.12f}",
                 "qw": f"{quaternion[3]:.12f}",
-                "quality_status": "interpolated",
-                "pose_state": "INTERPOLATED",
+                "quality_status": quality_status,
+                "pose_state": pose_state,
                 "angular_rmse_deg": "",
                 "detected_tag_count": "",
                 "inlier_tag_count": "",
-                "measurement_source": "temporal_interpolation_between_cached_bearing_poses",
+                "measurement_source": measurement_source,
             }
         untrusted_joint_frames += int(any(
             source is not None
@@ -923,7 +1055,8 @@ def write_joint_pose_csv(
         joint_pose_count += int(joint_has_pose)
         joint_valid = all(
             resolved[side] is not None
-            and resolved[side].get("quality_status") in {"valid", "interpolated"}
+            and resolved[side].get("quality_status")
+                in {"valid", "interpolated", "imu_assisted"}
             for side in ("left", "right")
         )
         joint_valid_count += int(joint_valid)
@@ -981,6 +1114,14 @@ def write_joint_pose_csv(
             **({} if imu_audit is None else imu_audit),
             "assisted_side_frames": imu_assisted_side_frames,
             "assisted_frames": sum(imu_assisted_side_frames.values()),
+            "trusted_assisted_side_frames": trusted_imu_assisted_side_frames,
+            "trusted_assisted_frames": sum(
+                trusted_imu_assisted_side_frames.values()
+            ),
+            "untrusted_assisted_side_frames": untrusted_imu_assisted_side_frames,
+            "untrusted_assisted_frames": sum(
+                untrusted_imu_assisted_side_frames.values()
+            ),
             "visual_long_gap_fallback_side_frames": (
                 visual_long_gap_fallback_side_frames
             ),

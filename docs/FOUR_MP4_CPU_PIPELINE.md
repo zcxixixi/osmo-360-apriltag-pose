@@ -1,6 +1,6 @@
-# Four-MP4 CPU pipeline v8
+# Four-MP4 CPU pipeline v9
 
-`dual-x5-four-mp4-cpu-v8` accepts the four independent raw fisheye MP4 streams
+`dual-x5-four-mp4-cpu-v9` accepts the four independent raw fisheye MP4 streams
 produced by two X5 cameras. It does not import INSV and does not invoke the
 Insta360 stitching SDK. The official panorama is therefore no longer a
 localization prerequisite.
@@ -46,13 +46,15 @@ independently, usable H5 data must contain `/sensor/imu/left/...` and
 `/sensor/imu/right/...` (or `/sensor/{left,right}/imu/...`) plus explicit
 `T_rig_imu_left/right`, `T_rig_camera_left/right`, and `T_target_source`
 transform semantics. A singular `/sensor/imu` stream is never silently assigned
-to both hands. During a visually untrusted internal gap, calibrated gyro
-increments shape orientation between the two trusted visual anchors and a
-distributed closure correction keeps both endpoints exact. Position remains
-visual endpoint interpolation; accelerometer double integration is deliberately
-not used. IMU-assisted rows remain `IMU_ASSISTED_UNTRUSTED`. Missing, empty,
+to both hands. Calibrated gyro propagation is also used as an independent
+short-horizon attitude check for weak visual solves. During an internal visual
+gap, gyro increments shape orientation between the two trusted visual anchors
+and a distributed closure correction keeps both endpoints exact. Gaps no longer
+than 0.25 s are `IMU_ASSISTED`; longer gaps remain
+`IMU_ASSISTED_UNTRUSTED`. Position always remains visual endpoint interpolation;
+accelerometer double integration is deliberately not used. Missing, empty,
 ambiguous, poorly sampled, or incompletely calibrated IMU data falls back to
-`INTERPOLATED_UNTRUSTED` and is recorded in `report.json`.
+visual SLERP and is recorded in `report.json`.
 
 ## Generic four-MP4 input contract
 
@@ -152,7 +154,18 @@ product entry point is:
 ./bin/process_instaumi_dataset.sh /absolute/path/to/dataset-root
 ```
 
-It first runs or resumes the v8 shared-map trajectory pipeline, then reads the
+For a dataset whose camera serials do not yet have a registered gripper
+calibration, publish only the joint trajectory without weakening that identity
+gate:
+
+```bash
+./bin/process_instaumi_dataset.sh --trajectory-only /absolute/path/to/dataset-root
+```
+
+This mode writes `processed/trajectory.csv`, preserves unrelated existing files
+under `processed/`, and never invents a gripper signal for unknown hardware.
+
+It first runs or resumes the v9 shared-map trajectory pipeline, then reads the
 H5 serials/timestamps and the two registered 1920x1920 `*_back.mp4` gripper
 views. The H5 timeline is the bounded processing range: a source MP4 may retain
 verified trailing encoded frames, but missing source frames or any request past
@@ -165,9 +178,9 @@ The atomically published CSV product is written directly under the dataset:
 
 ```text
 processed/
-├── trajectory.csv  # v8 joint trajectory re-expressed in world FLU
+├── trajectory.csv  # v9 joint trajectory re-expressed in world FLU
 ├── gripper.csv     # synchronized left/right opening angle, width and state
-├── processed.csv   # trajectory and gripper columns joined at v8 timestamps
+├── processed.csv   # trajectory and gripper columns joined at v9 timestamps
 ├── metadata.csv    # revisions, source/target frames, rate and quality status
 └── time_alignment.csv  # preserved when already present
 ```
@@ -183,13 +196,13 @@ rotation so the conversion is auditable.
 
 The shell entry shows the active stage, elapsed time, aggregate four-stream
 frame/chunk progress, percentage and ETA in the terminal. After all CSV files
-are published successfully it removes the generated v8 `final/` work tree;
+are published successfully it removes the generated v9 `final/` work tree;
 failed runs retain it for diagnosis. The hidden `.osmo-cache` is retained so a
 repeat run can reuse decoded observations.
 
 Empty opening values are intentional when a visual gap exceeds 0.25 seconds.
 This jaw signal remains diagnostic (`training_ready=0`); the pose CSV retains
-the v8 `hand_camera_flu_back_x` camera frame and does not silently claim a TCP
+the v9 `hand_camera_flu_back_x` camera frame and does not silently claim a TCP
 trajectory.
 
 The generic conservative profile defaults to one detector process and two
@@ -260,7 +273,7 @@ records every flow, redetection, scout, fallback, and rejection count.
 Persistent cache defaults to:
 
 ```text
-dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v8/<pair-id>/
+dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v9/<pair-id>/
 ```
 
 Set `OSMO_PIPELINE_CACHE` to a server-local SSD if the dataset itself is on a
@@ -283,7 +296,7 @@ self-calibration, not external ground truth.
 The principal outputs are:
 
 ```text
-final/dual-x5-four-mp4-cpu-v8/pairs/<pair-id>/tracking/
+final/dual-x5-four-mp4-cpu-v9/pairs/<pair-id>/tracking/
 ├── session_world_map.json
 ├── left_pose.csv
 ├── right_pose.csv
@@ -294,9 +307,11 @@ final/dual-x5-four-mp4-cpu-v8/pairs/<pair-id>/tracking/
 `joint_trajectory.csv` has one shared H5 timestamp and one shared map ID per
 row, followed by both left and right 6DoF poses. Direct bearing measurements
 are marked `MEASURED`; gaps bounded by measurements are filled and retain a
-numeric pose on every common-timeline frame. Gaps up to 0.25 seconds are marked
-`INTERPOLATED`; longer gaps use a calibrated per-side gyro bridge when safely
-available and are marked `IMU_ASSISTED_UNTRUSTED`; otherwise they are marked
+numeric pose on every common-timeline frame. Gaps up to 0.25 seconds use a
+calibrated gyro bridge when available and are marked `IMU_ASSISTED`, otherwise
+they use visual SLERP and are marked `INTERPOLATED`. Longer gaps use a calibrated
+per-side gyro bridge when safely available and are marked
+`IMU_ASSISTED_UNTRUSTED`; otherwise they are marked
 `INTERPOLATED_UNTRUSTED`. Leading or
 trailing gaps use the nearest accepted pose and are marked `HELD_UNTRUSTED`.
 `joint_has_pose` therefore describes numeric availability independently from
@@ -314,16 +329,21 @@ is unchanged.
 Sparse planar observations receive an additional confidence-aware temporal
 gate. A pose supported by only two co-planar Tags carried entirely by LK flow
 is rejected when it implies more than 1.5 m/s or 180 deg/s from the previous
-accepted pose. Direct multi-Tag reacquisition is exempt, so this rejects weak
-IPPE branch flips without smoothing or clipping real observed motion.
+accepted pose. Every visual solve also has a generous absolute ceiling of
+3 m/s or 540 deg/s, including same-lens direct detections. After a rejection,
+reacquisition requires at least five inlier Tags and consistency with the last
+accepted pose; this prevents a wrong low-Tag planar branch from becoming the
+new anchor merely because it persists. Weak visual attitudes that differ by
+more than 15 degrees from calibrated gyro propagation are also rejected.
 
 Each selected inlier also retains its calibrated `lens_stream` provenance. At
 an unambiguous dominant-lens handoff, only the first candidate measurement is
 rejected when it crosses the same 1.5 m/s or 180 deg/s limit; the observed-lens
 state then advances so subsequent same-lens measurements are not rejected in a
-chain. Slow handoffs and fast same-lens direct measurements remain accepted.
-The pose CSV records per-lens inlier counts, dominant lens, measured temporal
-speeds, and the rejection reason for auditing.
+chain. Slow handoffs and physically plausible same-lens direct measurements
+remain accepted. The pose CSV records per-lens inlier counts, dominant lens,
+measured temporal speeds, gyro residual/status, and the rejection reason for
+auditing.
 
 Generic four-MP4 input can still provide an external world map and initial
 poses to the existing held-out joint pose-graph optimizer:
@@ -348,7 +368,7 @@ Render the four source views beside the synchronized shared-map 3D tracks:
 ```bash
 .venv/bin/python -m tools.render_joint_four_mp4_trajectory \
   /data/session \
-  /data/session/final/dual-x5-four-mp4-cpu-v8/pairs/<pair-id>/tracking \
+  /data/session/final/dual-x5-four-mp4-cpu-v9/pairs/<pair-id>/tracking \
   /data/session/processed/joint_trajectory_comparison.mp4 \
   --reframe-world-flu \
   --view-preset flu-front-above

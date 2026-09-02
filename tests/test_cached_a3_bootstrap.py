@@ -22,6 +22,7 @@ from osmo360.localization.cached_a3_bootstrap import (
 from osmo360.localization.coordinate_frames import (
     X5_STREAM0_OPENCV_FROM_HAND_CAMERA_FLU,
 )
+from osmo360.localization.instaumi_imu import ImuSeries
 from osmo360.localization.raw_fisheye_world_pose import (
     make_kannala_brandt_ray_converter,
     make_x5_offset_ray_converter,
@@ -206,7 +207,7 @@ def test_explicit_h5_kb_model_matches_equivalent_x5_rear_record():
     assert np.allclose(explicit(pixels), x5(pixels), atol=2e-8)
 
 
-def test_sparse_flow_planar_jump_is_rejected_but_direct_reacquisition_is_not():
+def test_absolute_jump_is_rejected_even_for_direct_reacquisition():
     previous = Pose(np.zeros(3), Rotation.identity())
     jumped = Pose(
         np.asarray([0.50, 0.0, 0.0]),
@@ -228,8 +229,89 @@ def test_sparse_flow_planar_jump_is_rejected_but_direct_reacquisition_is_not():
     )
 
     assert weak["rejected"] is True
-    assert weak["reason"] == "sparse_flow_planar_pose_exceeds_temporal_limits"
+    assert weak["reason"] == "pose_exceeds_absolute_temporal_limits"
+    assert direct["rejected"] is True
+    assert direct["reason"] == "pose_exceeds_absolute_temporal_limits"
+
+
+def test_moderately_fast_same_lens_direct_measurement_remains_accepted():
+    previous = Pose(np.zeros(3), Rotation.identity())
+    candidate = Pose(
+        np.asarray([0.28, 0.0, 0.0]),
+        Rotation.from_euler("z", 20.0, degrees=True),
+    )
+
+    direct = _temporal_gate(
+        candidate,
+        (7.0, previous),
+        7.14,
+        inlier_tag_count=5,
+        sources={"global_scout_roi_gray"},
+        dominant_lens_stream=0,
+        previous_dominant_lens_stream=0,
+    )
+
     assert direct["rejected"] is False
+    assert direct["reason"] == "accepted"
+
+
+def test_recovery_latch_requires_strong_consistent_geometry():
+    previous = Pose(np.zeros(3), Rotation.identity())
+    candidate = Pose(
+        np.asarray([0.05, 0.0, 0.0]),
+        Rotation.from_euler("z", 5.0, degrees=True),
+    )
+
+    weak = _temporal_gate(
+        candidate,
+        (7.0, previous),
+        7.10,
+        inlier_tag_count=3,
+        sources={"global_scout_roi_gray"},
+        recovery_required=True,
+    )
+    strong = _temporal_gate(
+        candidate,
+        (7.0, previous),
+        7.10,
+        inlier_tag_count=5,
+        sources={"global_scout_roi_gray"},
+        recovery_required=True,
+    )
+
+    assert weak["rejected"] is True
+    assert weak["reason"] == "temporal_recovery_requires_strong_consistent_geometry"
+    assert strong["rejected"] is False
+
+
+def test_weak_visual_rotation_that_disagrees_with_gyro_is_rejected():
+    times = np.arange(0.0, 0.101, 0.01)
+    stationary_imu = ImuSeries(
+        side="left",
+        timestamp_s=times,
+        angular_velocity_hand_rad_s=np.zeros((len(times), 3)),
+        calibration_sha256="test",
+        dataset_path="test.h5",
+    )
+    previous = Pose(np.zeros(3), Rotation.identity())
+    candidate = Pose(
+        np.asarray([0.01, 0.0, 0.0]),
+        Rotation.from_euler("z", 30.0, degrees=True),
+    )
+
+    result = _temporal_gate(
+        candidate,
+        (0.0, previous),
+        0.1,
+        inlier_tag_count=3,
+        sources={"global_scout_roi_gray"},
+        imu_stream=stationary_imu,
+    )
+
+    assert result["imu_prediction_available"] is True
+    assert result["imu_visual_rotation_residual_deg"] == pytest.approx(30.0)
+    assert result["rejected"] is True
+    assert result["reason"] == "weak_visual_rotation_disagrees_with_imu"
 
 
 def test_fast_lens_handoff_is_rejected_once_without_blocking_same_lens_motion():

@@ -11,6 +11,10 @@ from pathlib import Path
 import cv2
 
 from osmo360.localization.cached_a3_bootstrap import (
+    MAXIMUM_ABSOLUTE_ANGULAR_SPEED_DEG_S,
+    MAXIMUM_ABSOLUTE_SPEED_M_S,
+    MAXIMUM_IMU_VISUAL_ROTATION_RESIDUAL_DEG,
+    MINIMUM_TEMPORAL_RECOVERY_INLIER_TAGS,
     build_world_map,
     calibrate_panel_pair,
     load_direct_tag_map,
@@ -70,27 +74,6 @@ def main() -> int:
     )
     world_map_path = args.output_dir / "session_world_map.json"
     world_map_path.write_text(json.dumps(world_map, indent=2) + "\n", encoding="utf-8")
-    trajectories = {}
-    trajectory_rows = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        futures = {
-            side: executor.submit(
-                track_cache,
-                cache,
-                panel_a,
-                panel_b,
-                transform,
-                minimum_tags=args.minimum_tags,
-                max_angular_rmse_deg=args.max_angular_rmse_deg,
-            )
-            for side, cache in caches.items()
-        }
-        results = {side: future.result() for side, future in futures.items()}
-    for side in ("left", "right"):
-        rows, summary = results[side]
-        write_pose_csv(args.output_dir / f"{side}_pose.csv", rows)
-        trajectory_rows[side] = rows
-        trajectories[side] = summary
     imu_streams = {}
     imu_audit = {
         "status": "NOT_REQUESTED",
@@ -111,6 +94,28 @@ def main() -> int:
         else:
             imu_streams = imu_bundle.streams
             imu_audit = imu_bundle.audit
+    trajectories = {}
+    trajectory_rows = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {
+            side: executor.submit(
+                track_cache,
+                cache,
+                panel_a,
+                panel_b,
+                transform,
+                minimum_tags=args.minimum_tags,
+                max_angular_rmse_deg=args.max_angular_rmse_deg,
+                imu_stream=imu_streams.get(side),
+            )
+            for side, cache in caches.items()
+        }
+        results = {side: future.result() for side, future in futures.items()}
+    for side in ("left", "right"):
+        rows, summary = results[side]
+        write_pose_csv(args.output_dir / f"{side}_pose.csv", rows)
+        trajectory_rows[side] = rows
+        trajectories[side] = summary
     trajectories["joint"] = write_joint_pose_csv(
         args.output_dir / "joint_trajectory.csv",
         trajectory_rows["left"],
@@ -153,7 +158,7 @@ def main() -> int:
     }
     passed = all(gates.values())
     report = {
-        "schema_version": "cached-a3-self-calibrated-trajectories/1.3",
+        "schema_version": "cached-a3-self-calibrated-trajectories/1.4",
         "pair_id": args.pair_id,
         "status": "SELF_CALIBRATED_PASS" if passed else "SELF_CALIBRATED_GATE_FAILED",
         "claims": {
@@ -164,8 +169,25 @@ def main() -> int:
             "stitching_used": False,
             "joint_timeline_interpolation_used": True,
             "calibrated_per_side_imu_assistance_enabled": bool(imu_streams),
+            "calibrated_per_side_imu_visual_attitude_gate_enabled": bool(
+                imu_streams
+            ),
             "accelerometer_translation_integration_used": False,
             "maximum_trusted_interpolation_gap_s": args.maximum_interpolation_gap_s,
+            "absolute_visual_motion_limits": {
+                "speed_m_s": MAXIMUM_ABSOLUTE_SPEED_M_S,
+                "angular_speed_deg_s": MAXIMUM_ABSOLUTE_ANGULAR_SPEED_DEG_S,
+            },
+            "weak_visual_imu_residual_limit_deg": (
+                MAXIMUM_IMU_VISUAL_ROTATION_RESIDUAL_DEG
+            ),
+            "temporal_recovery_minimum_inlier_tags": (
+                MINIMUM_TEMPORAL_RECOVERY_INLIER_TAGS
+            ),
+            "short_gap_policy": (
+                "visual position interpolation plus calibrated per-side gyro bridge "
+                "when available; otherwise visual position interpolation and SLERP"
+            ),
             "long_gap_policy": (
                 "calibrated per-side gyro bridge when available; otherwise visual "
                 "INTERPOLATED_UNTRUSTED; numeric pose retained with explicit confidence"

@@ -329,6 +329,102 @@ def test_export_rejects_processed_symlink(
         export.export_processed_dataset(tmp_path)
 
 
+def test_trajectory_only_export_skips_gripper_identity_and_preserves_other_outputs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _touch_inputs(tmp_path)
+    processed = tmp_path / "processed"
+    processed.mkdir()
+    (processed / "gripper.csv").write_text("keep\n", encoding="utf-8")
+    source = tmp_path / "joint_trajectory.csv"
+    fields = [
+        "frame", "timestamp_s", "world_frame", "map_id", "joint_has_pose",
+        "left_camera_x_m", "left_camera_y_m", "left_camera_z_m",
+        "left_qx", "left_qy", "left_qz", "left_qw",
+        "right_camera_x_m", "right_camera_y_m", "right_camera_z_m",
+        "right_qx", "right_qy", "right_qz", "right_qw",
+    ]
+    rows = []
+    for frame in range(2):
+        row = {
+            "frame": str(frame),
+            "timestamp_s": f"{frame * 0.1:.1f}",
+            "world_frame": "session_grid_A",
+            "map_id": "test-map",
+            "joint_has_pose": "true",
+        }
+        for side, x in (("left", 0.2 + frame), ("right", 0.8 + frame)):
+            row.update({
+                f"{side}_camera_x_m": str(x),
+                f"{side}_camera_y_m": "0",
+                f"{side}_camera_z_m": "-1",
+                f"{side}_qx": "0",
+                f"{side}_qy": "0",
+                f"{side}_qz": "0",
+                f"{side}_qw": "1",
+            })
+        rows.append(row)
+    world_map = {
+        "map_id": "test-map",
+        "world_frame": "session_grid_A",
+        "physical_up_vector": [0, -1, 0],
+        "tags": [
+            {
+                "id": 200,
+                "panel": "grid_A",
+                "corners_m": [
+                    [-0.1, -0.1, 0], [0.1, -0.1, 0],
+                    [0.1, 0.1, 0], [-0.1, 0.1, 0],
+                ],
+            },
+            {
+                "id": 210,
+                "panel": "grid_B",
+                "corners_m": [
+                    [0.9, -0.1, 0], [1.1, -0.1, 0],
+                    [1.1, 0.1, 0], [0.9, 0.1, 0],
+                ],
+            },
+        ],
+    }
+    (tmp_path / "session_world_map.json").write_text(
+        json.dumps(world_map), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        export,
+        "load_instaumi_config",
+        lambda _root: {
+            "pair_id": "unknown-cameras",
+            "cameras": {
+                "left": {"serial": "UNKNOWN-LEFT"},
+                "right": {"serial": "UNKNOWN-RIGHT"},
+            },
+        },
+    )
+    monkeypatch.setattr(
+        export,
+        "_read_trajectory",
+        lambda _root, _pair: (
+            source,
+            fields,
+            rows,
+            {"status": "SELF_CALIBRATED_PASS"},
+        ),
+    )
+
+    result = export.export_trajectory_only(tmp_path)
+
+    assert result["mode"] == "trajectory_only"
+    assert result["rows"] == 2
+    assert result["world_frame"] == "world_flu_aprilgrid_midpoint"
+    assert (processed / "gripper.csv").read_text(encoding="utf-8") == "keep\n"
+    with (processed / "trajectory.csv").open(newline="", encoding="utf-8") as handle:
+        published = list(csv.DictReader(handle))
+    assert len(published) == 2
+    assert published[0]["world_frame"] == "world_flu_aprilgrid_midpoint"
+
+
 def _make_pipeline_final(root: Path) -> Path:
     revision = root / "final" / export.PIPELINE_REVISION
     (revision / "pairs").mkdir(parents=True)

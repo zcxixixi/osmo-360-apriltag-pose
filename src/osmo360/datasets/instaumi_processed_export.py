@@ -588,6 +588,25 @@ def _read_trajectory(root: Path, pair_id: str) -> tuple[Path, list[str], list[di
     return trajectory, fields, rows, report
 
 
+def _read_world_flu_trajectory(
+    root: Path,
+    pair_id: str,
+) -> tuple[list[str], list[dict[str, str]], dict[str, Any], Any, np.ndarray]:
+    trajectory_path, fields, rows, report = _read_trajectory(root, pair_id)
+    world_map_path = trajectory_path.parent / "session_world_map.json"
+    if not world_map_path.is_file() or world_map_path.is_symlink():
+        raise ManifestError(f"trajectory world map is missing: {world_map_path}")
+    world_map = json.loads(world_map_path.read_text(encoding="utf-8"))
+    world_transform = derive_world_flu_transform(world_map)
+    rows = transform_trajectory_rows(rows, world_transform)
+    query_time = np.asarray(
+        [float(row["timestamp_s"]) for row in rows], dtype=np.float64
+    )
+    if np.any(~np.isfinite(query_time)) or np.any(np.diff(query_time) <= 0):
+        raise ManifestError("trajectory timestamps must be finite and increasing")
+    return fields, rows, report, world_transform, query_time
+
+
 def _cell(value: float, digits: int = 9) -> str:
     return "" if not math.isfinite(float(value)) else f"{float(value):.{digits}f}"
 
@@ -695,6 +714,63 @@ def remove_pipeline_final(root: Path) -> bool:
     return removed
 
 
+def export_trajectory_only(
+    dataset_root: Path,
+    *,
+    remove_final: bool = False,
+) -> dict[str, Any]:
+    """Publish only the joint world-FLU trajectory without gripper identity gates."""
+    root = dataset_root.expanduser().resolve(strict=True)
+    if not is_instaumi_dataset(root):
+        raise ManifestError(
+            "dataset must contain dataset.h5 and video/{Left,Right}_{back,forward}.mp4"
+        )
+    processed_root = confined_path(root, "processed", field="processed output root")
+    processed_root.mkdir(parents=True, exist_ok=True)
+    if processed_root.is_symlink():
+        raise ManifestError("processed output root must not be a symlink")
+    pair_id = str(load_instaumi_config(root)["pair_id"])
+    fields, rows, report, world_transform, query_time = _read_world_flu_trajectory(
+        root, pair_id
+    )
+    destination = processed_root / "trajectory.csv"
+    if destination.is_symlink() or (
+        destination.exists() and not destination.is_file()
+    ):
+        raise ManifestError(f"processed trajectory destination is unsafe: {destination}")
+    build_dir = Path(
+        tempfile.mkdtemp(prefix=f".{EXPORT_REVISION}-trajectory-build-", dir=processed_root)
+    )
+    backup = build_dir / "previous-trajectory.csv"
+    try:
+        staged = build_dir / "trajectory.csv"
+        _write_rows(staged, fields, rows)
+        if destination.exists():
+            destination.replace(backup)
+        try:
+            staged.replace(destination)
+        except Exception:
+            if backup.exists():
+                backup.replace(destination)
+            raise
+    finally:
+        if build_dir.exists():
+            shutil.rmtree(build_dir)
+    pipeline_final_removed = remove_pipeline_final(root) if remove_final else False
+    return {
+        "status": "COMPLETE",
+        "mode": "trajectory_only",
+        "output": str(destination),
+        "rows": len(rows),
+        "trajectory_rate_hz": 1.0 / float(np.median(np.diff(query_time))),
+        "trajectory_status": report["status"],
+        "source_world_frame": world_transform.source_frame,
+        "world_frame": world_transform.target_frame,
+        "camera_child_frame": "hand_camera_flu_back_x",
+        "pipeline_final_removed": pipeline_final_removed,
+    }
+
+
 def export_processed_dataset(
     dataset_root: Path,
     *,
@@ -720,20 +796,13 @@ def export_processed_dataset(
             raise ManifestError(
                 f"{side} camera serial {actual!r} does not match gripper profile {expected!r}"
             )
-    trajectory_path, trajectory_fields, trajectory_rows, report = _read_trajectory(
-        root, pair_id
-    )
-    world_map_path = trajectory_path.parent / "session_world_map.json"
-    if not world_map_path.is_file() or world_map_path.is_symlink():
-        raise ManifestError(f"trajectory world map is missing: {world_map_path}")
-    world_map = json.loads(world_map_path.read_text(encoding="utf-8"))
-    world_transform = derive_world_flu_transform(world_map)
-    trajectory_rows = transform_trajectory_rows(trajectory_rows, world_transform)
-    query_time = np.asarray(
-        [float(row["timestamp_s"]) for row in trajectory_rows], dtype=np.float64
-    )
-    if np.any(~np.isfinite(query_time)) or np.any(np.diff(query_time) <= 0):
-        raise ManifestError("trajectory timestamps must be finite and increasing")
+    (
+        trajectory_fields,
+        trajectory_rows,
+        report,
+        world_transform,
+        query_time,
+    ) = _read_world_flu_trajectory(root, pair_id)
     side_inputs = load_side_inputs(root, profile)
     processing_width = int(profile.get("processing_width_px", 1024))
     if not 480 <= processing_width <= 1920:
@@ -968,18 +1037,30 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="remove this pipeline revision after processed CSVs are published",
     )
+    parser.add_argument(
+        "--trajectory-only",
+        action="store_true",
+        help="publish processed/trajectory.csv without running gripper identity gates",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    if args.trajectory_only:
+        result = export_trajectory_only(
+            args.dataset_root,
+            remove_final=args.remove_pipeline_final,
+        )
+    else:
+        result = export_processed_dataset(
+            args.dataset_root,
+            profile_path=args.profile,
+            remove_final=args.remove_pipeline_final,
+        )
     print(
         json.dumps(
-            export_processed_dataset(
-                args.dataset_root,
-                profile_path=args.profile,
-                remove_final=args.remove_pipeline_final,
-            ),
+            result,
             ensure_ascii=False,
             indent=2,
         )

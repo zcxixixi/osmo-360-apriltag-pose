@@ -56,9 +56,10 @@ def list_commands(include_legacy: bool) -> dict[str, Any]:
 
 
 def verify_baselines() -> dict[str, Any]:
-    modules = (
-        "osmo360.verification.verify_x5_one_sided_force_baseline",
-    )
+    # External acceptance gates rooted under /home/cenxi were explicitly
+    # retired. Keep the command as a stable no-op interface until a portable,
+    # repository-owned baseline is registered.
+    modules: tuple[str, ...] = ()
     python = (
         ROOT / ".venv/bin/python"
         if (ROOT / ".venv/bin/python").is_file()

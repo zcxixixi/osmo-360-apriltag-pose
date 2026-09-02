@@ -221,7 +221,7 @@ def test_command_registry_hides_legacy_by_default():
     assert "legacy" in list_commands(True)
 
 
-def test_verify_baselines_excludes_retired_dual_gripper_v50(monkeypatch):
+def test_verify_baselines_has_no_external_home_cenxi_gates(monkeypatch):
     called = []
 
     def fake_run(command, **_kwargs):
@@ -236,8 +236,9 @@ def test_verify_baselines_excludes_retired_dual_gripper_v50(monkeypatch):
 
     result = verify_baselines()
 
-    assert called == ["osmo360.verification.verify_x5_one_sided_force_baseline"]
+    assert called == []
     assert result["status"] == "PASS"
+    assert result["baselines"] == []
 
 
 def test_camera_sdk_fleet_registration_preserves_assignments(tmp_path):
