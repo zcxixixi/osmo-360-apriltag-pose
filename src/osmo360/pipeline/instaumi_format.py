@@ -100,17 +100,30 @@ def packet_timeline(ffprobe: Path, path: Path, source_start_s: float) -> dict[st
         str(ffprobe), "-v", "error", "-select_streams", "v:0", "-show_packets",
         "-show_entries", "packet=pts,pts_time,flags", "-of", "csv=p=0", str(path),
     ], check=True, capture_output=True, text=True)
-    pts: list[int] = []; timestamps: list[int] = []; keyframes: list[int] = []
+    packets: list[tuple[int, int, int]] = []
     for line in process.stdout.splitlines():
         fields = line.split(",")
         if len(fields) < 3 or fields[0] == "N/A" or fields[1] == "N/A":
-            continue
-        pts.append(int(fields[0]))
-        timestamps.append(round(float(fields[1]) * 1_000_000_000))
-        keyframes.append(1 if "K" in fields[2] else 0)
-    presentation = np.asarray(timestamps, dtype=np.int64)
-    if not len(presentation):
+            raise ManifestError(f"aligned video has a packet without PTS: {path}")
+        packets.append((
+            int(fields[0]),
+            round(float(fields[1]) * 1_000_000_000),
+            1 if "K" in fields[2] else 0,
+        ))
+    if not packets:
         raise ManifestError(f"aligned video has no timestamped packets: {path}")
+
+    # ffprobe reports packets in decode order. HEVC may therefore emit PTS as
+    # 0, 4, 2, 1, 3... even though frames are presented as 0, 1, 2, 3, 4.
+    # InstaUMI frame_index is explicitly presentation order, so sort the whole
+    # packet record (including keyframe state) by its original PTS.
+    packets.sort(key=lambda packet: packet[0])
+    pts = np.asarray([packet[0] for packet in packets], dtype=np.int64)
+    presentation = np.asarray([packet[1] for packet in packets], dtype=np.int64)
+    keyframes = np.asarray([packet[2] for packet in packets], dtype=np.uint8)
+    if np.any(np.diff(pts) <= 0) or np.any(np.diff(presentation) <= 0):
+        raise ManifestError(f"aligned video has duplicate or invalid PTS: {path}")
+
     aligned = presentation - presentation[0]
     return {
         "frame_index": np.arange(len(aligned), dtype=np.uint64),
@@ -118,8 +131,8 @@ def packet_timeline(ffprobe: Path, path: Path, source_start_s: float) -> dict[st
         "source_timestamp_ns": (
             presentation + round(source_start_s * 1_000_000_000)
         ),
-        "pts": np.asarray(pts, dtype=np.int64),
-        "keyframe": np.asarray(keyframes, dtype=np.uint8),
+        "pts": pts,
+        "keyframe": keyframes,
         "valid": np.ones(len(aligned), dtype=np.uint8),
     }
 
