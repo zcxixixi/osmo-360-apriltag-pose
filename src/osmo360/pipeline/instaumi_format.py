@@ -192,8 +192,29 @@ def _x5_rear_calibration(record: dict[str, Any]) -> tuple[dict[str, Any], list[l
     return camera, identity.tolist()
 
 
+def _constant_sensor_offset_ns(
+    timestamp_ns: np.ndarray,
+    source_timestamp_ns: np.ndarray,
+    dataset_start_source_timestamp_ns: int,
+    *,
+    sensor: str,
+) -> int:
+    if (
+        timestamp_ns.ndim != 1
+        or source_timestamp_ns.shape != timestamp_ns.shape
+        or len(timestamp_ns) == 0
+    ):
+        raise ManifestError(f"{sensor} timestamps must be non-empty matching vectors")
+    delta = np.subtract(timestamp_ns, source_timestamp_ns)
+    if not np.all(delta == delta[0]):
+        raise ManifestError(f"{sensor} timestamps cannot be represented by one clock offset")
+    return dataset_start_source_timestamp_ns + int(delta[0])
+
+
 def _calibration(
-    sync: dict[str, Any], source_records: dict[str, dict[str, Any]],
+    sync: dict[str, Any],
+    source_records: dict[str, dict[str, Any]],
+    sensor_offsets_ns: dict[str, int],
 ) -> dict[str, Any]:
     identity = np.eye(4, dtype=float).tolist()
     left_camera, left_extrinsic = _x5_rear_calibration(source_records["left"])
@@ -203,7 +224,7 @@ def _calibration(
         "coordinate_system": {"rig_frame": "rig", "left_imu_frame": "imu_left", "right_imu_frame": "imu_right", "left_camera_frame": "camera_left", "right_camera_frame": "camera_right", "handedness": "right", "camera_axes": {"x": "right", "y": "down", "z": "forward"}, "rig_axes": {"x": "forward", "y": "left", "z": "up"}, "translation_unit": "m", "rotation_unit": "rad"},
         "cameras": {"left": left_camera, "right": right_camera},
         "extrinsics": {"matrix_convention": "row_major", "transform_convention": "T_target_source", "T_rig_camera_left": left_extrinsic, "T_rig_camera_right": right_extrinsic, "T_rig_imu_left": identity, "T_rig_imu_right": identity, "T_right_left": identity},
-        "time_calibration": {"reference": "dataset_start", "left_camera_offset_ns": 0, "right_camera_offset_ns": round(-float(sync["offset_s"]) * 1_000_000_000), "left_imu_offset_ns": 0, "right_imu_offset_ns": round(-float(sync["offset_s"]) * 1_000_000_000), "right_left_offset_ns": round(-float(sync["offset_s"]) * 1_000_000_000), "uncertainty_ns": round(float(sync["uncertainty_s"]) * 1_000_000_000), "method": "audio_cross_correlation"},
+        "time_calibration": {"reference": "dataset_start", **sensor_offsets_ns, "right_left_offset_ns": round(-float(sync["offset_s"]) * 1_000_000_000), "uncertainty_ns": round(float(sync["uncertainty_s"]) * 1_000_000_000), "method": "audio_cross_correlation"},
         "imu_calibration": {"left": {"gyroscope_bias_rad_s": [0, 0, 0], "accelerometer_bias_m_s2": [0, 0, 0], "gyroscope_scale": [1, 1, 1], "accelerometer_scale": [1, 1, 1], "gyroscope_range_rad_s": None, "accelerometer_range_m_s2": None}, "right": {"gyroscope_bias_rad_s": [0, 0, 0], "accelerometer_bias_m_s2": [0, 0, 0], "gyroscope_scale": [1, 1, 1], "accelerometer_scale": [1, 1, 1], "gyroscope_range_rad_s": None, "accelerometer_range_m_s2": None}},
     }
 
@@ -227,10 +248,30 @@ def write_dataset_h5(
             videos[side]["frame_count"] = len(timelines[side]["frame_index"])
     if set(imu) != {"left", "right"}:
         raise ManifestError("InstaUMI requires separate left and right X5 IMU streams")
+    if len(imu["left"].timestamp_ns) == 0:
+        raise ManifestError("InstaUMI left IMU stream is empty")
+    dataset_start_source_timestamp_ns = int(
+        imu["left"].source_timestamp_ns[0] - imu["left"].timestamp_ns[0]
+    )
+    sensor_offsets_ns = {}
+    for side, timeline in timelines.items():
+        sensor_offsets_ns[f"{side}_camera_offset_ns"] = _constant_sensor_offset_ns(
+            timeline["timestamp_ns"],
+            timeline["source_timestamp_ns"],
+            dataset_start_source_timestamp_ns,
+            sensor=f"{side} camera",
+        )
+    for side, samples in imu.items():
+        sensor_offsets_ns[f"{side}_imu_offset_ns"] = _constant_sensor_offset_ns(
+            samples.timestamp_ns,
+            samples.source_timestamp_ns,
+            dataset_start_source_timestamp_ns,
+            sensor=f"{side} imu",
+        )
     metadata = {
         "schema_version": "1.0.0", "dataset_id": dataset_id, "created_at_utc": created,
         "description": "Audio-aligned dual Insta360 rear-lens videos",
-        "time": {"unit": "ns", "reference": "dataset_start", "source_clock": "camera_monotonic", "dataset_start_source_timestamp_ns": int(imu["left"].source_timestamp_ns[0] - imu["left"].timestamp_ns[0]), "dataset_start_utc_ns": None, "first_frame_time_offset_ns": {"left": 0, "right": 0}},
+        "time": {"unit": "ns", "reference": "dataset_start", "source_clock": "camera_monotonic", "dataset_start_source_timestamp_ns": dataset_start_source_timestamp_ns, "dataset_start_utc_ns": None, "first_frame_time_offset_ns": {"left": 0, "right": 0}},
         "devices": {side: {"manufacturer": "Insta360", "model": "X5", "serial_number": source_records[side]["serial"], "firmware_version": imu[side].provenance.get("firmware_version", ""), "active_sensor": "rear", "rig_position": side} for side in ("left", "right")},
         "video": {side: {"path": f"video/{side.title()}.mp4", **videos[side]} for side in ("left", "right")},
         "capture": {"mode": "normal_video", "panorama_mode": False, "source_lens": "rear", "source_resolution": [2 * int(source_records["left"]["lens_size"][0]), int(source_records["left"]["lens_size"][1])], "stored_resolution": [1024, 1024], "frame_rate": videos["left"]["frame_rate_num"] / videos["left"]["frame_rate_den"], "encoding": "H.265", "bitrate_mode": "standard", "color_mode": "standard", "hdr_enabled": False, "i_log_enabled": False, "low_light_stabilization": False, "sharpness": "", "white_balance": {"mode": "auto", "temperature_k": None}},
@@ -240,7 +281,7 @@ def write_dataset_h5(
         "speaker": {"present": False, "sample_rate_hz": 48000, "channels": 1, "sample_format": "s16le", "sample_count": 0},
         "source": {"left_original_insv": left_source.name, "right_original_insv": right_source.name, "left_original_sha256": source_records["left"].get("sha256", ""), "right_original_sha256": source_records["right"].get("sha256", ""), "insta360_sdk_version": "CameraSDK 2.1.1.1", "media_sdk_version": "MediaSDK 3.1.1.0", "conversion_software": "instaumi-x5-pipeline + telemetry-parser/gyro2bb", "conversion_version": "1.1.0"},
     }
-    calibration = _calibration(sync, source_records)
+    calibration = _calibration(sync, source_records, sensor_offsets_ns)
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(".partial.h5"); temporary.unlink(missing_ok=True)
     string_type = h5py.string_dtype("utf-8")
