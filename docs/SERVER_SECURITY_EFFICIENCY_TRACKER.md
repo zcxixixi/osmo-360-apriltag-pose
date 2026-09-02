@@ -16,7 +16,7 @@
   6. 从 Tag 正前方斜上视角录制四视频与联合 3D 轨迹对照视频；
   7. 将进度文字和新视频发送到既定飞书会话。
 - 整点自动任务：`instaumi`（`InstaUMI服务器整点维护`），每小时第 0 分钟唤醒当前任务并执行巡检/飞书同步。
-- 审阅视频以飞书 CLI 19:03 原视频 `processed_joint_trajectory_30hz_front_above_v1.mp4` 为唯一模板：世界坐标保持原生 `Tag Map`，手部相机仅作为 `Camera FLU` 子坐标且 `back = +X`，渲染必须使用 `tag-map-front-above`。机位始终位于两个 AprilGrid 正面一侧，从斜上方向下拍且镜头面朝网格，两块网格在画面中横向排列；不跟随轨迹、不自动旋转，禁止用会重表达世界坐标的 `flu-front-above` 代替。
+- 最新坐标要求覆盖早期“原生 Tag Map”约束：发布的 `trajectory.csv`/`processed.csv` 必须统一重表达为右手世界 FLU，原点为两块 AprilGrid 几何中心连线中点，`+X` 指向 AprilGrid 背面，`+Y` 为沿 `+X` 看向左，`+Z` 为物理向上；手部相机子坐标仍为 `hand_camera_flu_back_x`。审阅视频继续保持 19:03 的固定构图——位于网格打印正面一侧，从斜上方向下拍且面朝网格、两网格横排、不跟随、不自动旋转——但必须通过 `--reframe-world-flu --view-preset flu-front-above` 显示新的世界 FLU，不能再以 `tag-map-front-above` 作为发布坐标。
 
 ## 当前已验证基线
 
@@ -29,10 +29,10 @@
 | 审核网关提交 | 本地安全代码 `3e5a0b3`、unit `2fd08c3`；服务器等价 `a6f22f2`、`f0ffecd` |
 | 服务器无缓存耗时 | 空闲服务器 v8 为 5.87 s，平均 1268% CPU，峰值 RSS 261,348 KiB、无 swap；此前无竞争 v5 基线为 6.49 s |
 | 输出 | 300/300 帧具备双侧数值位姿；266 帧联合可信，263 帧双侧实测，34 帧长间隔不可信，`SELF_CALIBRATED_PASS` |
-| CSV 产品入口 | `bin/process_instaumi_dataset.sh DATASET_ROOT`；终端显示阶段、四路合计帧/块进度、百分比、ETA 与整条耗时；四文件原子发布到 `processed/{trajectory,gripper,processed,metadata}.csv`，保留 `time_alignment.csv`；成功发布后删除本次 v8 `final/` 工作制品，失败时保留供诊断；夹爪信号保持诊断级 `training_ready=0` |
-| 回归测试 | 当前本地/服务器完整测试均为 305 passed/8 skipped；此前服务器启用正式 v7 缓存回归时 283 passed/7 skipped，严格验证左侧仅 frame 168/360/420 命中 handoff 门、右侧 0、300/300 数值位姿 |
+| CSV 产品入口 | `bin/process_instaumi_dataset.sh DATASET_ROOT`；终端显示阶段、四路合计帧/块进度、百分比、ETA 与整条耗时；四文件原子发布到 `processed/{trajectory,gripper,processed,metadata}.csv`，其中全部相机位姿使用 `world_flu_aprilgrid_midpoint -> hand_camera_flu_back_x`，并在 metadata 保存原生地图到 FLU 的完整变换；保留 `time_alignment.csv`；成功发布后删除本次 v8 `final/` 工作制品，失败时保留供诊断；夹爪信号保持诊断级 `training_ready=0` |
+| 回归测试 | 当前本地/服务器完整测试均为 307 passed/8 skipped；新增世界 FLU 原点、右手轴、位置/四元数、地图和发布 metadata 回归；此前服务器启用正式 v7 缓存回归时 283 passed/7 skipped |
 | IMU 状态 | 当前 `dataset.h5` 共享 IMU 样本数为 0，左右独立流缺失；v8 明确 `UNAVAILABLE_NO_SAMPLES`，34 个长间隔帧回退视觉 `INTERPOLATED_UNTRUSTED`，不伪造 IMU |
-| 最新已发视频 | v8 `processed_joint_trajectory_30hz_tag_map_front_above_v8.mp4`，固定 `tag-map-front-above`，SHA-256 `fb12d243...c9a48` |
+| 最新已发视频 | `instaumi_20260901_105442_trajectory_world_flu_front_above_feishu30m.mp4`，固定 `flu-front-above`，1280×720/30 FPS/317.5 s，SHA-256 `6fb8ca0a...02af`；服务器保留 1920×1080 高清原片 `cfe4c4b9...b72b` |
 | 受管服务实际 unit | `osmo-visualization.service`、`osmo-alignment-review.service`（认证网关）、`osmo-alignment-review-backend.service`；三者均为 user unit，active/enabled、`NRestarts=0` |
 
 ## 问题清单
@@ -361,6 +361,14 @@
 - 按用户明确要求退役不再使用的双夹爪 v50 冻结门：删除两份 v50 baseline lock、专用 verifier、说明文档和未被代码引用的旧 v50/v51 CAD revision 元数据；`umi verify`、pipeline registry、历史 commit binding、README 与仓库工作约束均移除 v50 引用。外部历史视频/数据、当前 InstaUMI v8、X5 单夹爪有效基线及通用安全不变量不删除。
 - 该变更消除 `/home/cenxi/...dual_gripper_claw_to_claw_action_v50_fixed_timeline.json` 缺失导致的环境 gate；后续 `./umi verify` 只运行仍登记的 X5 单夹爪基线。终端进度功能和用户待验证的 `instaumi_20260901_105442` 输入保持不变。
 - 本地相关聚焦回归 52 passed，本地/服务器完整回归均为 `305 passed, 8 skipped`。v50 verifier 已不再被调用；当前 `./umi verify` 若在两端运行，失败来源已变为另一个仍有效的 X5 单夹爪基线外部 `audit.json` 缺失，不再涉及 v50。是否继续保留该独立 X5 gate 不在本轮删除授权内。
+
+### 2026-09-02 / Cycle 024
+
+- 按用户最新定义把 CSV 产品世界坐标统一重表达为右手 FLU：原点是 `grid_A`/`grid_B` 各自所有 Tag 角点几何中心的中点；`+X` 使用两板 TL/TR/BR/BL 角点绕序的平均法向并指向 AprilGrid 背面；物理 up 投影正交化为 `+Z`；`+Y = +Z × +X`，即沿 `+X` 看向左。位置和 `T_world_camera` 四元数共同左乘同一个刚体变换，手部子坐标保持 `hand_camera_flu_back_x`。发布 schema 升为 `instaumi-processed-csv/3.0-world-flu`，metadata 保存原生 frame、原点、轴定义及完整旋转四元数；内部 v8 cache 仍保留原生地图以便审计和无损重表达。
+- 真实 `instaumi_20260901_105442` 原路径已由外部流程移到存储 `#recycle`；本轮没有移动、恢复或删除数据，使用完整副本 `/home/ps/current-robotics-data-2/#recycle/total_annotation/umi_insta360/0901_instaumi_sort_blocks_sc/instaumi_20260901_105442`。热缓存重新发布耗时 `3.946 s`；`processed/trajectory.csv` 与合并 CSV 均为 9,516/9,516 帧有位姿、317.483833 s、`29.969730572 Hz`、`SELF_CALIBRATED_PASS`、世界 `world_flu_aprilgrid_midpoint`。两网格变换后中心分别约为 `[+0.00451,+0.28689,+0.00168]` 和 `[-0.00451,-0.28689,-0.00168]` m，中点为数值零；左/右相机 `X` 中位数约 `-0.534/-0.506 m`，符合相机在网格打印正面（负 X）；变换前后刚体距离最大误差 `<1.5e-9 m`，四元数范数误差 `<9e-13`。
+- 渲染器新增显式 `--reframe-world-flu`，与 CSV 共用同一变换模块，并要求固定 `flu-front-above`；eye 位于负 X 打印正面侧 `[-1.55,0,0.85]`、镜头朝向网格和 `+X`，不跟随或自动旋转。完整高清原片为 `processed/instaumi_20260901_105442_trajectory_world_flu_front_above.mp4`，1920×1080、30 FPS、9,525 帧、317.5 s、203,563,179 B，SHA-256 `cfe4c4b98ffb36eb3f5eeeaf4f4cac6d5f6cebc0fc44c30806aff4fc8fa0b72b`；渲染 wall `13:49.34`、平均 CPU `261%`、峰值 RSS 1,500,984 KiB、无 swap。人工检查起始、7.1 s、中段和末帧，均为两网格横排、正面斜上固定机位且 XYZ/RPY 面板可见。
+- 飞书接口先拒绝 194.1 MiB 高清原片，并进一步以 `234006` 拒绝 86.6 MB 发送版，说明当前租户实际 media 限额低于 CLI 提示的 100 MB。最终保留 30 FPS/9,525 帧/317.5 s，编码 1280×720、25,575,931 B 的发送版，SHA-256 `6fb8ca0ad5ec9ba410c9b415837f18402e970a68809677caf2bb130e04e202af`；文字 `om_x100b6649430d44b4c0200ef4690683a`、视频 `om_x100b66495890f4a8c1cb94b68e14a2b` 已发送并回读，media 报告时长 318 s。两份本地发送副本与高清原片均保留在该数据集 `processed/`。
+- 新增/更新原点与轴向、位置/姿态、地图、CSV schema/metadata 及固定机位回归；本地和服务器完整测试均为 `307 passed, 8 skipped`，聚焦测试 20 passed，`git diff --check` 通过。下一步等待用户观看视频确认实际方向；若方向定义需调整，必须修改单一共享变换并重新生成 CSV/视频，不能在渲染层单独翻转造成产品与画面不一致。
 
 ## 最近一次流水线版本变更验证
 

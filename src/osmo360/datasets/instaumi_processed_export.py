@@ -16,7 +16,13 @@ from typing import Any
 import cv2
 import h5py
 import numpy as np
+from scipy.spatial.transform import Rotation
 
+from osmo360.datasets.world_flu import (
+    WORLD_FLU_REVISION,
+    derive_world_flu_transform,
+    transform_trajectory_rows,
+)
 from osmo360.gripper_markers import marker_signature
 from osmo360.paths import ROOT
 from osmo360.pipeline.four_mp4 import PIPELINE_REVISION
@@ -33,7 +39,7 @@ from osmo360.visualization.render_gripper_force_angle_demo import (
 )
 
 
-EXPORT_REVISION = "instaumi-csv-v2-direct"
+EXPORT_REVISION = "instaumi-csv-v3-world-flu"
 LEGACY_EXPORT_REVISION = "instaumi-csv-v1"
 CSV_NAMES = ("trajectory.csv", "gripper.csv", "processed.csv", "metadata.csv")
 PIPELINE_FINAL_ENTRIES = frozenset({"manifest.lock.json", "status.json", "pairs"})
@@ -717,6 +723,12 @@ def export_processed_dataset(
     trajectory_path, trajectory_fields, trajectory_rows, report = _read_trajectory(
         root, pair_id
     )
+    world_map_path = trajectory_path.parent / "session_world_map.json"
+    if not world_map_path.is_file() or world_map_path.is_symlink():
+        raise ManifestError(f"trajectory world map is missing: {world_map_path}")
+    world_map = json.loads(world_map_path.read_text(encoding="utf-8"))
+    world_transform = derive_world_flu_transform(world_map)
+    trajectory_rows = transform_trajectory_rows(trajectory_rows, world_transform)
     query_time = np.asarray(
         [float(row["timestamp_s"]) for row in trajectory_rows], dtype=np.float64
     )
@@ -821,7 +833,9 @@ def export_processed_dataset(
         tempfile.mkdtemp(prefix=f".{EXPORT_REVISION}-build-", dir=processed_root)
     )
     try:
-        shutil.copy2(trajectory_path, build_dir / "trajectory.csv")
+        _write_rows(
+            build_dir / "trajectory.csv", trajectory_fields, trajectory_rows
+        )
         _write_rows(build_dir / "gripper.csv", gripper_fields, gripper_rows)
         _write_rows(build_dir / "processed.csv", processed_fields, processed_rows)
         metadata_fields = [
@@ -833,7 +847,21 @@ def export_processed_dataset(
             "trajectory_status",
             "trajectory_rows",
             "trajectory_rate_hz",
+            "source_world_frame",
             "world_frame",
+            "world_frame_convention",
+            "world_reframe_revision",
+            "world_origin_definition",
+            "world_x_positive_definition",
+            "world_y_positive_definition",
+            "world_z_positive_definition",
+            "world_origin_source_x_m",
+            "world_origin_source_y_m",
+            "world_origin_source_z_m",
+            "world_qx_from_source",
+            "world_qy_from_source",
+            "world_qz_from_source",
+            "world_qw_from_source",
             "camera_child_frame",
             "gripper_signal_revision",
             "training_ready",
@@ -861,7 +889,7 @@ def export_processed_dataset(
         if not child_frames:
             child_frames = ["hand_camera_flu_back_x"]
         metadata_row = {
-            "schema_version": "instaumi-processed-csv/2.0-direct",
+            "schema_version": "instaumi-processed-csv/3.0-world-flu",
             "dataset_id": pair_id,
             "dataset_directory": root.name,
             "pair_id": pair_id,
@@ -869,7 +897,29 @@ def export_processed_dataset(
             "trajectory_status": report["status"],
             "trajectory_rows": len(trajectory_rows),
             "trajectory_rate_hz": f"{frequency:.9f}",
+            "source_world_frame": world_transform.source_frame,
             "world_frame": ";".join(world_frames),
+            "world_frame_convention": "FLU",
+            "world_reframe_revision": WORLD_FLU_REVISION,
+            "world_origin_definition": (
+                "midpoint_of_grid_A_and_grid_B_geometric_centers"
+            ),
+            "world_x_positive_definition": "AprilGrid_back",
+            "world_y_positive_definition": "left_when_looking_along_positive_x",
+            "world_z_positive_definition": "physical_up",
+            "world_origin_source_x_m": f"{world_transform.origin_source_m[0]:.12f}",
+            "world_origin_source_y_m": f"{world_transform.origin_source_m[1]:.12f}",
+            "world_origin_source_z_m": f"{world_transform.origin_source_m[2]:.12f}",
+            **{
+                f"world_q{axis}_from_source": f"{value:.12f}"
+                for axis, value in zip(
+                    "xyzw",
+                    Rotation.from_matrix(
+                        world_transform.rotation_target_from_source
+                    ).as_quat(),
+                    strict=True,
+                )
+            },
             "camera_child_frame": ";".join(child_frames),
             "gripper_signal_revision": profile["revision_id"],
             "training_ready": 0,
