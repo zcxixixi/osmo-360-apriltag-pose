@@ -198,7 +198,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    create_app(args.data_root).run(host=args.host, port=args.port, threaded=True)
+    create_app(args.data_root).run(host=args.host, port=args.port, threaded=False)
     return 0
 
 
