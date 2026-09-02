@@ -148,6 +148,34 @@ Run the same one-argument entry point:
 ./run_pipeline.sh /absolute/path/to/dataset-root
 ```
 
+For the native InstaUMI `dataset.h5 + video/` layout, the one-argument CSV
+product entry point is:
+
+```bash
+./bin/process_instaumi_dataset.sh /absolute/path/to/dataset-root
+```
+
+It first runs or resumes the v8 shared-map trajectory pipeline, then reads the
+H5 serials/timestamps and the two registered rear-facing gripper views.  The
+serial/BaseTag/mount-bound jaw calibration produces angle and calibrated jaw
+width while preserving direct, low-confidence one-sided, short-gap recovered,
+and unavailable states.  It never derives a zero from each input episode.
+
+The atomically published CSV revision is:
+
+```text
+processed/instaumi-csv-v1/
+├── trajectory.csv  # unchanged v8 joint camera trajectory
+├── gripper.csv     # synchronized left/right opening angle, width and state
+├── processed.csv   # trajectory and gripper columns joined at v8 timestamps
+└── metadata.csv    # revisions, serials, frames, rate and quality status
+```
+
+Empty opening values are intentional when a visual gap exceeds 0.25 seconds.
+This jaw signal remains diagnostic (`training_ready=0`); the pose CSV retains
+the v8 `hand_camera_flu_back_x` camera frame and does not silently claim a TCP
+trajectory.
+
 The generic conservative profile defaults to one detector process and two
 OpenCV/FFmpeg decoder threads. The InstaUMI fast profile runs four lens processes with
 four threads each (bounded at 16 active CPU threads), uses about 1 GiB for four
