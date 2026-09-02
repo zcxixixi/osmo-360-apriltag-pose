@@ -25,9 +25,10 @@ from scipy.signal import correlate, correlation_lags
 from .devices import load_inventory
 from .insta360_telemetry import extract_x5_imu
 from .instaumi_format import common_window, write_dataset_h5
+from .four_mp4 import PIPELINE_REVISION as TRACKING_REVISION
 from .manifest import ManifestError, ROOT
 
-AUTOMATION_REVISION = "instaumi-auto-v3"
+AUTOMATION_REVISION = "instaumi-auto-v4"
 TARGET_FPS = "30000/1001"
 TARGET_FPS_FLOAT = 30000 / 1001
 SERIAL_PATTERN = re.compile(rb"IAHE[A-Z0-9]{10}")
@@ -417,6 +418,41 @@ def _full_export_available(episode: Path) -> bool:
     )
 
 
+def _demo_path(episode: Path) -> Path:
+    return episode / "processed" / f"{episode.name}_imu_assisted_demo.mp4"
+
+
+def _demo_complete(episode: Path) -> bool:
+    return _demo_path(episode).is_file()
+
+
+def _render_demo(episode: Path, log: Path) -> None:
+    tracking = (
+        episode
+        / ".osmo-cache"
+        / episode.name
+        / TRACKING_REVISION
+        / episode.name
+        / "tracking"
+    )
+    report = tracking / "report.json"
+    if not report.is_file():
+        raise PipelineFailure(f"tracking report is missing: {report}")
+    _run([
+        str(ROOT / ".venv/bin/python"),
+        "-m",
+        "tools.render_joint_four_mp4_trajectory",
+        str(episode),
+        str(tracking),
+        str(_demo_path(episode)),
+        "--view-preset",
+        "flu-front-above",
+        "--reframe-world-flu",
+    ], log)
+    if not _demo_complete(episode):
+        raise PipelineFailure(f"trajectory demo was not produced: {_demo_path(episode)}")
+
+
 def _full_outputs_complete(episode: Path) -> bool:
     processed = episode / "processed"
     return all(
@@ -428,7 +464,7 @@ def _full_outputs_complete(episode: Path) -> bool:
 def _process_complete(episode: Path) -> bool:
     processed = episode / "processed"
     if _full_outputs_complete(episode):
-        return True
+        return _demo_complete(episode)
     status_path = processed / "automation_status.json"
     if not (processed / "trajectory.csv").is_file() or not status_path.is_file():
         return False
@@ -436,6 +472,7 @@ def _process_complete(episode: Path) -> bool:
     return (
         status.get("status") == "COMPLETE"
         and status.get("mode") == "trajectory_only"
+        and _demo_complete(episode)
     )
 
 
@@ -702,31 +739,56 @@ def scan_once(
                 _atomic_json(state_path, state)
                 episode = format_pair(pair, automation_root)
                 mode = "full" if _full_export_available(episode) else "trajectory_only"
+                output_ready = (
+                    _full_outputs_complete(episode)
+                    if mode == "full"
+                    else (episode / "processed/trajectory.csv").is_file()
+                )
+                if not output_ready:
+                    pair_status.update({
+                        "status": "RUNNING",
+                        "stage": "trajectory",
+                        "node": os.uname().nodename,
+                        "mode": mode,
+                        "episode": str(episode),
+                        "updated_at_utc": _utc_now(),
+                    })
+                    _atomic_json(state_path, state)
+                    log = automation_root / "logs" / pair.collector_root.name / pair.episode_name / "process.log"
+                    command = [str(process_script)]
+                    if mode == "trajectory_only":
+                        command.append("--trajectory-only")
+                    command.append(str(episode))
+                    _run(command, log)
+                    output_ready = (
+                        _full_outputs_complete(episode)
+                        if mode == "full"
+                        else (episode / "processed/trajectory.csv").is_file()
+                    )
+                    if not output_ready:
+                        raise PipelineFailure(
+                            f"downstream outputs are incomplete: {episode / 'processed'}"
+                        )
                 pair_status.update({
                     "status": "RUNNING",
-                    "stage": "trajectory",
+                    "stage": "render",
                     "node": os.uname().nodename,
                     "mode": mode,
                     "episode": str(episode),
                     "updated_at_utc": _utc_now(),
                 })
                 _atomic_json(state_path, state)
-                log = automation_root / "logs" / pair.collector_root.name / pair.episode_name / "process.log"
-                command = [str(process_script)]
-                if mode == "trajectory_only":
-                    command.append("--trajectory-only")
-                command.append(str(episode))
-                _run(command, log)
-                if not _process_complete(episode) and not (
-                    mode == "trajectory_only"
-                    and (episode / "processed/trajectory.csv").is_file()
-                ):
-                    raise PipelineFailure(f"downstream outputs are incomplete: {episode / 'processed'}")
+                render_log = (
+                    automation_root / "logs" / pair.collector_root.name
+                    / pair.episode_name / "render.log"
+                )
+                _render_demo(episode, render_log)
                 outputs = (
                     ["trajectory.csv", "gripper.csv", "processed.csv", "metadata.csv"]
                     if mode == "full"
                     else ["trajectory.csv"]
                 )
+                outputs.append(_demo_path(episode).name)
                 pair_status.update({
                     "status": "COMPLETE",
                     "stage": "complete",

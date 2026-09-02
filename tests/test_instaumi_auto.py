@@ -240,6 +240,7 @@ def test_trajectory_only_completion_is_explicit(tmp_path: Path) -> None:
     processed = tmp_path / "processed"
     processed.mkdir()
     (processed / "trajectory.csv").write_text("trajectory")
+    auto._demo_path(tmp_path).write_bytes(b"demo")
     auto._atomic_json(processed / "automation_status.json", {
         "status": "COMPLETE",
         "mode": "trajectory_only",
@@ -258,6 +259,7 @@ def test_dry_run_skips_complete_episode(tmp_path: Path) -> None:
     processed.mkdir(parents=True)
     for name in ("trajectory.csv", "gripper.csv", "processed.csv", "metadata.csv"):
         (processed / name).write_text(name)
+    auto._demo_path(episode).write_bytes(b"demo")
     script = tmp_path / "process.sh"
     script.write_text("#!/bin/sh\n")
 
