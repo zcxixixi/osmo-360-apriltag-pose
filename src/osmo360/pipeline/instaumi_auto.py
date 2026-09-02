@@ -37,8 +37,8 @@ COLLECTOR_PATTERN = re.compile(r"^\d{4}_instaumi_[a-z0-9_]+$")
 GRIPPER_PROFILE = (
     ROOT / "config/rig_revisions/instaumi_gripper_signal_20260902_r4.json"
 )
-FFMPEG = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg"
-FFPROBE = FFMPEG.with_name("ffprobe")
+FFMPEG = Path(os.environ.get("INSTAUMI_AUTO_FFMPEG", "/usr/bin/ffmpeg"))
+FFPROBE = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffprobe"
 
 
 @dataclass(frozen=True)
