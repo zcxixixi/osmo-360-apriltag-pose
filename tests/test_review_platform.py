@@ -6,7 +6,12 @@ import numpy as np
 import pytest
 
 from osmo360.pipeline.review_store import REASONS, ReviewStore, summarize_pair
-from osmo360.pipeline.review_ui import PAGE, pair_timeline, suggest_segments
+from osmo360.pipeline.review_ui import (
+    PAGE,
+    pair_timeline,
+    review_video_path,
+    suggest_segments,
+)
 
 
 def write_pair(root: Path, pair_id: str = "pair-01-test") -> Path:
@@ -79,6 +84,16 @@ def test_instaumi_aligned_videos_are_reviewable(tmp_path: Path) -> None:
     assert store.history(item["pair_id"])[0]["decision"] == "approved"
     assert "数据能用吗？" in PAGE
     assert "左右对齐微调" in PAGE
+
+
+def test_wifi_proxy_is_preferred_without_replacing_review_source(tmp_path: Path) -> None:
+    directory = write_instaumi(tmp_path)
+    assert review_video_path(directory, "left") == directory / "video/Left.mp4"
+    wifi = directory / "video/Left_wifi.mp4"
+    wifi.write_bytes(b"low-bandwidth")
+    assert review_video_path(directory, "left") == wifi
+    with pytest.raises(ValueError, match="invalid role"):
+        review_video_path(directory, "center")
 
 
 def test_manual_alignment_is_saved_and_exported(tmp_path: Path) -> None:

@@ -45,6 +45,14 @@ def load_rgb_samples(path: str, mtime_ns: int) -> dict[str, np.ndarray]:
         return {"left": arrays["left"].copy(), "right": arrays["right"].copy()}
 
 
+def review_video_path(directory: Path, role: str) -> Path:
+    if role not in {"left", "right"}:
+        raise ValueError("invalid role")
+    video_dir = directory / "video"
+    wifi_proxy = video_dir / f"{role.title()}_wifi.mp4"
+    return wifi_proxy if wifi_proxy.is_file() else video_dir / f"{role.title()}.mp4"
+
+
 def pair_timeline(directory: Path) -> dict[str, list[list[float]]]:
     tag_values: dict[int, list[int]] = {}
     tag_path = directory / "tag_detections.jsonl"
@@ -116,7 +124,10 @@ def serve_review_ui(
             self.end_headers()
             self.wfile.write(body)
 
-        def file_response(self, path: Path, content_type: str) -> None:
+        def file_response(
+            self, path: Path, content_type: str,
+            cache_control: str = "no-store",
+        ) -> None:
             size = path.stat().st_size
             start, end = 0, size - 1
             range_header = self.headers.get("Range", "")
@@ -131,6 +142,7 @@ def serve_review_ui(
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Cache-Control", cache_control)
             self.send_header("Content-Length", str(end - start + 1))
             if status == HTTPStatus.PARTIAL_CONTENT:
                 self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
@@ -193,10 +205,10 @@ def serve_review_ui(
                     if parts[3] == "video":
                         query = parse_qs(parsed.query)
                         role = query.get("role", [""])[0]
-                        if role not in {"left", "right"}:
-                            raise ValueError("invalid role")
-                        video = Path(item["source_dir"]) / "video" / f"{role.title()}.mp4"
-                        return self.file_response(video, "video/mp4")
+                        video = review_video_path(Path(item["source_dir"]), role)
+                        return self.file_response(
+                            video, "video/mp4", "public, max-age=3600"
+                        )
                     if parts[3] == "frame":
                         query = parse_qs(parsed.query)
                         role = query.get("role", [""])[0]
