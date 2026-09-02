@@ -14,7 +14,7 @@ if [[ ! -d "$DATASET_ROOT/raw/left" || ! -d "$DATASET_ROOT/raw/right" ]]; then
 fi
 
 ARGS=(dataset "$DATASET_ROOT")
-if [[ "${OSMO_PIPELINE_DRY_RUN:-0}" == "1" ]]; then
+if [[ "${INSTAUMI_PIPELINE_DRY_RUN:-0}" == "1" ]]; then
     ARGS+=(--dry-run)
 fi
 exec "$ROOT/umi" "${ARGS[@]}"

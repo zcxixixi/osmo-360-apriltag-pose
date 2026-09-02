@@ -83,14 +83,14 @@ class ForceModel:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("front_video", type=Path, help="extracted front fisheye track")
-    parser.add_argument("--source-osv", type=Path, required=True)
+    parser.add_argument("--source-insv", type=Path, required=True)
     parser.add_argument("--rig-revision", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--maximum-recovery-gap-s", type=float, default=0.25)
     parser.add_argument(
         "--camera-profile",
-        choices=("osmo-front", "insta360-x5-front"),
-        default="osmo-front",
+        choices=("insta360-x5-front",),
+        default="insta360-x5-front",
     )
     parser.add_argument(
         "--contact-interval-s",
@@ -301,7 +301,7 @@ def detect_x5_yellow_triad_adaptive(
 def detect_yellow_triad(
     hsv: np.ndarray,
     side: str,
-    camera_profile: str = "osmo-front",
+    camera_profile: str = "insta360-x5-front",
     x5_angle_mode: str = "pca-axis",
     x5_dot_selection: str = "fixed-bands",
 ) -> np.ndarray | None:
@@ -357,7 +357,7 @@ def detect_yellow_triad(
 
 
 def detect_black_dot(
-    hsv: np.ndarray, side: str, camera_profile: str = "osmo-front"
+    hsv: np.ndarray, side: str, camera_profile: str = "insta360-x5-front"
 ) -> DotObservation | None:
     height, width = hsv.shape[:2]
     scale = width / 1920.0
@@ -450,7 +450,7 @@ def included_jaw_angle(left: np.ndarray, right: np.ndarray) -> float:
 
 def observe_frame(
     image: np.ndarray,
-    camera_profile: str = "osmo-front",
+    camera_profile: str = "insta360-x5-front",
     x5_angle_mode: str = "pca-axis",
     x5_included_angle_range: tuple[float, float] = (35.0, 80.0),
     x5_dot_selection: str = "fixed-bands",
@@ -532,7 +532,7 @@ def nanmedian_filter(values: np.ndarray, radius: int = 2) -> np.ndarray:
 
 def analyze_video(
     path: Path,
-    camera_profile: str = "osmo-front",
+    camera_profile: str = "insta360-x5-front",
     x5_angle_mode: str = "pca-axis",
     x5_included_angle_range: tuple[float, float] = (35.0, 80.0),
     x5_dot_selection: str = "fixed-bands",
@@ -1599,7 +1599,7 @@ def write_csv(
 def main() -> int:
     args = parse_args()
     front_video = args.front_video.resolve(strict=True)
-    source_osv = args.source_osv.resolve(strict=True)
+    source_insv = args.source_insv.resolve(strict=True)
     rig = load_rig_revision(
         args.rig_revision,
         allow_diagnostic_world=args.allow_diagnostic_rig,
@@ -1680,7 +1680,7 @@ def main() -> int:
         )
         if force_revision.get("schema_version") != "x5-relative-force-revision/1.0":
             raise ValueError("invalid X5 relative-force revision schema")
-        if force_revision.get("source", {}).get("video_sha256") != sha256(source_osv):
+        if force_revision.get("source", {}).get("video_sha256") != sha256(source_insv):
             raise ValueError("relative-force revision source-video mismatch")
         force_hardware = force_revision.get("hardware", {})
         if (
@@ -1853,8 +1853,8 @@ def main() -> int:
             else "DIAGNOSTIC_UNCALIBRATED_RELATIVE_FORCE"
         ),
         "source": {
-            "osv": str(source_osv),
-            "osv_sha256": sha256(source_osv),
+            "insv": str(source_insv),
+            "insv_sha256": sha256(source_insv),
             "front_lens_video": str(front_video),
             "front_lens_video_sha256": sha256(front_video),
             "front_lens_track": 1,

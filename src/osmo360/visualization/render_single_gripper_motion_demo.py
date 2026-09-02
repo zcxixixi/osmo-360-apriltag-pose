@@ -16,7 +16,7 @@ from scipy.spatial.transform import Rotation, Slerp
 import trimesh
 
 from osmo360.calibration.calibrate_basetag_reciprocal import Transform
-from osmo360.localization.fuse_asymmetric_gripper_world_pose import camera_to_base
+from osmo360.localization.gripper_transforms import camera_to_base
 from osmo360.visualization.render_dual_camera_alignment_demo import UrdfWireframe, load_urdf_wireframe
 from osmo360.visualization.render_gripper_force_angle_demo import (
     AMBER,
@@ -76,7 +76,7 @@ class CadOpeningModel:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("front_video", type=Path)
-    parser.add_argument("--source-osv", type=Path, required=True)
+    parser.add_argument("--source-insv", type=Path, required=True)
     parser.add_argument("--calibration", type=Path, required=True)
     parser.add_argument("--camera-pose-csv", type=Path, required=True)
     parser.add_argument("--camera-pose-summary", type=Path, required=True)
@@ -88,8 +88,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument(
         "--camera-profile",
-        choices=("osmo-front", "insta360-x5-front"),
-        default="osmo-front",
+        choices=("insta360-x5-front",),
+        default="insta360-x5-front",
     )
     parser.add_argument("--allow-diagnostic-rig", action="store_true")
     return parser.parse_args()
@@ -279,7 +279,7 @@ def draw_world_scene(
 
 
 def draw_video_markers(
-    frame: np.ndarray, camera_profile: str = "osmo-front"
+    frame: np.ndarray, camera_profile: str = "insta360-x5-front"
 ) -> tuple[np.ndarray, int, int]:
     observation = observe_frame(frame, camera_profile)
     for points, color in (
@@ -330,7 +330,7 @@ def render(
     cad_model: CadOpeningModel,
     urdf: UrdfWireframe,
     rig_id: str,
-    camera_profile: str = "osmo-front",
+    camera_profile: str = "insta360-x5-front",
 ) -> tuple[np.ndarray, np.ndarray]:
     capture = cv2.VideoCapture(str(video))
     intermediate = output.with_name(output.stem + "_mp4v.mp4")
@@ -479,7 +479,7 @@ def main() -> int:
         name: getattr(args, name).resolve(strict=True)
         for name in (
             "front_video",
-            "source_osv",
+            "source_insv",
             "calibration",
             "camera_pose_csv",
             "camera_pose_summary",
@@ -572,8 +572,8 @@ def main() -> int:
         "schema_version": "single-gripper-motion-force-demo/1.0",
         "status": "DIAGNOSTIC",
         "source": {
-            "osv": str(paths["source_osv"]),
-            "osv_sha256": sha256(paths["source_osv"]),
+            "insv": str(paths["source_insv"]),
+            "insv_sha256": sha256(paths["source_insv"]),
             "front_lens": str(paths["front_video"]),
             "front_lens_sha256": sha256(paths["front_video"]),
             "camera_serial": serial,

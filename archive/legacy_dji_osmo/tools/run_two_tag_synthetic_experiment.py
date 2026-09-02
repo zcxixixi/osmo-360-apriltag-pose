@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from osmo360.localization.coordinate_frames import DJI_BODY_TO_PANORAMA_OPENCV
+from osmo360.localization.camera_frames import BODY_TO_PANORAMA_OPENCV
 from osmo360.verification.historical import (
     baseline_commit,
     verify_historical_file,
@@ -85,7 +85,7 @@ def load_projection():
     def project(rays: np.ndarray) -> np.ndarray:
         rays = np.asarray(rays, dtype=float)
         rays /= np.linalg.norm(rays, axis=1, keepdims=True)
-        body = rays @ DJI_BODY_TO_PANORAMA_OPENCV
+        body = rays @ BODY_TO_PANORAMA_OPENCV
         lens_directions = body @ lens_rotation.T
         theta = np.arccos(np.clip(lens_directions[:, 2], -1.0, 1.0))
         rho = np.maximum(np.linalg.norm(lens_directions[:, :2], axis=1), 1e-12)
@@ -114,7 +114,7 @@ def load_projection():
             np.cos(theta),
         ]
         direction_body = direction_lens @ lens_rotation
-        rays = direction_body @ DJI_BODY_TO_PANORAMA_OPENCV.T
+        rays = direction_body @ BODY_TO_PANORAMA_OPENCV.T
         return rays / np.linalg.norm(rays, axis=1, keepdims=True)
 
     return project, pixels_to_rays

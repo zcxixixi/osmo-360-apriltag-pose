@@ -22,7 +22,7 @@ def _force_command(manifest: CaptureManifest) -> list[str]:
         "-m",
         "osmo360.visualization.render_gripper_force_angle_demo",
         str(manifest.identity_path("inputs", "raw_video")),
-        "--source-osv",
+        "--source-insv",
         str(manifest.identity_path("inputs", "raw_video")),
         "--rig-revision",
         str(manifest.identity_path("revisions", "rig")),
@@ -59,7 +59,7 @@ def _timeline_command(manifest: CaptureManifest) -> list[str]:
         "-m",
         "osmo360.visualization.render_single_gripper_webgl_demo",
         str(manifest.identity_path("inputs", "raw_video")),
-        "--source-osv",
+        "--source-insv",
         str(manifest.identity_path("inputs", "raw_video")),
         "--calibration",
         str(manifest.identity_path("inputs", "camera_identity")),
@@ -89,7 +89,7 @@ def _verify_force_output(manifest: CaptureManifest) -> dict[str, Any]:
         raise ManifestError(f"force output is incomplete: {audit_path}")
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
     expected = manifest.data
-    if audit.get("source", {}).get("osv_sha256") != expected["inputs"]["raw_video"]["sha256"]:
+    if audit.get("source", {}).get("insv_sha256") != expected["inputs"]["raw_video"]["sha256"]:
         raise ManifestError("force output raw-video identity mismatch")
     if audit.get("source", {}).get("base_tag_id") != expected["camera"]["base_tag_id"]:
         raise ManifestError("force output BaseTag binding mismatch")

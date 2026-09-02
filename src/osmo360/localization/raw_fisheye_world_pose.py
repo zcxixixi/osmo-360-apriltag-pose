@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Estimate metric world poses directly from one raw Osmo fisheye stream.
+"""Estimate metric world poses directly from one raw Insta360 fisheye stream.
 
 This bypasses equirectangular stitching and its near-field parallax. Pixels are
 converted to calibrated unit-bearing rays, then a robust world->camera bearing

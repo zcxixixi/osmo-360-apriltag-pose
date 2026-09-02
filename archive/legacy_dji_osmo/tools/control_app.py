@@ -119,7 +119,7 @@ def start_offline():
         cmd = [
             sys.executable,
             "-m",
-            "tools.osmo_360_offline",
+            "tools.insta360_offline",
             str(selected),
             "--tag-size",
             str(tag),

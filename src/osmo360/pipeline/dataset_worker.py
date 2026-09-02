@@ -246,7 +246,7 @@ def process_pair(root: Path, pair: dict[str, Any], scratch: Path) -> int:
     )
 
     # Diagnostic mode retains all four aligned 1920² videos in scratch.
-    if os.environ.get("OSMO_PIPELINE_ALIGNMENT_ONLY", "0") == "1":
+    if os.environ.get("INSTAUMI_PIPELINE_ALIGNMENT_ONLY", "0") == "1":
         return 0
 
     raw = scratch / "raw"

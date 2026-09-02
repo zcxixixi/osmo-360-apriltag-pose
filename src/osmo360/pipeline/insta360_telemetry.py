@@ -33,7 +33,7 @@ class ImuSamples:
 
 
 def telemetry_parser_path() -> Path:
-    configured = os.environ.get("OSMO_X5_TELEMETRY_PARSER")
+    configured = os.environ.get("INSTAUMI_X5_TELEMETRY_PARSER")
     path = Path(configured) if configured else DEFAULT_TELEMETRY_PARSER
     if not path.is_file() or not os.access(path, os.X_OK):
         raise ManifestError(

@@ -19,14 +19,13 @@ from tools.insta360_sdk_revision import DEFAULT_REVISION as INSTA360_SDK_REVISIO
 
 from tools._root import ROOT
 FFMPEG_BIN = ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin"
-PANOFORGE_ROOT = ROOT.parent / "panoforge-test"
 GRIPPER_MESHES = ROOT / "assets/gripper"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Raw 360 camera video to 6DoF trajectory dataset")
     parser.add_argument("input", type=Path)
-    parser.add_argument("--camera", choices=("auto", "dji", "insta360", "panorama"), default="auto")
+    parser.add_argument("--camera", choices=("auto", "insta360", "panorama"), default="auto")
     parser.add_argument("--output-root", type=Path, default=Path("camera-datasets"))
     parser.add_argument("--run-name")
     parser.add_argument("--tag-map", type=Path)
@@ -45,7 +44,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-rmse-px", type=float, default=1.2)
     parser.add_argument("--max-processed-frames", type=int)
     parser.add_argument("--stitch-width", type=int, choices=(3840, 6144, 7680), default=3840)
-    parser.add_argument("--stitch-encoder", choices=("auto", "cpu", "nvenc"), default="auto")
     parser.add_argument("--insta-sdk-revision", type=Path, default=INSTA360_SDK_REVISION)
     parser.add_argument(
         "--insta-stitch-type", choices=("template", "optflow", "dynamicstitch", "aistitch"),
@@ -55,7 +53,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--insta-soft-decode", action="store_true")
     parser.add_argument("--insta-soft-encode", action="store_true")
     parser.add_argument("--projection-backend", choices=("auto", "cpu", "cuda"), default="auto")
-    parser.add_argument("--panoforge-root", type=Path, default=PANOFORGE_ROOT)
     parser.add_argument("--extract-frames", action="store_true")
     parser.add_argument("--skip-preview", action="store_true")
     parser.add_argument("--force", action="store_true")
@@ -83,20 +80,18 @@ def detect_source(path: Path, override: str = "auto") -> tuple[str, dict]:
         return override, probe
     suffix = path.suffix.lower()
     if suffix == ".osv":
-        return "dji", probe
+        return "unsupported", probe
     if suffix in {".insv", ".lrv"}:
         return "insta360", probe
     text = json.dumps(probe, ensure_ascii=False).lower() + " " + path.name.lower()
     if "insta360" in text or "insta" in text:
         return "insta360", probe
-    if "dji" in text or "osmo" in text:
-        return "dji", probe
     videos = [stream for stream in probe.get("streams", []) if stream.get("codec_type") == "video"]
     if len(videos) >= 2 and all(
         int(stream.get("width", 0)) == int(stream.get("height", -1))
         for stream in videos[:2]
     ):
-        return "dji", probe
+        return "insta360", probe
     if videos:
         width, height = int(videos[0].get("width", 0)), int(videos[0].get("height", 0))
         if height > 0 and width == height * 2:
@@ -223,8 +218,8 @@ def main() -> int:
         "status": "starting",
     }
     print(f"CAMERA_DETECTED {camera} {source.name}")
-    if camera == "unknown":
-        raise SystemExit("camera could not be identified; use --camera dji or --camera insta360")
+    if camera in {"unknown", "unsupported"}:
+        raise SystemExit("only Insta360 INSV/LRV or stitched panorama input is supported")
     panorama = run_dir / "intermediate/panorama_factory_calibrated.mp4"
     sensor_metadata = run_dir / "sensor-metadata"
     log = run_dir / "pipeline.log"
@@ -235,7 +230,6 @@ def main() -> int:
     dataset = run_dir / "dataset"
     projection_backend = backend(args.projection_backend)
     camera_profile = {
-        "dji": "dji-osmo-360",
         "insta360": "insta360-x5",
         "panorama": "auto",
     }[camera]
@@ -247,22 +241,9 @@ def main() -> int:
         video_streams
         and int(video_streams[0].get("height", 0)) > 0
         and int(video_streams[0].get("width", 0)) == 2 * int(video_streams[0].get("height", 0))
-        and source.suffix.lower() not in {".osv", ".insv"}
+        and source.suffix.lower() != ".insv"
     )
-    if camera == "dji" and not already_panorama:
-        stitch = [
-            sys.executable, "-m", "tools.dji_osv_stitch", str(source), str(panorama),
-            "--metadata-dir", str(sensor_metadata), "--panoforge-root", str(args.panoforge_root.resolve()),
-            "--ffmpeg-bin", str(FFMPEG_BIN), "--width", str(args.stitch_width),
-            "--codec", "h264", "--quality", "18", "--encoder", args.stitch_encoder,
-        ]
-        if args.force:
-            stitch.append("--force")
-        if args.force or not panorama.is_file():
-            run("dji_factory_stitch", stitch, log, args.dry_run)
-        else:
-            print(f"[dji_factory_stitch] reuse {panorama}")
-    elif camera == "insta360" and source.suffix.lower() in {".insv", ".lrv"}:
+    if camera == "insta360" and source.suffix.lower() in {".insv", ".lrv"}:
         stitch = [
             sys.executable, "-m", "tools.insta360_media_stitch", str(source), str(panorama),
             "--sdk-revision", str(args.insta_sdk_revision.resolve()), "--width", str(args.stitch_width),
@@ -284,7 +265,7 @@ def main() -> int:
         panorama = source
 
     track = [
-        sys.executable, "-m", "tools.osmo_360_offline", str(panorama),
+        sys.executable, "-m", "tools.insta360_offline", str(panorama),
         "--sample-fps", str(args.sample_fps), "--view-size", str(args.view_size),
         "--global-search-size", str(args.global_search_size),
         "--max-rmse-px", str(args.max_rmse_px), "--max-speed", "10",
@@ -304,9 +285,8 @@ def main() -> int:
             "--grid-id-order", args.grid_id_order,
             "--min-tags", "4", "--pnp-points", "centers", "--pnp-solver", "ippe",
         ))
-    imu_csv = sensor_metadata / "imu_perframe.csv"
-    if camera == "dji":
-        track.extend(("--imu-csv", str(imu_csv)))
+    # Recorded X5 IMU is extracted from the INSV trailer by the InstaUMI path;
+    # this panorama tracker consumes visual measurements only.
     if args.max_processed_frames:
         track.extend(("--max-processed-frames", str(args.max_processed_frames)))
     if args.force or not pose_csv.is_file():
@@ -337,7 +317,7 @@ def main() -> int:
     export = [
         sys.executable, "-m", "tools.export_trajectory_dataset",
         str(panorama), str(pose_csv), str(summary_json), str(dataset),
-        "--source-raw", str(source), "--camera-family", "dji_osmo_360" if camera == "dji" else camera,
+        "--source-raw", str(source), "--camera-family", camera,
         "--sensor-metadata-dir", str(sensor_metadata),
         "--detections-jsonl", str(visual_dir / "detections.jsonl"),
     ]

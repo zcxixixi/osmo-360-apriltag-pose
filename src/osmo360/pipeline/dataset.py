@@ -180,11 +180,11 @@ def discover_dataset(dataset_root: Path) -> dict[str, Any]:
 
 def _nodes() -> list[str]:
     configured = os.environ.get(
-        "OSMO_PIPELINE_NODES", "local,current@192.168.109.124"
+        "INSTAUMI_PIPELINE_NODES", "local,current@192.168.109.124"
     )
     nodes = [value.strip() for value in configured.split(",") if value.strip()]
     if not nodes or nodes[0] != "local":
-        raise ManifestError("OSMO_PIPELINE_NODES must begin with local")
+        raise ManifestError("INSTAUMI_PIPELINE_NODES must begin with local")
     return nodes
 
 
@@ -199,7 +199,7 @@ def _worker_command(root: Path, pair_id: str, dataset_id: str, scratch: Path) ->
 def _run_assigned(node: str, commands: list[list[str]]) -> list[dict[str, Any]]:
     results = []
     remote_repo = os.environ.get(
-        "OSMO_REMOTE_REPO", "/home/current/osmo-360-apriltag-pose"
+        "INSTAUMI_REMOTE_REPO", "/home/current/instaumi-x5-pipeline"
     )
     for command in commands:
         if node == "local":
@@ -232,7 +232,7 @@ def process_dataset(dataset_root: Path, *, dry_run: bool = False) -> dict[str, A
         )
     lock_path = root / lock["pairs"][0]["dataset_id"] / "processed" / "manifest.lock.json" if lock["pairs"] else root / "raw" / "manifest.empty.json"
     nodes = _nodes()
-    scratch_base = Path(os.environ.get("OSMO_PIPELINE_SCRATCH", "/tmp/osmo-pipeline"))
+    scratch_base = Path(os.environ.get("INSTAUMI_PIPELINE_SCRATCH", "/tmp/instaumi-pipeline"))
     assignments: dict[str, list[list[str]]] = {node: [] for node in nodes}
     for index, pair in enumerate(lock["pairs"]):
         node = nodes[index % len(nodes)]

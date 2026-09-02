@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from tools.osmo_360_offline import (
+from tools.insta360_offline import (
     View,
     load_tag_map,
     perspective_intrinsics,
