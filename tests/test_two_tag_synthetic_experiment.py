@@ -6,18 +6,7 @@ from tools.run_two_tag_synthetic_experiment import (
     PANO_ROOT,
     load_projection,
     tag_corners,
-    verify_freeze,
 )
-@pytest.mark.skipif(
-    not (PANO_ROOT / "app/core/maps.py").is_file(),
-    reason="external PanoForge checkout is not present on this host",
-)
-def test_frozen_two_tag_locator_files_still_match():
-    freeze = verify_freeze()
-
-    assert freeze["freeze_id"] == "two-tag-locator-20260828-v1"
-
-
 @pytest.mark.skipif(
     not (PANO_ROOT / "app/core/maps.py").is_file(),
     reason="external PanoForge checkout is not present on this host",

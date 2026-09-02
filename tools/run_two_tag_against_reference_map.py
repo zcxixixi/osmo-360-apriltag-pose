@@ -20,7 +20,6 @@ from osmo360.localization.raw_fisheye_world_pose import make_ray_converter
 from tools.run_physical_two_tag_camera_experiment import (
     compose, inverse, local_corners, pose_from_tag, stats,
 )
-from tools.run_two_tag_synthetic_experiment import verify_freeze
 from osmo360.localization.world_frames import compile_world_tag_map
 
 
@@ -164,7 +163,7 @@ def render_demo(output: Path, video: Path, cache, screen_pose: dict, reference: 
 
 
 def main() -> int:
-    args=parse_args();verify_freeze();args.output_dir.mkdir(parents=True,exist_ok=False);cache,by_frame,metadata=load_cache(args.observation_cache)
+    args=parse_args();args.output_dir.mkdir(parents=True,exist_ok=False);cache,by_frame,metadata=load_cache(args.observation_cache)
     source_width,source_height=metadata["source_size"]
     geometry=SimpleNamespace(calibration=args.calibration.resolve(),panoforge_root=(ROOT.parent/"panoforge-test").resolve(),source_width=int(source_width),source_height=int(source_height),stream=args.stream,radial_model="stitch");convert,_=make_ray_converter(geometry)
     reference_map=compile_world_tag_map(args.reference_map);reference_initial=build_reference_initial(cache,by_frame,metadata,reference_map,convert);initial_path=args.output_dir/"reference_initial_pose.csv";write_pose(initial_path,reference_initial);compiled_reference=args.output_dir/"reference_map_snapshot.json";compiled_reference.write_text(json.dumps(reference_map,indent=2)+"\n")

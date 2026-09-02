@@ -117,6 +117,48 @@ def test_calibrated_gyro_bridge_shapes_rotation_but_keeps_visual_position(tmp_pa
     )
 
 
+def test_gyro_prediction_propagates_visual_orientation(tmp_path: Path):
+    bundle = load_instaumi_imu(_h5(tmp_path, per_side=True))
+
+    prediction = bundle.streams["left"].predict_orientation(
+        0.0,
+        Rotation.identity(),
+        0.2,
+    )
+
+    assert prediction.rotation.as_euler("xyz", degrees=True)[2] == pytest.approx(
+        36.0,
+        abs=0.05,
+    )
+    assert prediction.maximum_sample_gap_s == pytest.approx(0.01)
+
+
+def test_short_visual_gap_uses_trusted_gyro_bridge(tmp_path: Path):
+    bundle = load_instaumi_imu(_h5(tmp_path, per_side=True))
+    left = [_row(0, 0.0, 0, 0), _row(1, 0.1, None), _row(2, 0.2, 2, 40)]
+    right = [_row(0, 0.0, 5), _row(1, 0.1, 6), _row(2, 0.2, 7)]
+    output = tmp_path / "joint.csv"
+
+    summary = write_joint_pose_csv(
+        output,
+        left,
+        right,
+        map_id="shared-map",
+        imu_streams=bundle.streams,
+        imu_audit=bundle.audit,
+    )
+    rows = list(csv.DictReader(output.open(newline="", encoding="utf-8")))
+
+    assert rows[1]["left_pose_state"] == "IMU_ASSISTED"
+    assert rows[1]["left_quality_status"] == "imu_assisted"
+    assert rows[1]["joint_valid"] == "true"
+    assert summary["joint_valid_ratio"] == 1.0
+    assert summary["imu_assistance"]["trusted_assisted_side_frames"] == {
+        "left": 1,
+        "right": 0,
+    }
+
+
 def test_empty_shared_imu_is_audited_and_never_assigned_to_both_hands(tmp_path: Path):
     bundle = load_instaumi_imu(_h5(tmp_path, per_side=False))
 

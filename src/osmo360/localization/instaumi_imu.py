@@ -32,12 +32,63 @@ class GyroBridge:
 
 
 @dataclass(frozen=True)
+class GyroPrediction:
+    rotation: Rotation
+    maximum_sample_gap_s: float
+
+
+@dataclass(frozen=True)
 class ImuSeries:
     side: str
     timestamp_s: np.ndarray
     angular_velocity_hand_rad_s: np.ndarray
     calibration_sha256: str
     dataset_path: str
+
+    def predict_orientation(
+        self,
+        start_s: float,
+        start_rotation: Rotation,
+        end_s: float,
+        *,
+        maximum_sample_gap_s: float = MAXIMUM_IMU_SAMPLE_GAP_S,
+    ) -> GyroPrediction:
+        """Propagate a visual attitude to ``end_s`` using calibrated gyro data."""
+        if not np.isfinite([start_s, end_s, maximum_sample_gap_s]).all():
+            raise ValueError("IMU prediction bounds must be finite")
+        if end_s <= start_s or maximum_sample_gap_s <= 0:
+            raise ValueError("invalid IMU prediction interval")
+        timestamps = self.timestamp_s
+        if timestamps[0] > start_s or timestamps[-1] < end_s:
+            raise ImuAssistanceUnavailable("imu_does_not_cover_visual_gap")
+        lower = max(0, int(np.searchsorted(timestamps, start_s, side="right")) - 1)
+        upper = min(
+            len(timestamps),
+            int(np.searchsorted(timestamps, end_s, side="left")) + 1,
+        )
+        covered_times = timestamps[lower:upper]
+        if len(covered_times) < 2:
+            raise ImuAssistanceUnavailable("insufficient_imu_samples")
+        largest_gap = float(np.max(np.diff(covered_times)))
+        if largest_gap > maximum_sample_gap_s + 1e-12:
+            raise ImuAssistanceUnavailable(
+                f"imu_sample_gap_exceeds_limit:{largest_gap:.9f}"
+            )
+        inside = timestamps[(timestamps > start_s) & (timestamps < end_s)]
+        nodes = np.unique(np.concatenate((np.asarray([start_s, end_s]), inside)))
+        omega = np.column_stack([
+            np.interp(nodes, timestamps, self.angular_velocity_hand_rad_s[:, axis])
+            for axis in range(3)
+        ])
+        propagated = start_rotation
+        for index in range(1, len(nodes)):
+            delta_s = float(nodes[index] - nodes[index - 1])
+            midpoint_omega = 0.5 * (omega[index - 1] + omega[index])
+            propagated = propagated * Rotation.from_rotvec(midpoint_omega * delta_s)
+        return GyroPrediction(
+            rotation=propagated,
+            maximum_sample_gap_s=largest_gap,
+        )
 
     def bridge_orientations(
         self,
