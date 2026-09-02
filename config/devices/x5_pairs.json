@@ -71,6 +71,38 @@
         "base_tag_id": 3,
         "asset_label": "right-gripper-basetag3"
       }
+    },
+    "dual-x5-gripper-pair-04": {
+      "status": "SERIAL_AND_DATASET_SIDE_VERIFIED",
+      "label": "dual X5 gripper pair 04",
+      "left": {
+        "serial": "IAHEA2607VJSEJ",
+        "role": "physical_left",
+        "base_tag_id": 2,
+        "asset_label": "left-gripper-basetag2"
+      },
+      "right": {
+        "serial": "IAHEA2606KN98S",
+        "role": "physical_right",
+        "base_tag_id": 3,
+        "asset_label": "right-gripper-basetag3"
+      }
+    },
+    "dual-x5-gripper-pair-05": {
+      "status": "SERIAL_AND_DATASET_SIDE_VERIFIED",
+      "label": "dual X5 gripper pair 05",
+      "left": {
+        "serial": "IAHEA2607VP4XM",
+        "role": "physical_left",
+        "base_tag_id": 2,
+        "asset_label": "left-gripper-basetag2"
+      },
+      "right": {
+        "serial": "IAHEA2606KKPVG",
+        "role": "physical_right",
+        "base_tag_id": 3,
+        "asset_label": "right-gripper-basetag3"
+      }
     }
   }
 }
