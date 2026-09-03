@@ -44,7 +44,7 @@ from osmo360.visualization.render_gripper_force_angle_demo import (
 )
 
 
-EXPORT_REVISION = "instaumi-csv-v6-dual-colour-gripper"
+EXPORT_REVISION = "instaumi-csv-v7-dual-colour-cross-family-fallback"
 LEGACY_EXPORT_REVISION = "instaumi-csv-v1"
 CSV_NAMES = ("trajectory.csv", "gripper.csv", "processed.csv", "metadata.csv")
 PIPELINE_FINAL_ENTRIES = frozenset({"manifest.lock.json", "status.json", "pairs"})
@@ -452,6 +452,7 @@ def _black_gap_to_signal(
     source: SideInput,
     profile: SideProfile,
     gaps_px: np.ndarray,
+    yellow_observations: list[FrameObservation],
     source_frame: np.ndarray,
     *,
     fps: float,
@@ -468,12 +469,22 @@ def _black_gap_to_signal(
         0.0,
         55.0,
     )
+    yellow_included = np.asarray(
+        [item.included_angle_deg for item in yellow_observations], dtype=np.float64
+    )
+    yellow_fallback = ~valid & np.isfinite(yellow_included)
+    opening[yellow_fallback] = np.clip(
+        profile.closed_reference_deg - yellow_included[yellow_fallback],
+        0.0,
+        55.0,
+    )
     direct = np.isfinite(opening)
     maximum_gap_frames = max(1, round(maximum_gap_s * fps))
     opening, recovered = bounded_interpolate(opening, maximum_gap_frames)
     opening = np.where(np.isfinite(opening), nanmedian_filter(opening), np.nan)
     states = np.full(len(opening), "UNAVAILABLE", dtype=object)
-    states[direct] = "MEASURED_BLACK_ON_YELLOW_PAIR"
+    states[valid] = "MEASURED_BLACK_ON_YELLOW_PAIR"
+    states[yellow_fallback] = "MEASURED_YELLOW_TRIAD_FALLBACK"
     states[recovered] = "RECOVERED_SHORT_GAP"
     width_values = np.full(len(opening), np.nan, dtype=np.float64)
     available = np.isfinite(opening)
@@ -616,6 +627,7 @@ def _analyze_side(
                 source,
                 profile,
                 black_gaps,
+                observations,
                 source_frame,
                 fps=expected_fps,
                 maximum_gap_s=maximum_gap_s,
@@ -702,6 +714,7 @@ def _analyze_side(
             source,
             profile,
             black_gap_values,
+            observations,
             source_frame,
             fps=fps,
             maximum_gap_s=maximum_gap_s,

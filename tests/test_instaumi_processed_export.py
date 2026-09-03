@@ -135,6 +135,51 @@ def test_cached_black_pair_selects_yellow_gripper_family(tmp_path: Path) -> None
     assert np.isfinite(signal.opening_deg).all()
 
 
+def test_yellow_gripper_uses_yellow_triad_when_black_pair_is_missing(
+    tmp_path: Path,
+) -> None:
+    _, profiles = export.load_profile()
+    count = 30
+    left = np.asarray([(800, 1200), (750, 1350), (700, 1500)], dtype=np.float32)
+    right = np.asarray([(1120, 1200), (1170, 1350), (1220, 1500)], dtype=np.float32)
+    angle = export.included_jaw_angle(left, right)
+    black_left = np.repeat(np.asarray([[900.0, 1260.0]]), count, axis=0)
+    black_right = np.repeat(np.asarray([[1010.0, 1260.0]]), count, axis=0)
+    black_left[10] = np.nan
+    black_right[10] = np.nan
+    gaps = np.full(count, 110.0, dtype=np.float32)
+    gaps[10] = np.nan
+    cache = tmp_path / "left-lens-0.npz"
+    np.savez_compressed(
+        cache,
+        gripper_frame_index=np.arange(count, dtype=np.int32),
+        gripper_left_points_px=np.repeat(left[None], count, axis=0),
+        gripper_right_points_px=np.repeat(right[None], count, axis=0),
+        gripper_included_angle_deg=np.full(count, angle, dtype=np.float32),
+        gripper_black_left_point_px=black_left,
+        gripper_black_right_point_px=black_right,
+        gripper_black_pair_gap_px=gaps,
+    )
+    source = export.SideInput(
+        side="left",
+        video=tmp_path / "missing.mp4",
+        video_kind="fused_trajectory_yuv420_roi_cache",
+        timestamp_s=np.arange(count, dtype=np.float64) / 30,
+        marker_cache=cache,
+    )
+
+    signal = export._analyze_side(
+        source,
+        profiles["left"],
+        processing_width=1920,
+        maximum_gap_s=0.25,
+    )
+
+    assert signal.marker_family == "yellow_gripper_black_pair"
+    assert signal.state[10] == "MEASURED_YELLOW_TRIAD_FALLBACK"
+    assert signal.available_ratio == 1.0
+
+
 def test_h5_preview_missing_falls_back_to_required_back_videos(tmp_path: Path) -> None:
     _touch_inputs(tmp_path)
     metadata = {
