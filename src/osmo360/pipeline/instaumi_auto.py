@@ -28,7 +28,7 @@ from .instaumi_format import common_window, write_dataset_h5
 from .four_mp4 import PIPELINE_REVISION as TRACKING_REVISION
 from .manifest import ManifestError, ROOT
 
-AUTOMATION_REVISION = "instaumi-auto-v5"
+AUTOMATION_REVISION = "instaumi-auto-v6"
 TARGET_FPS = "30000/1001"
 TARGET_FPS_FLOAT = 30000 / 1001
 SERIAL_PATTERN = re.compile(rb"IAHE[A-Z0-9]{10}")
@@ -509,6 +509,14 @@ def _load_imu(path: Path) -> ImuSamples:
             valid=arrays["valid"].copy(),
             provenance=json.loads(str(arrays["provenance"].item())),
         )
+def _imu_cache_valid(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        samples = _load_imu(path)
+    except (OSError, ValueError, KeyError, json.JSONDecodeError):
+        return False
+    return isinstance(samples.provenance.get("gyro_config"), dict)
 
 def format_pair(pair: Pair, automation_root: Path) -> Path:
     episode = pair.collector_root / pair.episode_name
@@ -614,7 +622,7 @@ def format_pair(pair: Pair, automation_root: Path) -> Path:
                     duration_s=duration,
                     expected_serial=record["serial"],
                 )
-                if not cache.is_file()
+                if not _imu_cache_valid(cache)
                 else None
             )
         for side, future in imu_futures.items():
