@@ -1,0 +1,119 @@
+{
+  "schema_version": "instaumi-gripper-signal-revision/1.0",
+  "revision_id": "instaumi-gripper-signal-20260903-r5-dual-colour-auto",
+  "status": "DIAGNOSTIC_DUAL_COLOUR_FULL_VIDEO_FAMILY_GATE",
+  "training_ready": false,
+  "input_lens": "back",
+  "prefer_h5_preview": false,
+  "prefer_fused_trajectory_marker_cache": true,
+  "processing_width_px": 1920,
+  "maximum_recovery_gap_s": 0.25,
+  "camera_identity_policy": {
+    "mode": "provenance_only",
+    "transfer_scope": "Insta360 X5 1920x1920 back view with the same physical left/right gripper role, BaseTag role and fixed image layout",
+    "rationale": "The detector measures visible marker geometry in every frame. Camera serial is recorded as provenance; it is not the physical gripper width calibration identity.",
+    "mismatch_behavior": "run the detector, retain diagnostic training_ready=false, and record both dataset and calibration-source serials in metadata.csv"
+  },
+  "marker_detector": {
+    "cache_signature": {
+      "algorithm_revision": "x5-fixed-roi-dual-colour-gripper-markers-v2",
+      "source_pixel_format": "yuvj420p",
+      "source_size": [1920, 1920],
+      "roi_xyxy_px": [450, 950, 1470, 1800],
+      "families": {
+        "black_gripper_yellow_triads": {
+          "threshold": {
+            "colour_space": "opencv_hsv",
+            "h_min": 18,
+            "h_max": 48,
+            "s_min": 75,
+            "v_min": 65
+          },
+          "selection": "dark-annulus side-specific collinear triad"
+        },
+        "yellow_gripper_black_pair": {
+          "threshold": {
+            "colour_space": "opencv_hsv",
+            "v_max": 115
+          },
+          "selection": "yellow-annulus bilateral dot pair"
+        }
+      }
+    },
+    "included_angle_range_deg": [0.0, 80.0],
+    "dot_selection": "adaptive-black-pad",
+    "family_selection": "select yellow_gripper_black_pair only when its bilateral detections cover at least half of the complete stream; otherwise lock black_gripper_yellow_triads for the complete stream",
+    "black_pair_family_min_bilateral_ratio": 0.5
+  },
+  "measurement_policy": {
+    "bilateral_measurement_preferred": true,
+    "one_sided_fallback_is_low_confidence": true,
+    "long_gap_behavior": "preserve empty CSV values with available=0",
+    "per_capture_percentile_zero_forbidden": true,
+    "marker_family_is_locked_per_camera_stream": true
+  },
+  "sides": {
+    "left": {
+      "camera_serial": "IAHEA2606M5WSK",
+      "camera_serial_semantics": "calibration_source_provenance",
+      "hardware_role": "physical_left",
+      "base_tag_id": 2,
+      "mount_revision": "X5-ID2-20260831-left1-r1-reused-block-sorting",
+      "angle_revision": {
+        "path": "config/rig_revisions/x5_jaw_angle_yellow_dots_left1_20260831_r1.json",
+        "sha256": "d2d6c527732e4f879dc7d8a2042c7c542ce40d3b7d5e8ab8ddd329783eb864e8"
+      },
+      "angle_hardware_key": "physical_left",
+      "black_on_yellow_gap_model": {
+        "model": "linear_gap_to_opening_angle",
+        "opening_deg_coefficients_high_to_low": [0.11057660665199318, -10.334019308954657],
+        "validated_gap_range_px": [89.0, 230.0],
+        "source_dataset": "instaumi_20260831_153455",
+        "source_video_role": "Left_back",
+        "teacher": "simultaneous calibrated yellow-triad opening angle",
+        "sample_stride_frames": 3,
+        "overlap_frames": 4967,
+        "blocked_holdout_mae_deg": 0.17899841902248945,
+        "blocked_holdout_p95_deg": 0.38373576465965265,
+        "warning": "internal cross-marker agreement, not external gripper-width ground truth"
+      },
+      "width_calibration": {
+        "path": "config/rig_revisions/x5_left1_basetag2_hardware_20260831_r1.json",
+        "sha256": "8701160b2486ab1fda5b768c00177670b921d3c81e5c54d0ee5fb0d6ad48df12",
+        "robot_role": "left"
+      },
+      "calibration_transfer": "physical-left gripper and BaseTag2 width calibration; camera serial is provenance only and detector coverage must be audited per capture"
+    },
+    "right": {
+      "camera_serial": "IAHEA2606KKUKF",
+      "camera_serial_semantics": "calibration_source_provenance",
+      "hardware_role": "physical_right",
+      "base_tag_id": 3,
+      "mount_revision": "X5-ID3-20260828-r1-reused-block-sorting",
+      "angle_revision": {
+        "path": "config/rig_revisions/x5_jaw_angle_yellow_dots_20260829_r2.json",
+        "sha256": "e3853bea959a7b54139bbbe4564d369e9ee88ca6922443e085d411c3e4f9b3a1"
+      },
+      "angle_hardware_key": "physical_right",
+      "black_on_yellow_gap_model": {
+        "model": "linear_gap_to_opening_angle",
+        "opening_deg_coefficients_high_to_low": [0.1125122544429247, -10.251548304742636],
+        "validated_gap_range_px": [89.0, 230.0],
+        "source_dataset": "instaumi_20260831_153455",
+        "source_video_role": "Right_back",
+        "teacher": "simultaneous calibrated yellow-triad opening angle",
+        "sample_stride_frames": 3,
+        "overlap_frames": 5394,
+        "blocked_holdout_mae_deg": 0.16248555533342424,
+        "blocked_holdout_p95_deg": 0.3573185511680056,
+        "warning": "internal cross-marker agreement, not external gripper-width ground truth"
+      },
+      "width_calibration": {
+        "path": "config/rig_revisions/x5_right_basetag3_hardware_20260829_r3.json",
+        "sha256": "cabb3fbb3e8bc6875709d1fb7bb2600a9526ae0d17bcdd84b294508ce9d2729b",
+        "robot_role": "right"
+      },
+      "calibration_transfer": "physical-right gripper and BaseTag3 width calibration; camera serial is provenance only and detector coverage must be audited per capture"
+    }
+  }
+}

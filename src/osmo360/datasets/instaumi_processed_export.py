@@ -24,7 +24,12 @@ from osmo360.datasets.world_flu import (
     derive_world_flu_transform,
     transform_trajectory_rows,
 )
-from osmo360.gripper_markers import marker_signature
+from osmo360.gripper_markers import (
+    BLACK_ON_YELLOW_FAMILY,
+    YELLOW_ON_BLACK_FAMILY,
+    detect_bgr_gripper_markers,
+    marker_signature,
+)
 from osmo360.paths import ROOT
 from osmo360.pipeline.four_mp4 import PIPELINE_REVISION
 from osmo360.pipeline.instaumi import is_instaumi_dataset, load_instaumi_config
@@ -33,20 +38,19 @@ from osmo360.visualization.render_gripper_force_angle_demo import (
     FrameObservation,
     apply_one_sided_opening_fallback,
     bounded_interpolate,
-    detect_yellow_triad,
     included_jaw_angle,
     nanmedian_filter,
     opening_angles,
 )
 
 
-EXPORT_REVISION = "instaumi-csv-v5-gripper-serial-provenance"
+EXPORT_REVISION = "instaumi-csv-v6-dual-colour-gripper"
 LEGACY_EXPORT_REVISION = "instaumi-csv-v1"
 CSV_NAMES = ("trajectory.csv", "gripper.csv", "processed.csv", "metadata.csv")
 PIPELINE_FINAL_ENTRIES = frozenset({"manifest.lock.json", "status.json", "pairs"})
 PROFILE_PATH = (
     ROOT
-    / "config/rig_revisions/instaumi_gripper_signal_20260902_r4.json"
+    / "config/rig_revisions/instaumi_gripper_signal_20260903_r5.json"
 )
 SIDES = ("left", "right")
 
@@ -63,6 +67,10 @@ class SideProfile:
     dot_selection: str
     closed_reference_deg: float
     angle_hardware: dict[str, Any]
+    black_gap_range_px: tuple[float, float]
+    black_gap_slope_deg_per_px: float
+    black_gap_intercept_deg: float
+    black_pair_family_min_bilateral_ratio: float | None
     width_angle_deg: np.ndarray
     width_m: np.ndarray
 
@@ -85,6 +93,9 @@ class SideSignal:
     source_frame: np.ndarray
     measured_ratio: float
     available_ratio: float
+    marker_family: str
+    yellow_bilateral_ratio: float
+    black_bilateral_ratio: float
 
 
 def _reference_payload(reference: dict[str, Any], *, field: str) -> tuple[Path, dict[str, Any], str]:
@@ -114,13 +125,26 @@ def load_profile(path: Path = PROFILE_PATH) -> tuple[dict[str, Any], dict[str, S
     if set(payload.get("sides", {})) != set(SIDES):
         raise ManifestError("gripper signal profile must define exactly left and right")
     marker_detector = payload.get("marker_detector", {})
-    if payload.get("prefer_fused_trajectory_marker_cache", False):
+    if (
+        payload.get("prefer_fused_trajectory_marker_cache", False)
+        and "black_pair_family_min_bilateral_ratio" in marker_detector
+    ):
         if marker_detector.get("cache_signature") != marker_signature():
             raise ManifestError(
                 "gripper signal profile cache signature does not match the implementation"
             )
     detector_range_override = marker_detector.get("included_angle_range_deg")
     dot_selection_override = marker_detector.get("dot_selection")
+    raw_black_pair_gate = marker_detector.get(
+        "black_pair_family_min_bilateral_ratio"
+    )
+    black_pair_gate = (
+        None if raw_black_pair_gate is None else float(raw_black_pair_gate)
+    )
+    if black_pair_gate is not None and not 0.5 <= black_pair_gate <= 1.0:
+        raise ManifestError(
+            "black-pair marker-family gate must require at least 50% bilateral coverage"
+        )
 
     profiles: dict[str, SideProfile] = {}
     for side in SIDES:
@@ -171,6 +195,29 @@ def load_profile(path: Path = PROFILE_PATH) -> tuple[dict[str, Any], dict[str, S
         )
         if len(included) != 2 or included[0] >= included[1]:
             raise ManifestError(f"{side} has an invalid included-angle range")
+        black_gap_model = item.get("black_on_yellow_gap_model")
+        if black_pair_gate is not None and not isinstance(black_gap_model, dict):
+            raise ManifestError(f"{side} black-on-yellow gap model is missing")
+        black_gap_model = black_gap_model or {
+            "validated_gap_range_px": [0.0, 1.0],
+            "opening_deg_coefficients_high_to_low": [1.0, 0.0],
+        }
+        black_gap_range = tuple(
+            map(float, black_gap_model.get("validated_gap_range_px", []))
+        )
+        black_gap_coefficients = tuple(
+            map(
+                float,
+                black_gap_model.get("opening_deg_coefficients_high_to_low", []),
+            )
+        )
+        if (
+            len(black_gap_range) != 2
+            or black_gap_range[0] >= black_gap_range[1]
+            or len(black_gap_coefficients) != 2
+            or black_gap_coefficients[0] <= 0.0
+        ):
+            raise ManifestError(f"{side} has an invalid black-on-yellow gap model")
         profiles[side] = SideProfile(
             side=side,
             calibration_source_camera_serial=str(item["camera_serial"]),
@@ -188,6 +235,10 @@ def load_profile(path: Path = PROFILE_PATH) -> tuple[dict[str, Any], dict[str, S
                 angle_hardware["closed_reference_included_angle_deg"]
             ),
             angle_hardware=angle_hardware,
+            black_gap_range_px=black_gap_range,
+            black_gap_slope_deg_per_px=black_gap_coefficients[0],
+            black_gap_intercept_deg=black_gap_coefficients[1],
+            black_pair_family_min_bilateral_ratio=black_pair_gate,
             width_angle_deg=angle_values,
             width_m=width_values,
         )
@@ -364,6 +415,8 @@ def _observations_to_signal(
     *,
     fps: float,
     maximum_gap_s: float,
+    yellow_bilateral_ratio: float,
+    black_bilateral_ratio: float,
 ) -> SideSignal:
     opening, _ = opening_angles(observations, profile.closed_reference_deg)
     opening, states, _ = apply_one_sided_opening_fallback(
@@ -389,19 +442,71 @@ def _observations_to_signal(
         source_frame=source_frame,
         measured_ratio=float(direct.mean()),
         available_ratio=float(available.mean()),
+        marker_family=YELLOW_ON_BLACK_FAMILY,
+        yellow_bilateral_ratio=yellow_bilateral_ratio,
+        black_bilateral_ratio=black_bilateral_ratio,
+    )
+
+
+def _black_gap_to_signal(
+    source: SideInput,
+    profile: SideProfile,
+    gaps_px: np.ndarray,
+    source_frame: np.ndarray,
+    *,
+    fps: float,
+    maximum_gap_s: float,
+    yellow_bilateral_ratio: float,
+    black_bilateral_ratio: float,
+) -> SideSignal:
+    low, high = profile.black_gap_range_px
+    valid = np.isfinite(gaps_px) & (gaps_px >= low) & (gaps_px <= high)
+    opening = np.full(len(gaps_px), np.nan, dtype=np.float64)
+    opening[valid] = np.clip(
+        profile.black_gap_slope_deg_per_px * gaps_px[valid]
+        + profile.black_gap_intercept_deg,
+        0.0,
+        55.0,
+    )
+    direct = np.isfinite(opening)
+    maximum_gap_frames = max(1, round(maximum_gap_s * fps))
+    opening, recovered = bounded_interpolate(opening, maximum_gap_frames)
+    opening = np.where(np.isfinite(opening), nanmedian_filter(opening), np.nan)
+    states = np.full(len(opening), "UNAVAILABLE", dtype=object)
+    states[direct] = "MEASURED_BLACK_ON_YELLOW_PAIR"
+    states[recovered] = "RECOVERED_SHORT_GAP"
+    width_values = np.full(len(opening), np.nan, dtype=np.float64)
+    available = np.isfinite(opening)
+    width_values[available] = np.interp(
+        opening[available], profile.width_angle_deg, profile.width_m
+    )
+    return SideSignal(
+        opening_deg=opening,
+        width_m=width_values,
+        state=states,
+        timestamp_s=source.timestamp_s,
+        source_frame=source_frame,
+        measured_ratio=float(direct.mean()),
+        available_ratio=float(available.mean()),
+        marker_family=BLACK_ON_YELLOW_FAMILY,
+        yellow_bilateral_ratio=yellow_bilateral_ratio,
+        black_bilateral_ratio=black_bilateral_ratio,
     )
 
 
 def _cached_observations(
     source: SideInput,
     profile: SideProfile,
-) -> tuple[list[FrameObservation], np.ndarray]:
+) -> tuple[list[FrameObservation], np.ndarray, np.ndarray, float, float]:
     assert source.marker_cache is not None
     required = {
         "gripper_frame_index",
         "gripper_left_points_px",
         "gripper_right_points_px",
         "gripper_included_angle_deg",
+        "gripper_black_left_point_px",
+        "gripper_black_right_point_px",
+        "gripper_black_pair_gap_px",
     }
     with np.load(source.marker_cache) as cache:
         missing = sorted(required - set(cache.files))
@@ -413,12 +518,24 @@ def _cached_observations(
         left_points = np.asarray(cache["gripper_left_points_px"], dtype=np.float64)
         right_points = np.asarray(cache["gripper_right_points_px"], dtype=np.float64)
         angles = np.asarray(cache["gripper_included_angle_deg"], dtype=np.float64)
+        black_left = np.asarray(
+            cache["gripper_black_left_point_px"], dtype=np.float64
+        )
+        black_right = np.asarray(
+            cache["gripper_black_right_point_px"], dtype=np.float64
+        )
+        black_gaps = np.asarray(
+            cache["gripper_black_pair_gap_px"], dtype=np.float64
+        )
     count = len(source.timestamp_s)
     if (
         not np.array_equal(frames, np.arange(count, dtype=np.int64))
         or left_points.shape != (count, 3, 2)
         or right_points.shape != (count, 3, 2)
         or angles.shape != (count,)
+        or black_left.shape != (count, 2)
+        or black_right.shape != (count, 2)
+        or black_gaps.shape != (count,)
     ):
         raise ManifestError(f"{source.side} gripper marker cache timeline mismatch")
     observations: list[FrameObservation] = []
@@ -453,7 +570,26 @@ def _cached_observations(
                 included_angle_deg=included_angle,
             )
         )
-    return observations, frames
+        has_black_left = np.isfinite(black_left[index]).all()
+        has_black_right = np.isfinite(black_right[index]).all()
+        cached_gap = float(black_gaps[index])
+        if has_black_left and has_black_right:
+            recalculated_gap = float(
+                np.linalg.norm(black_left[index] - black_right[index])
+            )
+            if not math.isfinite(cached_gap) or not math.isclose(
+                recalculated_gap, cached_gap, rel_tol=1e-4, abs_tol=1e-3
+            ):
+                raise ManifestError(
+                    f"{source.side} black marker cache gap mismatch at frame {index}"
+                )
+        elif has_black_left or has_black_right or math.isfinite(cached_gap):
+            raise ManifestError(
+                f"{source.side} cache has an incomplete black marker pair at frame {index}"
+            )
+    yellow_ratio = float(np.isfinite(angles).mean())
+    black_ratio = float(np.isfinite(black_gaps).mean())
+    return observations, frames, black_gaps, yellow_ratio, black_ratio
 
 
 def _analyze_side(
@@ -465,7 +601,27 @@ def _analyze_side(
 ) -> SideSignal:
     expected_fps = 1.0 / float(np.median(np.diff(source.timestamp_s)))
     if source.marker_cache is not None:
-        observations, source_frame = _cached_observations(source, profile)
+        (
+            observations,
+            source_frame,
+            black_gaps,
+            yellow_ratio,
+            black_ratio,
+        ) = _cached_observations(source, profile)
+        if (
+            profile.black_pair_family_min_bilateral_ratio is not None
+            and black_ratio >= profile.black_pair_family_min_bilateral_ratio
+        ):
+            return _black_gap_to_signal(
+                source,
+                profile,
+                black_gaps,
+                source_frame,
+                fps=expected_fps,
+                maximum_gap_s=maximum_gap_s,
+                yellow_bilateral_ratio=yellow_ratio,
+                black_bilateral_ratio=black_ratio,
+            )
         return _observations_to_signal(
             source,
             profile,
@@ -473,6 +629,8 @@ def _analyze_side(
             source_frame,
             fps=expected_fps,
             maximum_gap_s=maximum_gap_s,
+            yellow_bilateral_ratio=yellow_ratio,
+            black_bilateral_ratio=black_ratio,
         )
 
     capture = cv2.VideoCapture(str(source.video), cv2.CAP_FFMPEG)
@@ -492,6 +650,7 @@ def _analyze_side(
             f"{source.side} gripper video/H5 rate mismatch: {fps} != {expected_fps}"
         )
     observations: list[FrameObservation] = []
+    black_gaps: list[float] = []
     while len(observations) < len(source.timestamp_s):
         ok, image = capture.read()
         if not ok:
@@ -502,21 +661,9 @@ def _analyze_side(
                 (processing_width, processing_width),
                 interpolation=cv2.INTER_AREA,
             )
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        left = detect_yellow_triad(
-            hsv,
-            "left",
-            "insta360-x5-front",
-            profile.detector_mode,
-            profile.dot_selection,
-        )
-        right = detect_yellow_triad(
-            hsv,
-            "right",
-            "insta360-x5-front",
-            profile.detector_mode,
-            profile.dot_selection,
-        )
+        markers = detect_bgr_gripper_markers(image)
+        left = markers.yellow_left
+        right = markers.yellow_right
         included_angle = math.nan
         if left is not None and right is not None:
             candidate = included_jaw_angle(left, right)
@@ -534,19 +681,42 @@ def _analyze_side(
                 included_angle_deg=included_angle,
             )
         )
+        black_gaps.append(markers.black_pair_gap_px)
     capture.release()
     if len(observations) != len(source.timestamp_s):
         raise ManifestError(
             f"{source.side} gripper video/H5 frame mismatch: "
             f"{len(observations)} != {len(source.timestamp_s)}"
         )
+    black_gap_values = np.asarray(black_gaps, dtype=np.float64)
+    yellow_ratio = float(
+        np.mean([math.isfinite(item.included_angle_deg) for item in observations])
+    )
+    black_ratio = float(np.isfinite(black_gap_values).mean())
+    source_frame = np.arange(len(observations), dtype=np.int64)
+    if (
+        profile.black_pair_family_min_bilateral_ratio is not None
+        and black_ratio >= profile.black_pair_family_min_bilateral_ratio
+    ):
+        return _black_gap_to_signal(
+            source,
+            profile,
+            black_gap_values,
+            source_frame,
+            fps=fps,
+            maximum_gap_s=maximum_gap_s,
+            yellow_bilateral_ratio=yellow_ratio,
+            black_bilateral_ratio=black_ratio,
+        )
     return _observations_to_signal(
         source,
         profile,
         observations,
-        np.arange(len(observations), dtype=np.int64),
+        source_frame,
         fps=fps,
         maximum_gap_s=maximum_gap_s,
+        yellow_bilateral_ratio=yellow_ratio,
+        black_bilateral_ratio=black_ratio,
     )
 
 
@@ -892,6 +1062,7 @@ def export_processed_dataset(
                 f"{side}_source_timestamp_s",
                 f"{side}_timestamp_error_s",
                 f"{side}_angle_revision",
+                f"{side}_marker_family",
             ]
         )
     gripper_rows: list[dict[str, Any]] = []
@@ -916,6 +1087,7 @@ def export_processed_dataset(
                     f"{side}_source_timestamp_s": _cell(values["time"][row_index], 9),
                     f"{side}_timestamp_error_s": _cell(values["error"][row_index], 9),
                     f"{side}_angle_revision": profile_side.angle_revision_id,
+                    f"{side}_marker_family": signals[side].marker_family,
                 }
             )
         gripper_rows.append(gripper_row)
@@ -973,6 +1145,12 @@ def export_processed_dataset(
             "right_measured_ratio",
             "left_available_ratio",
             "right_available_ratio",
+            "left_marker_family",
+            "right_marker_family",
+            "left_yellow_bilateral_ratio",
+            "right_yellow_bilateral_ratio",
+            "left_black_bilateral_ratio",
+            "right_black_bilateral_ratio",
         ]
         frequency = 1.0 / float(np.median(np.diff(query_time)))
         world_frames = sorted({row.get("world_frame", "") for row in trajectory_rows})
@@ -987,7 +1165,7 @@ def export_processed_dataset(
         if not child_frames:
             child_frames = ["hand_camera_flu_back_x"]
         metadata_row = {
-            "schema_version": "instaumi-processed-csv/5.0-gripper-serial-provenance",
+            "schema_version": "instaumi-processed-csv/6.0-dual-colour-gripper",
             "dataset_id": pair_id,
             "dataset_directory": root.name,
             "pair_id": pair_id,
@@ -1044,6 +1222,20 @@ def export_processed_dataset(
             "right_measured_ratio": f"{signals['right'].measured_ratio:.9f}",
             "left_available_ratio": f"{signals['left'].available_ratio:.9f}",
             "right_available_ratio": f"{signals['right'].available_ratio:.9f}",
+            "left_marker_family": signals["left"].marker_family,
+            "right_marker_family": signals["right"].marker_family,
+            "left_yellow_bilateral_ratio": (
+                f"{signals['left'].yellow_bilateral_ratio:.9f}"
+            ),
+            "right_yellow_bilateral_ratio": (
+                f"{signals['right'].yellow_bilateral_ratio:.9f}"
+            ),
+            "left_black_bilateral_ratio": (
+                f"{signals['left'].black_bilateral_ratio:.9f}"
+            ),
+            "right_black_bilateral_ratio": (
+                f"{signals['right'].black_bilateral_ratio:.9f}"
+            ),
         }
         _write_rows(build_dir / "metadata.csv", metadata_fields, [metadata_row])
         _publish_csv_files(build_dir, processed_root)
@@ -1066,6 +1258,9 @@ def export_processed_dataset(
         "right_opening_available": int(np.count_nonzero(sampled["right"]["available"])),
         "camera_identity_policy": camera_identity_mode,
         "camera_identity": camera_identity,
+        "marker_family": {
+            side: signals[side].marker_family for side in SIDES
+        },
         "pipeline_final_removed": pipeline_final_removed,
         "training_ready": False,
     }

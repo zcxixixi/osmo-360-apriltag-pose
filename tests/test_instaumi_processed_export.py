@@ -26,7 +26,7 @@ def test_signal_profile_is_hash_bound_and_camera_serial_is_provenance() -> None:
     payload, profiles = export.load_profile()
 
     assert payload["revision_id"] == (
-        "instaumi-gripper-signal-20260902-r4-role-bound-serial-provenance"
+        "instaumi-gripper-signal-20260903-r5-dual-colour-auto"
     )
     assert payload["camera_identity_policy"]["mode"] == "provenance_only"
     assert payload["prefer_h5_preview"] is False
@@ -42,6 +42,8 @@ def test_signal_profile_is_hash_bound_and_camera_serial_is_provenance() -> None:
     assert profiles["right"].base_tag_id == 3
     assert profiles["right"].included_angle_range == (0.0, 80.0)
     assert profiles["right"].dot_selection == "adaptive-black-pad"
+    assert profiles["right"].black_pair_family_min_bilateral_ratio == 0.5
+    assert profiles["left"].black_gap_slope_deg_per_px > 0
     assert profiles["left"].closed_reference_deg > 0
     assert profiles["right"].width_m[-1] > profiles["right"].width_m[0]
 
@@ -67,6 +69,9 @@ def test_cached_yuv_markers_avoid_a_second_video_decode(tmp_path: Path) -> None:
         gripper_left_points_px=np.repeat(left[None], 30, axis=0),
         gripper_right_points_px=np.repeat(right[None], 30, axis=0),
         gripper_included_angle_deg=np.full(30, angle, dtype=np.float32),
+        gripper_black_left_point_px=np.full((30, 2), np.nan, dtype=np.float32),
+        gripper_black_right_point_px=np.full((30, 2), np.nan, dtype=np.float32),
+        gripper_black_pair_gap_px=np.full(30, np.nan, dtype=np.float32),
     )
     source = export.SideInput(
         side="right",
@@ -84,6 +89,48 @@ def test_cached_yuv_markers_avoid_a_second_video_decode(tmp_path: Path) -> None:
     )
 
     assert signal.source_frame.tolist() == list(range(30))
+    assert signal.measured_ratio == 1.0
+    assert signal.marker_family == "black_gripper_yellow_triads"
+    assert np.isfinite(signal.opening_deg).all()
+
+
+def test_cached_black_pair_selects_yellow_gripper_family(tmp_path: Path) -> None:
+    _, profiles = export.load_profile()
+    cache = tmp_path / "left-lens-0.npz"
+    count = 30
+    left_black = np.repeat(
+        np.asarray([[900.0, 1260.0]], dtype=np.float32), count, axis=0
+    )
+    right_black = np.repeat(
+        np.asarray([[1010.0, 1260.0]], dtype=np.float32), count, axis=0
+    )
+    np.savez_compressed(
+        cache,
+        gripper_frame_index=np.arange(count, dtype=np.int32),
+        gripper_left_points_px=np.full((count, 3, 2), np.nan, dtype=np.float32),
+        gripper_right_points_px=np.full((count, 3, 2), np.nan, dtype=np.float32),
+        gripper_included_angle_deg=np.full(count, np.nan, dtype=np.float32),
+        gripper_black_left_point_px=left_black,
+        gripper_black_right_point_px=right_black,
+        gripper_black_pair_gap_px=np.full(count, 110.0, dtype=np.float32),
+    )
+    source = export.SideInput(
+        side="left",
+        video=tmp_path / "intentionally-missing.mp4",
+        video_kind="fused_trajectory_yuv420_roi_cache",
+        timestamp_s=np.arange(count, dtype=np.float64) / 30,
+        marker_cache=cache,
+    )
+
+    signal = export._analyze_side(
+        source,
+        profiles["left"],
+        processing_width=1920,
+        maximum_gap_s=0.25,
+    )
+
+    assert signal.marker_family == "yellow_gripper_black_pair"
+    assert signal.black_bilateral_ratio == 1.0
     assert signal.measured_ratio == 1.0
     assert np.isfinite(signal.opening_deg).all()
 
@@ -291,6 +338,9 @@ def test_export_writes_synchronized_csv_revision_without_removing_existing_files
             source_frame=np.arange(3),
             measured_ratio=2 / 3,
             available_ratio=float(np.isfinite(opening).mean()),
+            marker_family="black_gripper_yellow_triads",
+            yellow_bilateral_ratio=2 / 3,
+            black_bilateral_ratio=0.0,
         )
 
     monkeypatch.setattr(export, "_analyze_side", fake_analyze)

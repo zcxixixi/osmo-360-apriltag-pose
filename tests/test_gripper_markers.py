@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
+import pytest
 
 from osmo360.gripper_markers import (
+    detect_bgr_gripper_markers,
+    detect_yuv420_gripper_markers,
     detect_yuv420_gripper_triads,
     included_angle_deg,
 )
@@ -26,3 +29,29 @@ def test_fixed_roi_yuv420_detector_finds_two_physical_marker_triads() -> None:
     assert np.allclose(left, left_expected, atol=3)
     assert np.allclose(right, right_expected, atol=3)
     assert 30 < included_angle_deg(left, right) < 40
+
+
+def test_dual_colour_detector_finds_black_pair_on_yellow_gripper() -> None:
+    image = np.full((1920, 1920, 3), 25, dtype=np.uint8)
+    yellow = (0, 220, 245)
+    cv2.rectangle(image, (780, 1160), (930, 1480), yellow, -1)
+    cv2.rectangle(image, (990, 1160), (1140, 1480), yellow, -1)
+    cv2.circle(image, (870, 1260), 9, (10, 10, 10), -1)
+    cv2.circle(image, (1050, 1260), 9, (10, 10, 10), -1)
+
+    bgr_markers = detect_bgr_gripper_markers(image)
+    i420 = cv2.cvtColor(image, cv2.COLOR_BGR2YUV_I420)
+    flat_chroma = i420[1920:].reshape(-1)
+    plane_size = 960 * 960
+    yuv_markers = detect_yuv420_gripper_markers(
+        i420[:1920],
+        flat_chroma[:plane_size].reshape(960, 960),
+        flat_chroma[plane_size:].reshape(960, 960),
+    )
+
+    for markers in (bgr_markers, yuv_markers):
+        assert markers.black_left is not None
+        assert markers.black_right is not None
+        assert np.allclose(markers.black_left, (870, 1260), atol=4)
+        assert np.allclose(markers.black_right, (1050, 1260), atol=4)
+        assert markers.black_pair_gap_px == pytest.approx(180, abs=5)

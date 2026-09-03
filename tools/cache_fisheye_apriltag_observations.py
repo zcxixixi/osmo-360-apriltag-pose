@@ -26,8 +26,7 @@ from osmo360.pipeline.ffmpeg_gray_pipe import (
     probe_video_stream,
 )
 from osmo360.gripper_markers import (
-    detect_yuv420_gripper_triads,
-    included_angle_deg,
+    detect_yuv420_gripper_markers,
     marker_signature,
 )
 from osmo360.localization.raw_fisheye_world_pose import (
@@ -562,6 +561,9 @@ def main() -> int:
     gripper_left_points: list[np.ndarray] = []
     gripper_right_points: list[np.ndarray] = []
     gripper_angles: list[float] = []
+    gripper_black_left_points: list[np.ndarray] = []
+    gripper_black_right_points: list[np.ndarray] = []
+    gripper_black_gaps: list[float] = []
     while True:
         if gray_pipe is not None and frame >= source_frame_count:
             break
@@ -608,24 +610,36 @@ def main() -> int:
         if args.gripper_yuv420_roi:
             if yuv_frame is None:  # pragma: no cover - validated decoder mode
                 raise RuntimeError("gripper marker cache did not receive a YUV420 frame")
-            left_points, right_points = detect_yuv420_gripper_triads(
+            markers = detect_yuv420_gripper_markers(
                 yuv_frame.luma,
                 yuv_frame.chroma_u,
                 yuv_frame.chroma_v,
             )
             missing = np.full((3, 2), np.nan, dtype=np.float32)
+            missing_point = np.full(2, np.nan, dtype=np.float32)
             gripper_frame_index.append(frame)
             gripper_left_points.append(
-                missing if left_points is None else left_points.astype(np.float32)
+                missing
+                if markers.yellow_left is None
+                else markers.yellow_left.astype(np.float32)
             )
             gripper_right_points.append(
-                missing if right_points is None else right_points.astype(np.float32)
+                missing
+                if markers.yellow_right is None
+                else markers.yellow_right.astype(np.float32)
             )
-            gripper_angles.append(
-                float("nan")
-                if left_points is None or right_points is None
-                else included_angle_deg(left_points, right_points)
+            gripper_angles.append(markers.yellow_included_angle_deg)
+            gripper_black_left_points.append(
+                missing_point
+                if markers.black_left is None
+                else markers.black_left.astype(np.float32)
             )
+            gripper_black_right_points.append(
+                missing_point
+                if markers.black_right is None
+                else markers.black_right.astype(np.float32)
+            )
+            gripper_black_gaps.append(markers.black_pair_gap_px)
         if image.ndim == 2:
             if image.shape != (args.source_height, args.source_width):
                 raise RuntimeError(
@@ -827,6 +841,15 @@ def main() -> int:
                 gripper_right_points, dtype=np.float32
             ).reshape(-1, 3, 2),
             gripper_included_angle_deg=np.asarray(gripper_angles, dtype=np.float32),
+            gripper_black_left_point_px=np.asarray(
+                gripper_black_left_points, dtype=np.float32
+            ).reshape(-1, 2),
+            gripper_black_right_point_px=np.asarray(
+                gripper_black_right_points, dtype=np.float32
+            ).reshape(-1, 2),
+            gripper_black_pair_gap_px=np.asarray(
+                gripper_black_gaps, dtype=np.float32
+            ),
         )
     with temporary.open("wb") as handle:
         np.savez_compressed(handle, **arrays)
@@ -929,7 +952,13 @@ def main() -> int:
             marker_signature() if args.gripper_yuv420_roi else None
         ),
         "gripper_marker_frame_count": len(gripper_frame_index),
+        "gripper_yellow_bilateral_detection_count": int(
+            np.isfinite(gripper_angles).sum()
+        ),
         "gripper_bilateral_detection_count": int(np.isfinite(gripper_angles).sum()),
+        "gripper_black_bilateral_detection_count": int(
+            np.isfinite(gripper_black_gaps).sum()
+        ),
         "optical_flow_scale": args.optical_flow_scale,
         "forward_backward_check_interval_frames": (
             args.forward_backward_check_interval_frames

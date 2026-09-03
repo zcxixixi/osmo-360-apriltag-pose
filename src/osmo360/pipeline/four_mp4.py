@@ -21,7 +21,7 @@ from .devices import load_device_pairs, load_inventory
 from .manifest import ManifestError, ROOT, confined_path, validate_path_component
 
 
-PIPELINE_REVISION = "dual-x5-four-mp4-cpu-v12"
+PIPELINE_REVISION = "dual-x5-four-mp4-cpu-v13"
 INPUT_SCHEMA = "dual-x5-four-mp4-input/1.0"
 LOCK_SCHEMA = "dual-x5-four-mp4-dataset-lock/1.0"
 

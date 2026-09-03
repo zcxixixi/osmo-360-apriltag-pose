@@ -297,7 +297,7 @@ def test_four_mp4_discovery_and_dataset_dry_run(monkeypatch, tmp_path: Path):
     lock = four_mp4.discover_four_mp4_dataset(root)
     result = dataset.process_dataset(root, dry_run=True)
 
-    assert lock["pipeline_revision"] == "dual-x5-four-mp4-cpu-v12"
+    assert lock["pipeline_revision"] == "dual-x5-four-mp4-cpu-v13"
     assert lock["pairs"][0]["left"]["lenses"][0]["stream"] == 0
     assert lock["pairs"][0]["right"]["base_tag_id"] == 3
     assert lock["pairs"][0]["sync"]["offset_s"] == 0.0125
@@ -552,6 +552,15 @@ def _write_chunk(path: Path, start: int, end: int, *, gripper: bool = False) -> 
             gripper_right_points_px=np.ones((len(frames), 3, 2), dtype=np.float32),
             gripper_included_angle_deg=np.arange(
                 start, end + 1, dtype=np.float32
+            ),
+            gripper_black_left_point_px=np.full(
+                (len(frames), 2), np.nan, dtype=np.float32
+            ),
+            gripper_black_right_point_px=np.full(
+                (len(frames), 2), np.nan, dtype=np.float32
+            ),
+            gripper_black_pair_gap_px=np.full(
+                len(frames), np.nan, dtype=np.float32
             ),
         )
     np.savez_compressed(path, **arrays)

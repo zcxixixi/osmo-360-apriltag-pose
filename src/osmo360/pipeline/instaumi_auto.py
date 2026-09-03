@@ -36,7 +36,7 @@ OFFSET_PATTERN = re.compile(rb"[mn]2(?:_-?\d+(?:\.\d+)?){15}")
 TIME_PATTERN = re.compile(r"VID_(\d{8})_(\d{6})_")
 COLLECTOR_PATTERN = re.compile(r"^\d{4}_instaumi_[a-z0-9_]+$")
 GRIPPER_PROFILE = (
-    ROOT / "config/rig_revisions/instaumi_gripper_signal_20260902_r4.json"
+    ROOT / "config/rig_revisions/instaumi_gripper_signal_20260903_r5.json"
 )
 FFMPEG = Path(os.environ.get("INSTAUMI_AUTO_FFMPEG", "/usr/bin/ffmpeg"))
 FFPROBE = Path(os.environ.get(

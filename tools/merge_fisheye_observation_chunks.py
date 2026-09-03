@@ -32,6 +32,9 @@ GRIPPER_KEYS = (
     "gripper_left_points_px",
     "gripper_right_points_px",
     "gripper_included_angle_deg",
+    "gripper_black_left_point_px",
+    "gripper_black_right_point_px",
+    "gripper_black_pair_gap_px",
 )
 
 
@@ -222,6 +225,12 @@ def merge_chunks(paths: list[Path], output: Path) -> dict[str, Any]:
             ),
             "gripper_bilateral_detection_count": int(
                 np.isfinite(gripper.get("gripper_included_angle_deg", ())).sum()
+            ),
+            "gripper_yellow_bilateral_detection_count": int(
+                np.isfinite(gripper.get("gripper_included_angle_deg", ())).sum()
+            ),
+            "gripper_black_bilateral_detection_count": int(
+                np.isfinite(gripper.get("gripper_black_pair_gap_px", ())).sum()
             ),
             "detected_ids": sorted(set(map(int, detections["tag_id"]))),
             "detection_source_counts": {
