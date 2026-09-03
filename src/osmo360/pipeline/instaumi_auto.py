@@ -28,7 +28,7 @@ from .instaumi_format import common_window, write_dataset_h5
 from .four_mp4 import PIPELINE_REVISION as TRACKING_REVISION
 from .manifest import ManifestError, ROOT
 
-AUTOMATION_REVISION = "instaumi-auto-v6"
+AUTOMATION_REVISION = "instaumi-auto-v7"
 TARGET_FPS = "30000/1001"
 TARGET_FPS_FLOAT = 30000 / 1001
 SERIAL_PATTERN = re.compile(rb"IAHE[A-Z0-9]{10}")
@@ -548,7 +548,7 @@ def format_pair(pair: Pair, automation_root: Path) -> Path:
     approximate = (pair.right.recorded_at - pair.left.recorded_at).total_seconds()
     sync_path = scratch / "sync.json"
     sync = (
-        _load_json(sync_path)
+        _load_json(sync_path, {})
         if sync_path.is_file()
         else _audio_offset(audio / "left.wav", audio / "right.wav", approximate)
     )
