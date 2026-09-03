@@ -12,8 +12,12 @@ from scipy.spatial.transform import Rotation
 
 from osmo360.localization import cached_a3_bootstrap
 from osmo360.localization.cached_a3_bootstrap import (
+    Detection,
     Pose,
+    PoseFit,
+    _regularize_weak_planar_fit,
     _temporal_gate,
+    _zero_phase_filter_joint_rows,
     load_cache_frames,
     pose_to_hand_camera_flu,
     track_cache,
@@ -90,6 +94,61 @@ def test_cache_loader_decompresses_each_npz_member_once(monkeypatch, tmp_path: P
     assert times == {0: 0.0, 1: 0.1, 2: 0.2}
 
 
+def test_mixed_lens_angular_failure_recovers_from_one_consistent_lens(
+    tmp_path: Path,
+):
+    def tag_corners(x_m: float, y_m: float) -> np.ndarray:
+        size_m = 0.08
+        return np.asarray([
+            [x_m, y_m, 0.0],
+            [x_m + size_m, y_m, 0.0],
+            [x_m + size_m, y_m + size_m, 0.0],
+            [x_m, y_m + size_m, 0.0],
+        ])
+
+    panel = {
+        tag_id: tag_corners((tag_id % 3) * 0.12, (tag_id // 3) * 0.12)
+        for tag_id in range(6)
+    }
+    camera_position = np.asarray([0.16, 0.10, -0.8])
+    rays = []
+    for tag_id, corners in panel.items():
+        tag_rays = corners - camera_position
+        tag_rays /= np.linalg.norm(tag_rays, axis=1, keepdims=True)
+        if tag_id >= 3:
+            # Simulate a second optical centre represented by an incompatible
+            # central-camera bearing bundle at the X5 overlap seam.
+            tag_rays = Rotation.from_euler("y", 10.0, degrees=True).apply(tag_rays)
+        rays.append(tag_rays)
+    cache = tmp_path / "mixed-lens.npz"
+    np.savez_compressed(
+        cache,
+        frame_index=np.zeros(6, dtype=np.int32),
+        tag_id=np.arange(6, dtype=np.int32),
+        rays_camera=np.asarray(rays, dtype=np.float32),
+        area_px2=np.full(6, 1000.0, dtype=np.float32),
+        detection_source=np.asarray(["direct"] * 6),
+        lens_stream=np.asarray([0, 0, 0, 1, 1, 1], dtype=np.int8),
+        timeline_frame_index=np.asarray([0], dtype=np.int32),
+        timeline_common_time_s=np.asarray([0.0]),
+    )
+
+    rows, summary = track_cache(
+        cache,
+        panel,
+        {},
+        Pose(np.zeros(3), Rotation.identity()),
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["quality_status"] == "valid"
+    assert rows[0]["detected_tag_count"] == 6
+    assert rows[0]["inlier_tag_count"] == 3
+    assert rows[0]["measurement_source"].endswith("_single_lens_recovery")
+    assert float(rows[0]["angular_rmse_deg"]) < 0.01
+    assert summary["single_lens_recovered_frames"] == 1
+
+
 def test_joint_csv_interpolates_both_tracks_in_one_map(tmp_path: Path):
     left = [_row(0, 0.0, 0.0), _row(4, 0.1, None), _row(8, 0.2, 2.0)]
     right = [_row(0, 0.0, 5.0), _row(4, 0.1, 6.0), _row(8, 0.2, 7.0)]
@@ -105,6 +164,58 @@ def test_joint_csv_interpolates_both_tracks_in_one_map(tmp_path: Path):
     assert rows[1]["left_pose_state"] == "INTERPOLATED"
     assert float(rows[1]["left_camera_x_m"]) == 1.0
     assert rows[1]["right_pose_state"] == "MEASURED"
+
+
+def test_zero_phase_filter_repairs_closed_untrusted_excursion_without_time_shift():
+    rows = []
+    for frame in range(60):
+        timestamp = frame / 30.0
+        left = np.asarray([0.01 * timestamp, 0.0, -0.8])
+        if 18 <= frame <= 37:
+            left[1] += 0.2
+        row: dict[str, str | int] = {
+            "frame": frame,
+            "timestamp_s": f"{timestamp:.9f}",
+        }
+        for side, position in (
+            ("left", left),
+            ("right", np.asarray([0.02 * timestamp, 0.1, -0.7])),
+        ):
+            for axis, value in zip("xyz", position, strict=True):
+                row[f"{side}_camera_{axis}_m"] = str(value)
+            for axis, value in zip("xyzw", [0.0, 0.0, 0.0, 1.0], strict=True):
+                row[f"{side}_q{axis}"] = str(value)
+            row[f"{side}_quality_status"] = (
+                "interpolation_untrusted"
+                if side == "left" and 20 <= frame <= 35
+                else "valid"
+            )
+        rows.append(row)
+    timestamps_before = [row["timestamp_s"] for row in rows]
+    frames_before = [row["frame"] for row in rows]
+
+    audit = _zero_phase_filter_joint_rows(rows)
+
+    timestamps_after = [row["timestamp_s"] for row in rows]
+    frames_after = [row["frame"] for row in rows]
+    left_y = np.asarray([float(row["left_camera_y_m"]) for row in rows])
+    right_x = np.asarray([float(row["right_camera_x_m"]) for row in rows])
+    quaternion_norm = np.asarray([
+        np.linalg.norm([float(row[f"left_q{axis}"]) for axis in "xyzw"])
+        for row in rows
+    ])
+
+    assert audit["zero_phase"] is True
+    assert audit["phase_delay_frames"] == 0
+    assert audit["timestamp_or_frame_changed"] is False
+    assert timestamps_after == timestamps_before
+    assert frames_after == frames_before
+    assert len(audit["sides"]["left"]["closed_excursion_intervals"]) == 1
+    assert audit["sides"]["right"]["closed_excursion_intervals"] == []
+    assert np.max(np.abs(left_y)) < 0.01
+    assert np.allclose(right_x, np.arange(60) / 30.0 * 0.02, atol=1e-9)
+    assert np.allclose(quaternion_norm, 1.0, atol=1e-10)
+    assert rows[25]["left_filter_status"] == "ZERO_PHASE_GAP_GUARD_SAVGOL"
 
 
 def test_joint_csv_preserves_aligned_subframe_phase_and_uses_right_timeline(
@@ -295,10 +406,76 @@ def test_recovery_latch_requires_strong_consistent_geometry():
         sources={"global_scout_roi_gray"},
         recovery_required=True,
     )
+    tracked_only = _temporal_gate(
+        candidate,
+        (7.0, previous),
+        7.30,
+        inlier_tag_count=6,
+        sources={"lk_forward_backward"},
+        recovery_required=True,
+    )
 
     assert weak["rejected"] is True
     assert weak["reason"] == "temporal_recovery_requires_strong_consistent_geometry"
     assert strong["rejected"] is False
+    assert tracked_only["rejected"] is True
+    assert tracked_only["reason"] == (
+        "temporal_recovery_requires_strong_consistent_geometry"
+    )
+
+
+def test_single_panel_pose_motion_is_bounded_when_bearings_do_not_support_it():
+    def tag_corners(x_m: float) -> np.ndarray:
+        return np.asarray([
+            [x_m, 0.0, 0.0],
+            [x_m + 0.08, 0.0, 0.0],
+            [x_m + 0.08, 0.08, 0.0],
+            [x_m, 0.08, 0.0],
+        ])
+
+    panel_a = {tag_id: tag_corners(tag_id * 0.10) for tag_id in range(3)}
+    previous = Pose(np.asarray([0.1, 0.1, -0.8]), Rotation.identity())
+    detections = {}
+    for tag_id, corners in panel_a.items():
+        rays = corners - previous.position
+        rays /= np.linalg.norm(rays, axis=1, keepdims=True)
+        detections[tag_id] = Detection(
+            tag_id=tag_id,
+            rays=rays,
+            area_px2=1000.0,
+            source="lk_forward_backward",
+            lens_stream=0,
+        )
+    raw_pose = Pose(
+        previous.position + np.asarray([0.08, 0.0, 0.0]),
+        Rotation.from_euler("y", 4.0, degrees=True),
+    )
+    fit = PoseFit(
+        pose=raw_pose,
+        detected_ids=[0, 1, 2],
+        inlier_ids=[0, 1, 2],
+        angular_rmse_deg=0.1,
+        sources={"lk_forward_backward"},
+        dominant_lens_stream=0,
+        inlier_lens_stream_counts={0: 3},
+    )
+
+    bounded = _regularize_weak_planar_fit(
+        fit,
+        detections,
+        panel_a,
+        panel_a,
+        {},
+        (0.0, previous),
+        1 / 30,
+        max_angular_rmse_deg=2.0,
+    )
+
+    assert bounded.temporally_regularized is True
+    assert np.linalg.norm(bounded.pose.position - previous.position) < 0.02
+    assert np.degrees(
+        (previous.rotation.inv() * bounded.pose.rotation).magnitude()
+    ) < 2.0
 
 
 def test_weak_visual_rotation_that_disagrees_with_gyro_is_rejected():
@@ -331,13 +508,43 @@ def test_weak_visual_rotation_that_disagrees_with_gyro_is_rejected():
     assert result["reason"] == "weak_visual_rotation_disagrees_with_imu"
 
 
-def test_fast_lens_handoff_is_rejected_once_without_blocking_same_lens_motion():
+def test_strong_flow_geometry_remains_primary_when_gyro_disagrees():
+    times = np.arange(0.0, 0.101, 0.01)
+    stationary_imu = ImuSeries(
+        side="right",
+        timestamp_s=times,
+        angular_velocity_hand_rad_s=np.zeros((len(times), 3)),
+        calibration_sha256="test",
+        dataset_path="test.h5",
+    )
+    previous = Pose(np.zeros(3), Rotation.identity())
+    candidate = Pose(
+        np.asarray([0.01, 0.0, 0.0]),
+        Rotation.from_euler("z", 30.0, degrees=True),
+    )
+
+    result = _temporal_gate(
+        candidate,
+        (0.0, previous),
+        0.1,
+        inlier_tag_count=6,
+        sources={"lk_forward_backward"},
+        imu_stream=stationary_imu,
+    )
+
+    assert result["imu_prediction_available"] is True
+    assert result["imu_visual_rotation_residual_deg"] == pytest.approx(30.0)
+    assert result["rejected"] is False
+    assert result["reason"] == "accepted"
+
+
+def test_only_sparse_fast_lens_handoff_is_rejected():
     previous = Pose(np.zeros(3), Rotation.identity())
     jumped = Pose(
         np.asarray([0.10, 0.0, 0.0]),
         Rotation.from_euler("z", 20.0, degrees=True),
     )
-    handoff = _temporal_gate(
+    strong_handoff = _temporal_gate(
         jumped,
         (6.0, previous),
         6.04,
@@ -364,12 +571,22 @@ def test_fast_lens_handoff_is_rejected_once_without_blocking_same_lens_motion():
         dominant_lens_stream=1,
         previous_dominant_lens_stream=0,
     )
+    sparse_handoff = _temporal_gate(
+        jumped,
+        (6.0, previous),
+        6.04,
+        inlier_tag_count=3,
+        sources={"global_scout_roi_gray"},
+        dominant_lens_stream=1,
+        previous_dominant_lens_stream=0,
+    )
 
-    assert handoff["rejected"] is True
-    assert handoff["lens_handoff_measurement"] is True
-    assert handoff["reason"] == "lens_handoff_pose_exceeds_temporal_limits"
+    assert strong_handoff["rejected"] is False
+    assert strong_handoff["lens_handoff_measurement"] is True
     assert same_lens["rejected"] is False
     assert slow_handoff["rejected"] is False
+    assert sparse_handoff["rejected"] is True
+    assert sparse_handoff["reason"] == "lens_handoff_pose_exceeds_temporal_limits"
 
 
 def test_real_four_mp4_cache_rejects_only_known_fast_lens_handoffs(

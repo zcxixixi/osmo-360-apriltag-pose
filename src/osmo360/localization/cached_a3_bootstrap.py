@@ -16,6 +16,7 @@ from typing import Any
 
 import cv2
 import numpy as np
+from scipy.signal import savgol_filter
 from scipy.spatial.transform import Rotation, Slerp
 
 from osmo360.localization.coordinate_frames import (
@@ -43,6 +44,22 @@ class Detection:
     area_px2: float
     source: str
     lens_stream: int | None
+
+
+@dataclass(frozen=True)
+class PoseFit:
+    """One bearing-PnP fit plus the observations that support it."""
+
+    pose: Pose
+    detected_ids: list[int]
+    inlier_ids: list[int]
+    angular_rmse_deg: float
+    sources: set[str]
+    dominant_lens_stream: int | None
+    inlier_lens_stream_counts: dict[int, int]
+    selected_lens_stream: int | None = None
+    direct_only_priority: bool = False
+    temporally_regularized: bool = False
 
 
 STREAM0_FROM_HAND_FLU = Rotation.from_matrix(
@@ -409,14 +426,14 @@ def _temporal_gate(
 
     Two co-planar Tags carried only by LK optical flow are useful for filling
     ordinary motion, but they do not provide enough independent evidence to
-    accept a sudden IPPE branch change. A dominant calibrated-lens handoff is
-    also treated as weak evidence for one frame: the two fisheye lenses have
-    distinct optical centres, and a solve change at that exact boundary can
-    otherwise become a false measured jump. Every solve also has a deliberately
-    generous absolute motion ceiling. After such a rejection, the tracker only
-    reacquires on strong geometry that is consistent with the last accepted
-    pose. When a calibrated per-side gyro is available, weak visual attitude is
-    checked against its short-horizon prediction.
+    accept a sudden IPPE branch change. A lens handoff is likewise weak only
+    when fewer than five Tag IDs support it. Five or more mutually consistent
+    AprilTags remain the primary observation even when their attitude differs
+    from the short-horizon gyro prediction; the IMU is an auxiliary weak-visual
+    gate, not a replacement for strong AprilGrid geometry. Every solve also has
+    a deliberately generous absolute motion ceiling. After such a rejection,
+    the tracker only reacquires on strong geometry consistent with the last
+    accepted pose.
     """
     result: dict[str, Any] = {
         "delta_s": None,
@@ -451,6 +468,10 @@ def _temporal_gate(
         and previous_dominant_lens_stream is not None
         and dominant_lens_stream != previous_dominant_lens_stream
     )
+    weak_lens_handoff = (
+        lens_handoff
+        and inlier_tag_count < MINIMUM_TEMPORAL_RECOVERY_INLIER_TAGS
+    )
     exceeds_motion_limit = speed > 1.5 or angular_speed > 180.0
     absolute_motion_outlier = (
         speed > MAXIMUM_ABSOLUTE_SPEED_M_S
@@ -458,6 +479,7 @@ def _temporal_gate(
     )
     recovery_outlier = recovery_required and (
         inlier_tag_count < MINIMUM_TEMPORAL_RECOVERY_INLIER_TAGS
+        or (flow_only and delta_s > MAXIMUM_TRUSTED_INTERPOLATION_GAP_S)
         or exceeds_motion_limit
     )
     imu_residual = None
@@ -480,19 +502,19 @@ def _temporal_gate(
     imu_inconsistent = bool(
         imu_residual is not None
         and imu_residual > MAXIMUM_IMU_VISUAL_ROTATION_RESIDUAL_DEG
-        and (inlier_tag_count <= 4 or flow_only or lens_handoff)
+        and inlier_tag_count < MINIMUM_TEMPORAL_RECOVERY_INLIER_TAGS
     )
     rejected = bool(
         absolute_motion_outlier
         or recovery_outlier
-        or ((weak or lens_handoff) and exceeds_motion_limit)
+        or ((weak or weak_lens_handoff) and exceeds_motion_limit)
         or imu_inconsistent
     )
     if absolute_motion_outlier:
         reason = "pose_exceeds_absolute_temporal_limits"
     elif recovery_outlier:
         reason = "temporal_recovery_requires_strong_consistent_geometry"
-    elif lens_handoff and exceeds_motion_limit:
+    elif weak_lens_handoff and exceeds_motion_limit:
         reason = "lens_handoff_pose_exceeds_temporal_limits"
     elif weak and exceeds_motion_limit:
         reason = "sparse_flow_planar_pose_exceeds_temporal_limits"
@@ -533,6 +555,158 @@ def _inlier_lens_streams(
     return (winners[0] if len(winners) == 1 else None), counts
 
 
+def _fit_pose(
+    detections: dict[int, Detection],
+    world_corners: dict[int, np.ndarray],
+    panel_a: dict[int, np.ndarray],
+    panel_b: dict[int, np.ndarray],
+    panel_a_to_b: Pose,
+    previous: tuple[float, Pose] | None,
+    now_s: float,
+    minimum_tags: int,
+    *,
+    selected_lens_stream: int | None = None,
+) -> PoseFit | None:
+    """Fit one camera pose without mixing in observations outside ``detections``."""
+    ids = sorted(set(detections) & set(world_corners))
+    if len(ids) < minimum_tags:
+        return None
+    points = np.concatenate([world_corners[tag_id] for tag_id in ids])
+    rays = np.concatenate([detections[tag_id].rays for tag_id in ids])
+    candidates: list[Pose] = []
+    for panel, transform in (
+        (panel_a, None),
+        (panel_b, panel_a_to_b),
+    ):
+        panel_ids = sorted(set(ids) & set(panel))
+        if len(panel_ids) < minimum_tags:
+            continue
+        panel_points = np.concatenate([panel[tag_id] for tag_id in panel_ids])
+        panel_rays = np.concatenate([detections[tag_id].rays for tag_id in panel_ids])
+        for candidate in planar_pose_candidates(panel_points, panel_rays):
+            candidates.append(
+                compose(transform, candidate) if transform is not None else candidate
+            )
+    if previous is not None:
+        candidates.append(previous[1])
+    if not candidates:
+        return None
+    initial = min(
+        candidates,
+        key=lambda pose: _candidate_score(
+            pose, ids, points, rays, previous, now_s
+        )[0],
+    )
+    _, tag_errors = _candidate_score(
+        initial, ids, points, rays, previous, now_s
+    )
+    median = float(np.median(tag_errors))
+    mad = float(np.median(np.abs(tag_errors - median)))
+    threshold = max(1.0, median + 3.0 * max(mad, 0.15))
+    inlier_ids = [
+        tag_id for tag_id, error in zip(ids, tag_errors) if error <= threshold
+    ]
+    if len(inlier_ids) < minimum_tags:
+        inlier_ids = [
+            tag_id for tag_id, _ in sorted(
+                zip(ids, tag_errors), key=lambda value: value[1]
+            )[:minimum_tags]
+        ]
+    inlier_points = np.concatenate([world_corners[tag_id] for tag_id in inlier_ids])
+    inlier_rays = np.concatenate([detections[tag_id].rays for tag_id in inlier_ids])
+    pose = refine_pose(inlier_points, inlier_rays, initial)
+    errors = angular_errors(inlier_points, inlier_rays, pose)
+    rmse = float(np.sqrt(np.mean(errors ** 2)))
+    sources = {detections[tag_id].source for tag_id in inlier_ids}
+    dominant_lens, inlier_lens_counts = _inlier_lens_streams(
+        detections, inlier_ids
+    )
+    return PoseFit(
+        pose=pose,
+        detected_ids=ids,
+        inlier_ids=inlier_ids,
+        angular_rmse_deg=rmse,
+        sources=sources,
+        dominant_lens_stream=dominant_lens,
+        inlier_lens_stream_counts=inlier_lens_counts,
+        selected_lens_stream=selected_lens_stream,
+    )
+
+
+def _regularize_weak_planar_fit(
+    fit: PoseFit,
+    detections: dict[int, Detection],
+    world_corners: dict[int, np.ndarray],
+    panel_a: dict[int, np.ndarray],
+    panel_b: dict[int, np.ndarray],
+    previous: tuple[float, Pose] | None,
+    now_s: float,
+    *,
+    max_angular_rmse_deg: float,
+) -> PoseFit:
+    """Bound poorly observable per-frame planar motion by bearing evidence.
+
+    A single flat AprilGrid can fit a noticeably different depth/tilt pose
+    after only a tiny corner perturbation, especially while a hand partially
+    covers printed edges. If at least two Tags from each non-coplanar panel are
+    present, their geometry already constrains this mode and no regularization
+    is applied. Otherwise the improvement over the last accepted pose controls
+    how much motion one 30 Hz sample may introduce. The raw fit is retained if
+    a bounded pose would no longer satisfy the normal angular quality gate.
+    """
+    if previous is None:
+        return fit
+    previous_time, previous_pose = previous
+    delta_s = float(now_s - previous_time)
+    if not 0.0 < delta_s <= 0.1:
+        return fit
+    panel_a_count = len(set(fit.inlier_ids) & set(panel_a))
+    panel_b_count = len(set(fit.inlier_ids) & set(panel_b))
+    if panel_a_count >= 2 and panel_b_count >= 2:
+        return fit
+
+    points = np.concatenate([world_corners[tag_id] for tag_id in fit.inlier_ids])
+    rays = np.concatenate([detections[tag_id].rays for tag_id in fit.inlier_ids])
+    previous_rmse = float(np.sqrt(np.mean(
+        angular_errors(points, rays, previous_pose) ** 2
+    )))
+    evidence_gain_deg = max(0.0, previous_rmse - fit.angular_rmse_deg)
+    position_delta = fit.pose.position - previous_pose.position
+    distance_m = float(np.linalg.norm(position_delta))
+    relative_rotation = previous_pose.rotation.inv() * fit.pose.rotation
+    angle_deg = float(np.degrees(relative_rotation.magnitude()))
+    maximum_distance_m = delta_s * (0.15 + 3.0 * evidence_gain_deg)
+    maximum_angle_deg = delta_s * (15.0 + 300.0 * evidence_gain_deg)
+    position_fraction = min(1.0, maximum_distance_m / max(distance_m, 1e-12))
+    rotation_fraction = min(1.0, maximum_angle_deg / max(angle_deg, 1e-12))
+    if position_fraction >= 1.0 and rotation_fraction >= 1.0:
+        return fit
+
+    regularized_pose = Pose(
+        previous_pose.position + position_fraction * position_delta,
+        previous_pose.rotation * Rotation.from_rotvec(
+            relative_rotation.as_rotvec() * rotation_fraction
+        ),
+    )
+    regularized_rmse = float(np.sqrt(np.mean(
+        angular_errors(points, rays, regularized_pose) ** 2
+    )))
+    if regularized_rmse > max_angular_rmse_deg:
+        return fit
+    return PoseFit(
+        pose=regularized_pose,
+        detected_ids=fit.detected_ids,
+        inlier_ids=fit.inlier_ids,
+        angular_rmse_deg=regularized_rmse,
+        sources=fit.sources,
+        dominant_lens_stream=fit.dominant_lens_stream,
+        inlier_lens_stream_counts=fit.inlier_lens_stream_counts,
+        selected_lens_stream=fit.selected_lens_stream,
+        direct_only_priority=fit.direct_only_priority,
+        temporally_regularized=True,
+    )
+
+
 def track_cache(
     cache_path: Path,
     panel_a: dict[int, np.ndarray],
@@ -554,60 +728,120 @@ def track_cache(
     previous_observed_dominant_lens: int | None = None
     temporal_recovery_required = False
     for frame, detections in sorted(frames.items()):
-        ids = sorted(set(detections) & set(world_corners))
-        if len(ids) < minimum_tags:
-            continue
         now_s = times[frame]
-        points = np.concatenate([world_corners[tag_id] for tag_id in ids])
-        rays = np.concatenate([detections[tag_id].rays for tag_id in ids])
-        candidates: list[Pose] = []
-        for panel, transform in (
-            (panel_a, None),
-            (panel_b, panel_a_to_b),
-        ):
-            panel_ids = sorted(set(ids) & set(panel))
-            if len(panel_ids) < minimum_tags:
-                continue
-            panel_points = np.concatenate([panel[tag_id] for tag_id in panel_ids])
-            panel_rays = np.concatenate([detections[tag_id].rays for tag_id in panel_ids])
-            for candidate in planar_pose_candidates(panel_points, panel_rays):
-                candidates.append(
-                    compose(transform, candidate) if transform is not None else candidate
-                )
-        if previous is not None:
-            candidates.append(previous[1])
-        if not candidates:
+        detected_ids = sorted(set(detections) & set(world_corners))
+        fit = _fit_pose(
+            detections,
+            world_corners,
+            panel_a,
+            panel_b,
+            panel_a_to_b,
+            previous,
+            now_s,
+            minimum_tags,
+        )
+        if fit is None:
             continue
-        initial = min(
-            candidates,
-            key=lambda pose: _candidate_score(
-                pose, ids, points, rays, previous, now_s
-            )[0],
-        )
-        _, tag_errors = _candidate_score(
-            initial, ids, points, rays, previous, now_s
-        )
-        median = float(np.median(tag_errors))
-        mad = float(np.median(np.abs(tag_errors - median)))
-        threshold = max(1.0, median + 3.0 * max(mad, 0.15))
-        inlier_ids = [
-            tag_id for tag_id, error in zip(ids, tag_errors) if error <= threshold
-        ]
-        if len(inlier_ids) < minimum_tags:
-            inlier_ids = [
-                tag_id for tag_id, _ in sorted(
-                    zip(ids, tag_errors), key=lambda value: value[1]
-                )[:minimum_tags]
+
+        # A decoded Tag corner is a stronger observation than an LK-propagated
+        # corner under partial occlusion. When at least four freshly decoded
+        # IDs make a valid pose, do not let stale tracked corners pull that
+        # anchor away from the printed grid.
+        direct_detections = {
+            tag_id: detection
+            for tag_id, detection in detections.items()
+            if not detection.source.startswith("lk_")
+        }
+        if (
+            len(direct_detections) >= 4
+            and any(source.startswith("lk_") for source in fit.sources)
+        ):
+            direct_fit = _fit_pose(
+                direct_detections,
+                world_corners,
+                panel_a,
+                panel_b,
+                panel_a_to_b,
+                previous,
+                now_s,
+                minimum_tags,
+            )
+            if (
+                direct_fit is not None
+                and direct_fit.angular_rmse_deg <= max_angular_rmse_deg
+            ):
+                fit = PoseFit(
+                    pose=direct_fit.pose,
+                    detected_ids=direct_fit.detected_ids,
+                    inlier_ids=direct_fit.inlier_ids,
+                    angular_rmse_deg=direct_fit.angular_rmse_deg,
+                    sources=direct_fit.sources,
+                    dominant_lens_stream=direct_fit.dominant_lens_stream,
+                    inlier_lens_stream_counts=(
+                        direct_fit.inlier_lens_stream_counts
+                    ),
+                    direct_only_priority=True,
+                )
+
+        # A standard central-camera PnP cannot combine rays from the two X5
+        # optical centres exactly. At the overlap seam that approximation can
+        # reject an otherwise strong multi-Tag frame. Only when the combined
+        # fit has already failed its angular gate, retry each calibrated lens
+        # independently and keep a genuinely valid single-lens solution.
+        lens_streams = sorted({
+            detection.lens_stream
+            for detection in detections.values()
+            if detection.lens_stream is not None
+        })
+        if fit.angular_rmse_deg > max_angular_rmse_deg and len(lens_streams) > 1:
+            single_lens_fits = [
+                candidate
+                for lens_stream in lens_streams
+                if (candidate := _fit_pose(
+                    {
+                        tag_id: detection
+                        for tag_id, detection in detections.items()
+                        if detection.lens_stream == lens_stream
+                    },
+                    world_corners,
+                    panel_a,
+                    panel_b,
+                    panel_a_to_b,
+                    previous,
+                    now_s,
+                    minimum_tags,
+                    selected_lens_stream=lens_stream,
+                )) is not None
             ]
-        inlier_points = np.concatenate([world_corners[tag_id] for tag_id in inlier_ids])
-        inlier_rays = np.concatenate([detections[tag_id].rays for tag_id in inlier_ids])
-        pose = refine_pose(inlier_points, inlier_rays, initial)
-        errors = angular_errors(inlier_points, inlier_rays, pose)
-        rmse = float(np.sqrt(np.mean(errors ** 2)))
-        sources = {detections[tag_id].source for tag_id in inlier_ids}
-        dominant_lens, inlier_lens_counts = _inlier_lens_streams(
-            detections, inlier_ids
+            if single_lens_fits:
+                recovered = min(
+                    single_lens_fits,
+                    key=lambda candidate: (
+                        candidate.angular_rmse_deg,
+                        -len(candidate.inlier_ids),
+                    ),
+                )
+                if recovered.angular_rmse_deg <= max_angular_rmse_deg:
+                    fit = recovered
+
+        fit = _regularize_weak_planar_fit(
+            fit,
+            detections,
+            world_corners,
+            panel_a,
+            panel_b,
+            previous,
+            now_s,
+            max_angular_rmse_deg=max_angular_rmse_deg,
         )
+
+        pose = fit.pose
+        ids = fit.detected_ids
+        inlier_ids = fit.inlier_ids
+        rmse = fit.angular_rmse_deg
+        sources = fit.sources
+        dominant_lens = fit.dominant_lens_stream
+        inlier_lens_counts = fit.inlier_lens_stream_counts
         temporal = _temporal_gate(
             pose,
             previous,
@@ -653,16 +887,25 @@ def track_cache(
             "yaw_deg": f"{euler[2]:.9f}" if quality == "valid" else "",
             "parent_frame": "session_grid_A",
             "child_frame": "hand_camera_flu_back_x",
-            "detected_tag_count": len(ids),
+            "detected_tag_count": len(detected_ids),
             "inlier_tag_count": len(inlier_ids),
-            "inlier_count": len(inlier_points),
+            "inlier_count": len(inlier_ids) * 4,
             "angular_rmse_deg": f"{rmse:.6f}",
-            "detected_ids": " ".join(map(str, ids)),
+            "detected_ids": " ".join(map(str, detected_ids)),
             "inlier_ids": " ".join(map(str, sorted(inlier_ids))),
             "measurement_source": (
-                "cached_raw_fisheye_bearing_direct"
-                if all(not source.startswith("lk_") for source in sources)
-                else "cached_raw_fisheye_bearing_flow_assisted"
+                (
+                    "cached_raw_fisheye_bearing_direct"
+                    if all(not source.startswith("lk_") for source in sources)
+                    else "cached_raw_fisheye_bearing_flow_assisted"
+                )
+                + (
+                    "_single_lens_recovery"
+                    if fit.selected_lens_stream is not None
+                    else ""
+                )
+                + ("_direct_priority" if fit.direct_only_priority else "")
+                + ("_planar_regularized" if fit.temporally_regularized else "")
             ),
             "dominant_lens_stream": (
                 "" if dominant_lens is None else str(dominant_lens)
@@ -703,6 +946,21 @@ def track_cache(
         "observed_frames": len(rows),
         "valid_frames": len(valid),
         "valid_ratio": len(valid) / len(rows) if rows else 0.0,
+        "single_lens_recovered_frames": sum(
+            row["quality_status"] == "valid"
+            and "_single_lens_recovery" in row["measurement_source"]
+            for row in rows
+        ),
+        "planar_temporally_regularized_frames": sum(
+            row["quality_status"] == "valid"
+            and row["measurement_source"].endswith("_planar_regularized")
+            for row in rows
+        ),
+        "direct_priority_frames": sum(
+            row["quality_status"] == "valid"
+            and "_direct_priority" in row["measurement_source"]
+            for row in rows
+        ),
         "temporal_outlier_rejected_frames": sum(
             row["quality_status"] == "temporal_outlier_rejected" for row in rows
         ),
@@ -755,6 +1013,186 @@ POSE_FIELDS = [
     "temporal_angular_speed_deg_s", "temporal_imu_rotation_residual_deg",
     "temporal_imu_prediction_status", "temporal_gate_reason", "quality_status",
 ]
+
+
+def _zero_phase_filter_joint_rows(
+    rows: list[dict[str, Any]],
+    *,
+    window_frames: int = 9,
+    polynomial_order: int = 2,
+    gap_guard_s: float = 0.35,
+    minimum_closed_excursion_m: float = 0.05,
+    closed_excursion_ratio: float = 3.0,
+) -> dict[str, Any]:
+    """Suppress high-frequency pose jitter without shifting timestamps.
+
+    The centered Savitzky-Golay pass has zero phase delay and exactly preserves
+    constant-velocity/quadratic trends. Before it, a long untrusted gap is
+    guarded only when its numeric bridge makes a large closed excursion and
+    returns near its starting pose. That catches occlusion-driven PnP spikes
+    without flattening ordinary one-way hand motion.
+    """
+    if window_frames < 5 or window_frames % 2 == 0:
+        raise ValueError("zero-phase filter window must be an odd integer >= 5")
+    if not 1 <= polynomial_order < window_frames:
+        raise ValueError("invalid zero-phase filter polynomial order")
+    if len(rows) < window_frames:
+        return {
+            "enabled": False,
+            "reason": "timeline_shorter_than_filter_window",
+            "timestamp_or_frame_changed": False,
+        }
+    timestamps = np.asarray([float(row["timestamp_s"]) for row in rows])
+    frames = np.asarray([int(row["frame"]) for row in rows])
+    if np.any(np.diff(timestamps) <= 0) or np.any(np.diff(frames) <= 0):
+        raise ValueError("zero-phase filter requires an increasing joint timeline")
+    original_timestamps = timestamps.copy()
+    original_frames = frames.copy()
+    audit: dict[str, Any] = {
+        "enabled": True,
+        "method": "closed-excursion gap guard plus centered Savitzky-Golay",
+        "zero_phase": True,
+        "phase_delay_frames": 0,
+        "timestamp_or_frame_changed": False,
+        "window_frames": window_frames,
+        "polynomial_order": polynomial_order,
+        "nominal_window_s": float(
+            window_frames * np.median(np.diff(timestamps))
+        ),
+        "gap_guard_s": gap_guard_s,
+        "minimum_closed_excursion_m": minimum_closed_excursion_m,
+        "closed_excursion_ratio": closed_excursion_ratio,
+        "sides": {},
+    }
+    untrusted_statuses = {
+        "interpolation_untrusted", "imu_assisted_untrusted", "pose_untrusted"
+    }
+    for side in ("left", "right"):
+        position = np.asarray([
+            [float(row[f"{side}_camera_{axis}_m"]) for axis in "xyz"]
+            for row in rows
+        ])
+        quaternion = np.asarray([
+            [float(row[f"{side}_q{axis}"]) for axis in "xyzw"]
+            for row in rows
+        ])
+        original_position = position.copy()
+        original_rotation = Rotation.from_quat(quaternion.copy())
+        guarded = np.zeros(len(rows), dtype=bool)
+        untrusted = np.asarray([
+            str(row[f"{side}_quality_status"]) in untrusted_statuses
+            for row in rows
+        ])
+        changes = np.diff(np.r_[False, untrusted, False].astype(np.int8))
+        starts = np.flatnonzero(changes == 1)
+        ends = np.flatnonzero(changes == -1) - 1
+        repaired_intervals = []
+        for start, end in zip(starts, ends, strict=True):
+            if timestamps[end] - timestamps[start] <= MAXIMUM_TRUSTED_INTERPOLATION_GAP_S:
+                continue
+            guard_start = int(np.searchsorted(
+                timestamps, timestamps[start] - gap_guard_s, side="left"
+            ))
+            guard_end = int(np.searchsorted(
+                timestamps, timestamps[end] + gap_guard_s, side="right"
+            ) - 1)
+            lower = guard_start - 1
+            upper = guard_end + 1
+            if lower < 0 or upper >= len(rows):
+                continue
+            alpha = (
+                (timestamps[lower:upper + 1] - timestamps[lower])
+                / (timestamps[upper] - timestamps[lower])
+            )[:, None]
+            chord = (
+                (1.0 - alpha) * position[lower]
+                + alpha * position[upper]
+            )
+            deviation = np.linalg.norm(
+                position[lower:upper + 1] - chord, axis=1
+            )
+            anchor_displacement = float(np.linalg.norm(
+                position[upper] - position[lower]
+            ))
+            maximum_deviation = float(np.max(deviation))
+            if maximum_deviation <= max(
+                minimum_closed_excursion_m,
+                closed_excursion_ratio * anchor_displacement,
+            ):
+                continue
+            position[lower:upper + 1] = chord
+            quaternion[lower:upper + 1] = Slerp(
+                [timestamps[lower], timestamps[upper]],
+                Rotation.from_quat([quaternion[lower], quaternion[upper]]),
+            )(timestamps[lower:upper + 1]).as_quat()
+            guarded[lower:upper + 1] = True
+            repaired_intervals.append({
+                "untrusted_start_s": float(timestamps[start]),
+                "untrusted_end_s": float(timestamps[end]),
+                "guarded_start_s": float(timestamps[lower]),
+                "guarded_end_s": float(timestamps[upper]),
+                "anchor_displacement_m": anchor_displacement,
+                "maximum_closed_excursion_m": maximum_deviation,
+            })
+
+        # Quaternion sign has no physical meaning, but continuous signs are
+        # required before filtering its four embedding coordinates.
+        for index in range(1, len(quaternion)):
+            if float(np.dot(quaternion[index - 1], quaternion[index])) < 0.0:
+                quaternion[index] *= -1.0
+        position = savgol_filter(
+            position,
+            window_frames,
+            polynomial_order,
+            axis=0,
+            mode="interp",
+        )
+        quaternion = savgol_filter(
+            quaternion,
+            window_frames,
+            polynomial_order,
+            axis=0,
+            mode="interp",
+        )
+        quaternion /= np.linalg.norm(quaternion, axis=1, keepdims=True)
+        filtered_rotation = Rotation.from_quat(quaternion)
+        position_correction = np.linalg.norm(
+            position - original_position, axis=1
+        )
+        rotation_correction = np.degrees(
+            (original_rotation.inv() * filtered_rotation).magnitude()
+        )
+        for index, row in enumerate(rows):
+            for axis_index, axis in enumerate("xyz"):
+                row[f"{side}_camera_{axis}_m"] = (
+                    f"{position[index, axis_index]:.9f}"
+                )
+            for axis_index, axis in enumerate("xyzw"):
+                row[f"{side}_q{axis}"] = f"{quaternion[index, axis_index]:.12f}"
+            row[f"{side}_filter_status"] = (
+                "ZERO_PHASE_GAP_GUARD_SAVGOL"
+                if guarded[index]
+                else "ZERO_PHASE_SAVGOL"
+            )
+        audit["sides"][side] = {
+            "closed_excursion_intervals": repaired_intervals,
+            "closed_excursion_guarded_frames": int(np.count_nonzero(guarded)),
+            "position_correction_m": {
+                "median": float(np.median(position_correction)),
+                "p95": float(np.percentile(position_correction, 95)),
+                "max": float(np.max(position_correction)),
+            },
+            "orientation_correction_deg": {
+                "median": float(np.median(rotation_correction)),
+                "p95": float(np.percentile(rotation_correction, 95)),
+                "max": float(np.max(rotation_correction)),
+            },
+        }
+    audit["timestamp_or_frame_changed"] = not (
+        np.array_equal(timestamps, original_timestamps)
+        and np.array_equal(frames, original_frames)
+    )
+    return audit
 
 
 def write_pose_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -811,6 +1249,7 @@ def write_joint_pose_csv(
             f"{side}_detected_tag_count",
             f"{side}_inlier_tag_count",
             f"{side}_measurement_source",
+            f"{side}_filter_status",
         ))
     output_rows = []
     joint_pose_count = 0
@@ -1154,6 +1593,7 @@ def write_joint_pose_csv(
             ):
                 item[f"{side}_{key}"] = "" if source is None else source.get(key, "")
         output_rows.append(item)
+    trajectory_filter = _zero_phase_filter_joint_rows(output_rows)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
@@ -1192,6 +1632,7 @@ def write_joint_pose_csv(
         "untrusted_long_gap_frames": untrusted_joint_frames,
         "untrusted_long_gap_side_frames": untrusted_side_frames,
         "held_untrusted_side_frames": held_untrusted_side_frames,
+        "trajectory_filter": trajectory_filter,
         "imu_assistance": {
             **({} if imu_audit is None else imu_audit),
             "assisted_side_frames": imu_assisted_side_frames,

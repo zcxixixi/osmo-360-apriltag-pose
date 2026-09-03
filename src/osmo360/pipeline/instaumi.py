@@ -336,7 +336,11 @@ def load_instaumi_config(root: Path) -> dict[str, Any]:
             "rectified_view_size": 720,
             "global_scout_hz": 2.0,
             "global_scout_scale": 0.35,
-            "local_redetection_hz": 2.0,
+            # Refresh tracked corners before a partial hand occlusion can drag
+            # LK features away from the printed Tag edges. This remains a
+            # small predicted ROI decode rather than a full-frame search.
+            "local_redetection_hz": 5.0,
+            "maximum_track_age_s": 0.5,
             "cache_chunk_duration_s": 120.0,
         },
         "instaumi": {

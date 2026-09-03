@@ -289,7 +289,12 @@ def build_chunk_tasks(
         forward_backward_interval = aligned_interval(
             float(camera["fps"]), float(budget["forward_backward_check_hz"]), decode_stride
         )
-        max_track_age = aligned_interval(float(camera["fps"]), 1.0, decode_stride)
+        maximum_track_age_s = float(budget.get("maximum_track_age_s", 1.0))
+        max_track_age = max(
+            decode_stride,
+            int(round(float(camera["fps"]) * maximum_track_age_s / decode_stride))
+            * decode_stride,
+        )
         rectified_view_size = int(budget["rectified_view_size"])
         global_scout_scale = float(budget["global_scout_scale"])
         optical_flow_scale = float(budget["optical_flow_scale"])

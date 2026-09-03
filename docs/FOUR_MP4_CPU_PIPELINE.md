@@ -1,6 +1,6 @@
-# Four-MP4 CPU pipeline v10
+# Four-MP4 CPU pipeline v16
 
-`dual-x5-four-mp4-cpu-v14` accepts the four independent raw fisheye MP4 streams
+`dual-x5-four-mp4-cpu-v16` accepts the four independent raw fisheye MP4 streams
 produced by two X5 cameras. It does not import INSV and does not invoke the
 Insta360 stitching SDK. The official panorama is therefore no longer a
 localization prerequisite.
@@ -61,7 +61,7 @@ IMU rotation calibration has an explicit precedence. Valid non-identity
 rig-side-checked, serial-bound rotation-only baseline in
 `config/imu_revisions/x5_kmdgp_kmurq_visual_gyro_20260902_r1.json`. An unknown
 serial never receives another camera's baseline. If neither source is usable,
-v14 may perform the existing fail-closed capture-local visual/gyro fit; it is
+v16 may perform the existing fail-closed capture-local visual/gyro fit; it is
 enabled only with at least 200 excited pairs, speed-norm correlation of at least
 0.70, held-out median/p95 residuals no greater than 0.50/2.0 degrees, and
 cross-side rotation agreement within 10 degrees.
@@ -187,7 +187,7 @@ To publish only the joint trajectory and skip gripper analysis:
 This mode writes `processed/trajectory.csv` and preserves unrelated existing files
 under `processed/`.
 
-The default full export first runs or resumes the v14 shared-map trajectory
+The default full export first runs or resumes the v16 shared-map trajectory
 pipeline, then reads the H5 serials/timestamps and reuses the two 1920x1920
 `*_back.mp4` decode streams for gripper analysis. Camera serial numbers are
 output provenance rather than a detector gate. Every rear frame caches both
@@ -212,9 +212,9 @@ The atomically published CSV product is written directly under the dataset:
 
 ```text
 processed/
-├── trajectory.csv  # v14 joint trajectory re-expressed in world FLU
+├── trajectory.csv  # v16 joint trajectory re-expressed in world FLU
 ├── gripper.csv     # synchronized left/right opening angle, width and state
-├── processed.csv   # trajectory and gripper columns joined at v14 timestamps
+├── processed.csv   # trajectory and gripper columns joined at v16 timestamps
 ├── metadata.csv    # revisions, source/target frames, rate and quality status
 └── time_alignment.csv  # preserved when already present
 ```
@@ -309,7 +309,7 @@ records every flow, redetection, scout, fallback, and rejection count.
 Persistent cache defaults to:
 
 ```text
-dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v14/<pair-id>/
+dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v16/<pair-id>/
 ```
 
 Set `OSMO_PIPELINE_CACHE` to a server-local SSD if the dataset itself is on a
@@ -332,7 +332,7 @@ self-calibration, not external ground truth.
 The principal outputs are:
 
 ```text
-final/dual-x5-four-mp4-cpu-v14/pairs/<pair-id>/tracking/
+final/dual-x5-four-mp4-cpu-v16/pairs/<pair-id>/tracking/
 ├── session_world_map.json
 ├── left_pose.csv
 ├── right_pose.csv
@@ -405,7 +405,7 @@ Render the four source views beside the synchronized shared-map 3D tracks:
 ```bash
 .venv/bin/python -m tools.render_joint_four_mp4_trajectory \
   /data/session \
-  /data/session/final/dual-x5-four-mp4-cpu-v14/pairs/<pair-id>/tracking \
+  /data/session/final/dual-x5-four-mp4-cpu-v16/pairs/<pair-id>/tracking \
   /data/session/processed/joint_trajectory_comparison.mp4 \
   --reframe-world-flu \
   --view-preset flu-front-above

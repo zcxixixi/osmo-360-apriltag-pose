@@ -21,7 +21,7 @@ from .devices import load_device_pairs, load_inventory
 from .manifest import ManifestError, ROOT, confined_path, validate_path_component
 
 
-PIPELINE_REVISION = "dual-x5-four-mp4-cpu-v14"
+PIPELINE_REVISION = "dual-x5-four-mp4-cpu-v16"
 INPUT_SCHEMA = "dual-x5-four-mp4-input/1.0"
 LOCK_SCHEMA = "dual-x5-four-mp4-dataset-lock/1.0"
 
@@ -368,6 +368,9 @@ def resource_budget(config: dict[str, Any] | None = None) -> dict[str, Any]:
     local_hz = _positive_number(
         processing, "OSMO_LOCAL_REDETECTION_HZ", "local_redetection_hz", 5.0
     )
+    maximum_track_age_s = _positive_number(
+        processing, "OSMO_MAX_TRACK_AGE_S", "maximum_track_age_s", 1.0
+    )
     global_hz = _positive_number(
         processing, "OSMO_GLOBAL_SCOUT_HZ", "global_scout_hz", 2.0
     )
@@ -470,6 +473,7 @@ def resource_budget(config: dict[str, Any] | None = None) -> dict[str, Any]:
             "sampled grayscale frames" if decode_fps < 59.0 else "every decoded frame"
         ),
         "local_tag_redetection_hz": local_hz,
+        "maximum_track_age_s": maximum_track_age_s,
         "global_grayscale_scout_hz": global_hz,
         "global_scout_scale": global_scale,
         "maximum_rectified_recovery_hz": rectified_hz,
