@@ -176,7 +176,7 @@ def test_yellow_gripper_uses_yellow_triad_when_black_pair_is_missing(
     )
 
     assert signal.marker_family == "yellow_gripper_black_pair"
-    assert signal.state[10] == "MEASURED_YELLOW_TRIAD_FALLBACK"
+    assert signal.state[10] == "MEASURED_YELLOW_TRIAD"
     assert signal.available_ratio == 1.0
 
 

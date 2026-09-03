@@ -44,7 +44,7 @@ from osmo360.visualization.render_gripper_force_angle_demo import (
 )
 
 
-EXPORT_REVISION = "instaumi-csv-v8-dual-colour-joint-detection"
+EXPORT_REVISION = "instaumi-csv-v9-yellow-triad-primary-black-tip-assisted"
 BLACK_YELLOW_FUSION_MAX_DISAGREEMENT_DEG = 1.5
 LEGACY_EXPORT_REVISION = "instaumi-csv-v1"
 CSV_NAMES = ("trajectory.csv", "gripper.csv", "processed.csv", "metadata.csv")
@@ -489,20 +489,17 @@ def _black_gap_to_signal(
     yellow_only = ~black_valid & yellow_valid
     disagreement = both & ~consistent
     opening = np.full(len(gaps_px), np.nan, dtype=np.float64)
-    opening[consistent] = 0.5 * (
-        black_opening[consistent] + yellow_opening[consistent]
-    )
+    opening[yellow_valid] = yellow_opening[yellow_valid]
     opening[black_only] = black_opening[black_only]
-    opening[yellow_only | disagreement] = yellow_opening[yellow_only | disagreement]
     direct = np.isfinite(opening)
     maximum_gap_frames = max(1, round(maximum_gap_s * fps))
     opening, recovered = bounded_interpolate(opening, maximum_gap_frames)
     opening = np.where(np.isfinite(opening), nanmedian_filter(opening), np.nan)
     states = np.full(len(opening), "UNAVAILABLE", dtype=object)
-    states[consistent] = "MEASURED_FUSED_BLACK_PAIR_YELLOW_TRIAD"
-    states[black_only] = "MEASURED_BLACK_ON_YELLOW_PAIR"
-    states[yellow_only] = "MEASURED_YELLOW_TRIAD_FALLBACK"
-    states[disagreement] = "MEASURED_YELLOW_TRIAD_DISAGREEMENT_FALLBACK"
+    states[consistent] = "MEASURED_YELLOW_TRIAD_BLACK_TIP_CONFIRMED"
+    states[black_only] = "MEASURED_BLACK_TIP_PAIR_FALLBACK"
+    states[yellow_only] = "MEASURED_YELLOW_TRIAD"
+    states[disagreement] = "MEASURED_YELLOW_TRIAD_BLACK_TIP_DISAGREEMENT"
     states[recovered] = "RECOVERED_SHORT_GAP"
     width_values = np.full(len(opening), np.nan, dtype=np.float64)
     available = np.isfinite(opening)
