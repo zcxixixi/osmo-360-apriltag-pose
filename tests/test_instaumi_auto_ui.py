@@ -42,7 +42,7 @@ def test_dashboard_aggregates_running_failed_and_complete(tmp_path: Path) -> Non
         "stage": "video",
         "frame_count_per_video": 100,
     }))
-    (logs / "video-left-back.progress").write_text("frame=50\nprogress=continue\n")
+    (logs / "video-left-back.log").write_text("frame=50\nprogress=continue\n")
     complete = pairs[2].collector_root / pairs[2].episode_name / "processed"
     complete.mkdir(parents=True)
     for name in ("trajectory.csv", "gripper.csv", "processed.csv", "metadata.csv"):
@@ -59,6 +59,7 @@ def test_dashboard_aggregates_running_failed_and_complete(tmp_path: Path) -> Non
         "complete": 1,
         "running": 1,
         "waiting": 0,
+        "retry_wait": 0,
         "failed": 1,
     }
     running = next(task for task in result["tasks"] if task["status"] == "RUNNING")

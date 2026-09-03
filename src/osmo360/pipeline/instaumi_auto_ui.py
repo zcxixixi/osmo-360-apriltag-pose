@@ -25,7 +25,7 @@ PAGE = """<!doctype html>
 <title>InstaUMI 自动处理</title>
 <style>
 :root{color-scheme:dark;--bg:#0d1117;--panel:#161b22;--line:#30363d;--text:#e6edf3;--muted:#8b949e;--blue:#58a6ff;--green:#3fb950;--red:#f85149;--amber:#d29922}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 ui-sans-serif,system-ui;padding:24px}.wrap{max-width:1500px;margin:auto}h1{font-size:24px;margin:0 0 4px}.sub{color:var(--muted);margin-bottom:20px}.cards{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));gap:12px;margin-bottom:18px}.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px}.card b{font-size:26px;display:block}.card span{color:var(--muted)}table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line)}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{color:var(--muted);position:sticky;top:0;background:var(--panel)}.bar{width:180px;height:10px;background:#30363d;border-radius:5px;overflow:hidden}.fill{height:100%;background:var(--blue)}.COMPLETE{color:var(--green)}.FAILED{color:var(--red)}.RUNNING{color:var(--blue)}.WAITING{color:var(--muted)}.mono{font-family:ui-monospace,monospace;font-size:12px}.error{max-width:420px;color:var(--red);white-space:normal}.small{color:var(--muted);font-size:12px}@media(max-width:900px){.cards{grid-template-columns:repeat(2,1fr)}table{font-size:12px}.hide-small{display:none}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 ui-sans-serif,system-ui;padding:24px}.wrap{max-width:1500px;margin:auto}h1{font-size:24px;margin:0 0 4px}.sub{color:var(--muted);margin-bottom:20px}.cards{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:12px;margin-bottom:18px}.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px}.card b{font-size:26px;display:block}.card span{color:var(--muted)}table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line)}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{color:var(--muted);position:sticky;top:0;background:var(--panel)}.bar{width:180px;height:10px;background:#30363d;border-radius:5px;overflow:hidden}.fill{height:100%;background:var(--blue)}.COMPLETE{color:var(--green)}.FAILED{color:var(--red)}.RUNNING{color:var(--blue)}.RETRY_WAIT{color:var(--amber)}.WAITING{color:var(--muted)}.mono{font-family:ui-monospace,monospace;font-size:12px}.error{max-width:420px;color:var(--red);white-space:normal}.small{color:var(--muted);font-size:12px}@media(max-width:900px){.cards{grid-template-columns:repeat(2,1fr)}table{font-size:12px}.hide-small{display:none}}
 </style>
 </head>
 <body><div class="wrap">
@@ -33,13 +33,13 @@ PAGE = """<!doctype html>
 <div class="cards" id="cards"></div>
 <table><thead><tr><th>状态</th><th>数据集</th><th>节点</th><th>阶段</th><th>进度</th><th class="hide-small">源文件</th><th>信息</th></tr></thead><tbody id="rows"></tbody></table>
 </div><script>
-const esc=s=>String(s??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 async function refresh(){
  const r=await fetch('/api/status',{cache:'no-store'});const d=await r.json();
  document.getElementById('updated').textContent=`每 3 秒刷新 · ${d.updated_at} · 分片 ${d.shards.join(', ')||'无'}`;
- const labels=[['total','总计'],['complete','已完成'],['running','处理中'],['waiting','等待'],['failed','失败']];
+ const labels=[['total','总计'],['complete','已完成'],['running','处理中'],['waiting','等待'],['retry_wait','待重试'],['failed','失败']];
  document.getElementById('cards').innerHTML=labels.map(([k,l])=>`<div class="card"><b>${d.counts[k]}</b><span>${l}</span></div>`).join('');
- document.getElementById('rows').innerHTML=d.tasks.map(t=>`<tr><td class="${t.status}"><b>${esc(t.status)}</b></td><td><b>${esc(t.episode)}</b><div class="small">${esc(t.collector)}</div></td><td>${esc(t.node||'-')}</td><td>${esc(t.stage)}</td><td><div>${t.progress.toFixed(1)}%</div><div class="bar"><div class="fill" style="width:${t.progress}%"></div></div></td><td class="mono hide-small">L ${esc(t.left)}<br>R ${esc(t.right)}</td><td class="error">${esc(t.error||t.output||'')}</td></tr>`).join('');
+ document.getElementById('rows').innerHTML=d.tasks.map(t=>`<tr><td class="${t.status}"><b>${esc(t.status_label||t.status)}</b></td><td><b>${esc(t.episode)}</b><div class="small">${esc(t.collector)}</div></td><td>${esc(t.node||'-')}</td><td>${esc(t.stage)}</td><td><div>${t.progress.toFixed(1)}%</div><div class="bar"><div class="fill" style="width:${t.progress}%"></div></div></td><td class="mono hide-small">L ${esc(t.left)}<br>R ${esc(t.right)}</td><td class="error">${esc(t.error||t.output||'')}</td></tr>`).join('');
 }
 refresh();setInterval(refresh,3000);
 </script></body></html>"""
@@ -57,8 +57,18 @@ def _latest_pair_states(automation_root: Path) -> tuple[dict[str, dict[str, Any]
     merged: dict[str, dict[str, Any]] = {}
     shards = []
     paths = sorted(automation_root.glob("state*.json"))
-    if any("-of-" in path.stem for path in paths):
-        paths = [path for path in paths if path.name != "state.json"]
+    shard_counts = [
+        int(match.group(1))
+        for path in paths
+        if (match := re.search(r"-of-(\d+)$", path.stem))
+    ]
+    if shard_counts:
+        current_count = max(shard_counts)
+        paths = [
+            path for path in paths
+            if (match := re.search(r"-of-(\d+)$", path.stem))
+            and int(match.group(1)) == current_count
+        ]
     for path in paths:
         state = _load_json(path)
         shard = path.stem.removeprefix("state") or "legacy"
@@ -145,28 +155,35 @@ def build_status(data_root: Path) -> dict[str, Any]:
             state["status"] = "COMPLETE"
             state["stage"] = "complete"
         status = str(state.get("status", "WAITING"))
-        if status not in {"COMPLETE", "RUNNING", "FAILED"}:
+        retry_at = float(state.get("next_retry_unix_s", 0))
+        status_label = status
+        if status == "FAILED" and retry_at > datetime.now(timezone.utc).timestamp():
+            status = "RETRY_WAIT"
+            status_label = "待重试"
+        if status not in {"COMPLETE", "RUNNING", "FAILED", "RETRY_WAIT"}:
             status = "WAITING"
         stage, progress = _task_progress(data_root, pair, state)
         tasks.append({
             "status": status,
+            "status_label": status_label,
             "collector": pair.collector_root.name,
             "episode": pair.episode_name,
             "node": state.get("node"),
-            "stage": stage,
+            "stage": stage if status != "RETRY_WAIT" else "等待重试",
             "progress": progress,
             "left": pair.left.path.name,
             "right": pair.right.path.name,
-            "error": state.get("error"),
+            "error": None if status == "RUNNING" else state.get("error"),
             "output": str(episode_path / "processed") if status == "COMPLETE" else None,
         })
-    order = {"RUNNING": 0, "FAILED": 1, "WAITING": 2, "COMPLETE": 3}
+    order = {"RUNNING": 0, "RETRY_WAIT": 1, "FAILED": 2, "WAITING": 3, "COMPLETE": 4}
     tasks.sort(key=lambda item: (order[item["status"]], item["episode"], item["collector"]))
     counts = {
         "total": len(tasks),
         "complete": sum(task["status"] == "COMPLETE" for task in tasks),
         "running": sum(task["status"] == "RUNNING" for task in tasks),
-        "waiting": sum(task["status"] == "WAITING" for task in tasks),
+        "waiting": sum(task["status"] in {"WAITING", "RETRY_WAIT"} for task in tasks),
+        "retry_wait": sum(task["status"] == "RETRY_WAIT" for task in tasks),
         "failed": sum(task["status"] == "FAILED" for task in tasks),
     }
     return {
