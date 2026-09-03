@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 
 
-MARKER_ALGORITHM_REVISION = "x5-fixed-roi-dual-colour-gripper-markers-v2"
+MARKER_ALGORITHM_REVISION = "x5-fixed-roi-dual-colour-gripper-markers-v3"
 MARKER_ROI_PX_1920 = (450, 950, 1470, 1800)
 YELLOW_ON_BLACK_FAMILY = "black_gripper_yellow_triads"
 BLACK_ON_YELLOW_FAMILY = "yellow_gripper_black_pair"
@@ -47,7 +47,7 @@ class GripperMarkerCandidates:
 def marker_signature() -> dict[str, object]:
     return {
         "algorithm_revision": MARKER_ALGORITHM_REVISION,
-        "source_pixel_format": "yuvj420p",
+        "source_pixel_format": "yuv420p/yuvj420p with ROI range normalization",
         "source_size": [1920, 1920],
         "roi_xyxy_px": list(MARKER_ROI_PX_1920),
         "families": {
@@ -248,6 +248,8 @@ def detect_yuv420_gripper_markers(
     luma: np.ndarray,
     chroma_u: np.ndarray,
     chroma_v: np.ndarray,
+    *,
+    full_range: bool = True,
 ) -> GripperMarkerCandidates:
     """Return both layouts while converting only the fixed gripper ROI."""
     height, width = luma.shape
@@ -269,6 +271,24 @@ def detect_yuv420_gripper_markers(
         (x1 - x0, y1 - y0),
         interpolation=cv2.INTER_NEAREST,
     )
+    if not full_range:
+        # Preserve the original limited-range luma for AprilTag tracking, but
+        # normalize only the small colour ROI before applying calibrated HSV
+        # thresholds.  This supports older H.265 exports tagged yuv420p/tv
+        # without adding a second full-frame conversion.
+        y_roi = np.clip(
+            (y_roi.astype(np.float32) - 16.0) * (255.0 / 219.0), 0.0, 255.0
+        ).astype(np.uint8)
+        u_roi = np.clip(
+            (u_roi.astype(np.float32) - 128.0) * (255.0 / 224.0) + 128.0,
+            0.0,
+            255.0,
+        ).astype(np.uint8)
+        v_roi = np.clip(
+            (v_roi.astype(np.float32) - 128.0) * (255.0 / 224.0) + 128.0,
+            0.0,
+            255.0,
+        ).astype(np.uint8)
     yuv_roi = np.dstack((y_roi, u_roi, v_roi))
     bgr_roi = cv2.cvtColor(yuv_roi, cv2.COLOR_YUV2BGR)
     return _detect_candidates(cv2.cvtColor(bgr_roi, cv2.COLOR_BGR2HSV))

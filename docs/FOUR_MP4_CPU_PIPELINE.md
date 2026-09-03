@@ -1,6 +1,6 @@
 # Four-MP4 CPU pipeline v10
 
-`dual-x5-four-mp4-cpu-v13` accepts the four independent raw fisheye MP4 streams
+`dual-x5-four-mp4-cpu-v14` accepts the four independent raw fisheye MP4 streams
 produced by two X5 cameras. It does not import INSV and does not invoke the
 Insta360 stitching SDK. The official panorama is therefore no longer a
 localization prerequisite.
@@ -305,7 +305,7 @@ records every flow, redetection, scout, fallback, and rejection count.
 Persistent cache defaults to:
 
 ```text
-dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v13/<pair-id>/
+dataset-root/.osmo-cache/<dataset-name>/dual-x5-four-mp4-cpu-v14/<pair-id>/
 ```
 
 Set `OSMO_PIPELINE_CACHE` to a server-local SSD if the dataset itself is on a
@@ -328,7 +328,7 @@ self-calibration, not external ground truth.
 The principal outputs are:
 
 ```text
-final/dual-x5-four-mp4-cpu-v13/pairs/<pair-id>/tracking/
+final/dual-x5-four-mp4-cpu-v14/pairs/<pair-id>/tracking/
 ├── session_world_map.json
 ├── left_pose.csv
 ├── right_pose.csv
@@ -401,7 +401,7 @@ Render the four source views beside the synchronized shared-map 3D tracks:
 ```bash
 .venv/bin/python -m tools.render_joint_four_mp4_trajectory \
   /data/session \
-  /data/session/final/dual-x5-four-mp4-cpu-v13/pairs/<pair-id>/tracking \
+  /data/session/final/dual-x5-four-mp4-cpu-v14/pairs/<pair-id>/tracking \
   /data/session/processed/joint_trajectory_comparison.mp4 \
   --reframe-world-flu \
   --view-preset flu-front-above

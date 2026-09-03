@@ -255,6 +255,7 @@ class YUV420Frame:
     luma: np.ndarray
     chroma_u: np.ndarray
     chroma_v: np.ndarray
+    color_range: str
 
 
 class FFmpegYUV420Pipe:
@@ -406,6 +407,7 @@ class FFmpegYUV420Pipe:
             chroma_v=flat[luma_size + chroma_size :].reshape(
                 self.height // 2, self.width // 2
             ),
+            color_range="pc" if self.output_pixel_format == "yuvj420p" else "tv",
         )
 
     def close(self) -> None:

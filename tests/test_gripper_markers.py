@@ -47,6 +47,7 @@ def test_dual_colour_detector_finds_black_pair_on_yellow_gripper() -> None:
         i420[:1920],
         flat_chroma[:plane_size].reshape(960, 960),
         flat_chroma[plane_size:].reshape(960, 960),
+        full_range=False,
     )
 
     for markers in (bgr_markers, yuv_markers):

@@ -50,7 +50,7 @@ CSV_NAMES = ("trajectory.csv", "gripper.csv", "processed.csv", "metadata.csv")
 PIPELINE_FINAL_ENTRIES = frozenset({"manifest.lock.json", "status.json", "pairs"})
 PROFILE_PATH = (
     ROOT
-    / "config/rig_revisions/instaumi_gripper_signal_20260903_r5.json"
+    / "config/rig_revisions/instaumi_gripper_signal_20260903_r6.json"
 )
 SIDES = ("left", "right")
 

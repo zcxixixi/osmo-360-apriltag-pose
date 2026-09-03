@@ -425,14 +425,6 @@ def main() -> int:
                 f"{stream_info.width}x{stream_info.height} != "
                 f"{args.source_width}x{args.source_height}"
             )
-        if args.gripper_yuv420_roi and not (
-            stream_info.pixel_format == "yuvj420p"
-            or stream_info.color_range == "pc"
-        ):
-            raise RuntimeError(
-                "gripper YUV420 thresholds require the calibrated full-range "
-                f"source, got {stream_info.pixel_format}/{stream_info.color_range}"
-            )
         decoder_provenance = {
             "decoder_transport": "ffmpeg_rawvideo_pipe",
             "pixel_format": "gray8_luma",
@@ -614,6 +606,7 @@ def main() -> int:
                 yuv_frame.luma,
                 yuv_frame.chroma_u,
                 yuv_frame.chroma_v,
+                full_range=yuv_frame.color_range == "pc",
             )
             missing = np.full((3, 2), np.nan, dtype=np.float32)
             missing_point = np.full(2, np.nan, dtype=np.float32)

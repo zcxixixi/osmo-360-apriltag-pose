@@ -26,7 +26,7 @@ def test_signal_profile_is_hash_bound_and_camera_serial_is_provenance() -> None:
     payload, profiles = export.load_profile()
 
     assert payload["revision_id"] == (
-        "instaumi-gripper-signal-20260903-r5-dual-colour-auto"
+        "instaumi-gripper-signal-20260903-r6-dual-colour-range-normalized"
     )
     assert payload["camera_identity_policy"]["mode"] == "provenance_only"
     assert payload["prefer_h5_preview"] is False

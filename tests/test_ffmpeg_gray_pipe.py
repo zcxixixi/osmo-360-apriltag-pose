@@ -128,4 +128,5 @@ def test_yuv420_pipe_preserves_exact_gray_luma_and_exposes_chroma(tmp_path: Path
     assert np.array_equal(np.asarray([frame.luma for frame in frames]), gray)
     assert frames[0].chroma_u.shape == (24, 32)
     assert frames[0].chroma_v.shape == (24, 32)
+    assert frames[0].color_range == "tv"
     assert pipe.provenance["pixel_format"] == "yuv420p_shared_luma_chroma"
