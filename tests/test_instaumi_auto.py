@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 
 import h5py
+import numpy as np
+from osmo360.pipeline.insta360_telemetry import ImuSamples
 from osmo360.pipeline import instaumi_auto as auto
 
 
@@ -158,6 +160,67 @@ def test_completed_audio_and_video_are_reused(tmp_path: Path, monkeypatch) -> No
     )
 
     assert calls == []
+
+
+def test_format_pair_resumes_existing_videos_without_encoding(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    collector = tmp_path / "0901_instaumi_sort_blocks_qsb"
+    left_path = collector / "raw/left/VID_20260901_120000_00_001.insv"
+    right_path = collector / "raw/right/VID_20260901_120002_00_001.insv"
+    left_path.parent.mkdir(parents=True)
+    right_path.parent.mkdir(parents=True)
+    pair = auto.Pair(
+        collector,
+        auto.Source("left", left_path, "left/" + left_path.name, "a" * 64, datetime(2026, 9, 1, 12)),
+        auto.Source("right", right_path, "right/" + right_path.name, "b" * 64, datetime(2026, 9, 1, 12, 0, 2)),
+    )
+    staging = collector / ".instaumi_20260901_120000.formatting/video"
+    staging.mkdir(parents=True)
+    (collector / ".instaumi_20260901_120000.formatting/processed").mkdir()
+    for name in (
+        "Left.mp4", "Right.mp4", "Left_back.mp4", "Left_forward.mp4",
+        "Right_back.mp4", "Right_forward.mp4",
+    ):
+        (staging / name).write_bytes(b"complete")
+    monkeypatch.setattr(auto, "_probe_source", lambda source: {
+        "serial": "serial",
+        "duration_s": 2.0,
+        "fps": 30.0,
+        "lens_size": [1920, 1920],
+        "x5_offset": "n2_100_100_100_0_0_90_100_200_100_0_0_90_400_200_1",
+        "sha256": source.sha256,
+    })
+    monkeypatch.setattr(auto, "_extract_audio", lambda *_args: None)
+    monkeypatch.setattr(auto, "_audio_offset", lambda *_args: {
+        "offset_s": 0.0,
+        "correlation": 1.0,
+        "uncertainty_s": 0.0005,
+        "mapping": "right_time_s = left_time_s + offset_s",
+    })
+    samples = ImuSamples(
+        timestamp_ns=np.asarray([0, 1_000_000], dtype=np.int64),
+        source_timestamp_ns=np.asarray([10_000_000, 11_000_000], dtype=np.int64),
+        angular_velocity=np.zeros((2, 3)),
+        linear_acceleration=np.zeros((2, 3)),
+        valid=np.ones(2, dtype=np.uint8),
+        provenance={"gyro_config": {"acc_range": 32, "gyro_range": 2000}},
+    )
+    monkeypatch.setattr(auto, "extract_x5_imu", lambda *_args, **_kwargs: samples)
+    monkeypatch.setattr(
+        auto,
+        "write_dataset_h5",
+        lambda output, **_kwargs: output.write_bytes(b"h5"),
+    )
+    monkeypatch.setattr(auto, "_run", lambda *_args: (_ for _ in ()).throw(
+        AssertionError("resume unexpectedly invoked an external command")
+    ))
+
+    episode = auto.format_pair(pair, tmp_path / "automation")
+
+    assert episode.is_dir()
+    assert (episode / "dataset.h5").read_bytes() == b"h5"
 
 
 def test_encoder_supports_a6000_nvenc(monkeypatch) -> None:

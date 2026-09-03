@@ -537,7 +537,7 @@ def format_pair(pair: Pair, automation_root: Path) -> Path:
 
     left_record, right_record = _probe_source(pair.left), _probe_source(pair.right)
     audio = scratch / "audio"
-    audio.mkdir()
+    audio.mkdir(parents=True, exist_ok=True)
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         futures = (
             executor.submit(_extract_audio, pair.left.path, audio / "left.wav", logs / "audio-left.log"),
