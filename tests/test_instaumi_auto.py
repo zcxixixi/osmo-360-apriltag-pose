@@ -133,6 +133,7 @@ def test_encoder_forces_common_frame_rate_and_count(tmp_path: Path, monkeypatch)
     command = captured[0]
     assert f"fps={auto.TARGET_FPS},scale=1920:1920:flags=lanczos" in command
     assert command[command.index("-frames:v") + 1] == "3039"
+    assert command[command.index("-progress") + 1] == "pipe:1"
 
 
 def test_encoder_supports_a6000_nvenc(monkeypatch) -> None:

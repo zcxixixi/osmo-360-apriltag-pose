@@ -44,6 +44,10 @@ FFPROBE = Path(os.environ.get(
     str(ROOT / "work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffprobe"),
 ))
 VIDEO_ENCODER = os.environ.get("INSTAUMI_AUTO_VIDEO_ENCODER", "libx265")
+LOCAL_SCRATCH_ROOT = Path(os.environ.get(
+    "INSTAUMI_AUTO_SCRATCH",
+    str(ROOT / "work/instaumi-auto"),
+))
 
 
 @dataclass(frozen=True)
@@ -361,15 +365,13 @@ def _encode_lens(
 ) -> None:
     temporary = output.with_name(output.stem + ".partial.mp4")
     temporary.unlink(missing_ok=True)
-    progress = log.with_suffix(".progress")
-    progress.unlink(missing_ok=True)
     command = [
         str(FFMPEG), "-v", "error", "-y", "-ss", f"{start_s:.9f}",
         "-i", str(source), "-map", f"0:v:{stream}", "-an", "-vf",
         f"fps={TARGET_FPS},scale={size}:{size}:flags=lanczos", "-frames:v",
         str(frame_count), *_video_encoder_args(),
         "-pix_fmt", "yuv420p", "-tag:v", "hvc1",
-        "-bf", "0", "-g", "30", "-progress", str(progress), "-nostats",
+        "-bf", "0", "-g", "30", "-progress", "pipe:1", "-nostats",
         "-movflags", "+faststart", str(temporary),
     ]
     _run(command, log)
@@ -489,7 +491,7 @@ def format_pair(pair: Pair, automation_root: Path) -> Path:
     processed = staging / "processed"
     video.mkdir(parents=True)
     processed.mkdir()
-    scratch = automation_root / "work" / hashlib.sha256(pair.key.encode()).hexdigest()[:16]
+    scratch = LOCAL_SCRATCH_ROOT / hashlib.sha256(pair.key.encode()).hexdigest()[:16]
     shutil.rmtree(scratch, ignore_errors=True)
     scratch.mkdir(parents=True)
     logs = automation_root / "logs" / pair.collector_root.name / pair.episode_name
@@ -584,9 +586,6 @@ def format_pair(pair: Pair, automation_root: Path) -> Path:
 
     write_dataset_h5(
         staging / "dataset.h5",
-        dataset_id=pair.episode_name,
-        left_video=video / "Left.mp4",
-        right_video=video / "Right.mp4",
         left_source=pair.left.path,
         right_source=pair.right.path,
         left_start_s=left_start,
@@ -680,7 +679,15 @@ def scan_once(
             "sources": {},
             "pairs": {},
         })
+        previous_revision = state.get("revision")
         state["revision"] = AUTOMATION_REVISION
+        if previous_revision != AUTOMATION_REVISION:
+            for pair_status in state["pairs"].values():
+                if isinstance(pair_status, dict):
+                    pair_status.pop("next_retry_unix_s", None)
+                    pair_status.pop("error", None)
+                    if pair_status.get("status") == "FAILED":
+                        pair_status["status"] = "WAITING"
         state["node"] = os.uname().nodename
         pairs = discover_pairs(data_root, collectors)
         if episode_name is not None:
@@ -838,7 +845,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--data-root",
         type=Path,
-        default=Path("/home/ps/current-robotics-data-2/total_annotation/umi_insta360"),
+        default=Path("/home/ps/current-robotics-data-2/umi_insta360"),
     )
     parser.add_argument(
         "--process-script",

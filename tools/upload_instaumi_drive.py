@@ -105,7 +105,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="osmo-server")
     parser.add_argument(
         "--destination-root",
-        default="/home/ps/current-robotics-data-2/total_annotation/umi_insta360",
+        default="/home/ps/current-robotics-data-2/umi_insta360",
     )
     parser.add_argument(
         "--status",

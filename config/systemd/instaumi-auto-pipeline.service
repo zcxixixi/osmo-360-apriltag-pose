@@ -7,14 +7,14 @@ Wants=network-online.target
 Type=oneshot
 WorkingDirectory=%h/osmo-360-apriltag-pose-cpu
 Environment=PYTHONPATH=%h/osmo-360-apriltag-pose-cpu/src
-ExecStart=%h/osmo-360-apriltag-pose-cpu/.venv/bin/python -m osmo360.pipeline.instaumi_auto --data-root %h/current-robotics-data-2/total_annotation/umi_insta360 --process-script %h/osmo-360-apriltag-pose-cpu/bin/process_instaumi_dataset.sh --max-pairs 1 --shard-count 2 --shard-index 0
+ExecStart=%h/osmo-360-apriltag-pose-cpu/.venv/bin/python -m osmo360.pipeline.instaumi_auto --data-root %h/current-robotics-data-2/umi_insta360 --process-script %h/osmo-360-apriltag-pose-cpu/bin/process_instaumi_dataset.sh --max-pairs 1 --shard-count 4 --shard-index 0
 Nice=10
 IOSchedulingClass=idle
 UMask=0027
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=full
-ReadWritePaths=%h/current-robotics-data-2/total_annotation/umi_insta360 %h/osmo-360-apriltag-pose-cpu/work
+ReadWritePaths=%h/current-robotics-data-2/umi_insta360 %h/osmo-360-apriltag-pose-cpu/work
 TimeoutStartSec=infinity
 
 [Install]

@@ -7,7 +7,7 @@ ConditionPathIsDirectory=/run/media/cenxi/current-11/data/0902insta360
 [Service]
 Type=oneshot
 WorkingDirectory=%h/osmo-360-apriltag-pose-worker
-ExecStart=%h/osmo-360-apriltag-pose-worker/bin/upload-instaumi-drive /run/media/cenxi/current-11/data/0902insta360 --host ps@192.168.111.62 --destination-root /home/ps/current-robotics-data-2/total_annotation/umi_insta360 --status %h/.local/state/instaumi-upload/current11.json
+ExecStart=%h/osmo-360-apriltag-pose-worker/bin/upload-instaumi-drive /run/media/cenxi/current-11/data/0902insta360 --host ps@192.168.111.62 --destination-root /home/ps/current-robotics-data-2/umi_insta360 --status %h/.local/state/instaumi-upload/current11.json
 Nice=10
 IOSchedulingClass=idle
 UMask=0027
