@@ -61,7 +61,7 @@ IMU rotation calibration has an explicit precedence. Valid non-identity
 rig-side-checked, serial-bound rotation-only baseline in
 `config/imu_revisions/x5_kmdgp_kmurq_visual_gyro_20260902_r1.json`. An unknown
 serial never receives another camera's baseline. If neither source is usable,
-v12 may perform the existing fail-closed capture-local visual/gyro fit; it is
+v14 may perform the existing fail-closed capture-local visual/gyro fit; it is
 enabled only with at least 200 excited pairs, speed-norm correlation of at least
 0.70, held-out median/p95 residuals no greater than 0.50/2.0 degrees, and
 cross-side rotation agreement within 10 degrees.
@@ -187,15 +187,19 @@ To publish only the joint trajectory and skip gripper analysis:
 This mode writes `processed/trajectory.csv` and preserves unrelated existing files
 under `processed/`.
 
-The default full export first runs or resumes the v12 shared-map trajectory
-pipeline, then reads the H5 serials/timestamps and the two 1920x1920
-`*_back.mp4` gripper views. Camera serial numbers are output provenance rather
-than a detector gate: the yellow-dot detector measures the image on every
-capture, while the opening-width calibration is bound to the physical
-left/right gripper and BaseTag role. `metadata.csv` records both the actual
-dataset camera serial and the source camera used to establish the diagnostic
-calibration. A cross-serial result remains `training_ready=0`; detector coverage
-must be audited rather than treating camera identity as accuracy evidence.
+The default full export first runs or resumes the v14 shared-map trajectory
+pipeline, then reads the H5 serials/timestamps and reuses the two 1920x1920
+`*_back.mp4` decode streams for gripper analysis. Camera serial numbers are
+output provenance rather than a detector gate. Every rear frame caches both
+the calibrated yellow triads and the yellow-surrounded black jaw-tip pair.
+The complete stream locks one hardware appearance: a black gripper continues
+to use the yellow triads, while a yellow gripper also uses its yellow triads as
+the primary opening measurement and uses the black tips to confirm the result
+or fill a missing triad. A disagreement remains explicit and keeps the
+calibrated triad value. `metadata.csv` records the actual dataset camera, the
+calibration-source camera, marker family and coverage. A cross-serial result
+remains `training_ready=0`; detector coverage must be audited rather than
+treating camera identity as accuracy evidence.
 
 The H5 timeline is the bounded processing range: a source MP4 may retain
 verified trailing encoded frames, but missing source frames or any request past
@@ -208,9 +212,9 @@ The atomically published CSV product is written directly under the dataset:
 
 ```text
 processed/
-├── trajectory.csv  # v12 joint trajectory re-expressed in world FLU
+├── trajectory.csv  # v14 joint trajectory re-expressed in world FLU
 ├── gripper.csv     # synchronized left/right opening angle, width and state
-├── processed.csv   # trajectory and gripper columns joined at v12 timestamps
+├── processed.csv   # trajectory and gripper columns joined at v14 timestamps
 ├── metadata.csv    # revisions, source/target frames, rate and quality status
 └── time_alignment.csv  # preserved when already present
 ```
