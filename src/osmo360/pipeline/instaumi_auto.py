@@ -28,7 +28,7 @@ from .instaumi_format import common_window, write_dataset_h5
 from .four_mp4 import PIPELINE_REVISION as TRACKING_REVISION
 from .manifest import ManifestError, ROOT
 
-AUTOMATION_REVISION = "instaumi-auto-v7"
+AUTOMATION_REVISION = "instaumi-auto-v8"
 TARGET_FPS = "30000/1001"
 TARGET_FPS_FLOAT = 30000 / 1001
 SERIAL_PATTERN = re.compile(rb"IAHE[A-Z0-9]{10}")

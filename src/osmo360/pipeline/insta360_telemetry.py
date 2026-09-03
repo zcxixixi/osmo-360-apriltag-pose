@@ -53,10 +53,12 @@ def _read_blackbox_csv(path: Path) -> tuple[dict[str, Any], np.ndarray]:
     values: list[list[float]] = []
     in_samples = False
     with path.open(newline="", encoding="utf-8") as handle:
-        for row in csv.reader(handle):
-            if not row:
+        for line in handle:
+            line = line.rstrip("\r\n")
+            if not line:
                 continue
-            if row[0] == "loopIteration":
+            row = next(csv.reader([line]))
+            if row and row[0] == "loopIteration":
                 expected = [
                     "loopIteration", "time", "gyroADC[0]", "gyroADC[1]",
                     "gyroADC[2]", "accSmooth[0]", "accSmooth[1]",
@@ -67,12 +69,19 @@ def _read_blackbox_csv(path: Path) -> tuple[dict[str, Any], np.ndarray]:
                 in_samples = True
                 continue
             if not in_samples:
-                if len(row) >= 2:
-                    raw = ",".join(row[1:])
-                    try:
-                        metadata[row[0]] = json.loads(raw)
-                    except json.JSONDecodeError:
-                        metadata[row[0]] = raw
+                key_text, separator, raw = line.partition(",")
+                if not separator:
+                    continue
+                try:
+                    key = json.loads(key_text)
+                except json.JSONDecodeError as error:
+                    raise ManifestError(
+                        f"malformed X5 IMU metadata key: {key_text}"
+                    ) from error
+                try:
+                    metadata[str(key)] = json.loads(raw)
+                except json.JSONDecodeError:
+                    metadata[str(key)] = raw
                 continue
             if len(row) != 8:
                 raise ManifestError(f"malformed X5 IMU sample row: {row[:2]}")
