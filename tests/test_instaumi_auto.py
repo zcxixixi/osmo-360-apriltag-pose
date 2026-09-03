@@ -208,11 +208,13 @@ def test_format_pair_resumes_existing_videos_without_encoding(
         provenance={"gyro_config": {"acc_range": 32, "gyro_range": 2000}},
     )
     monkeypatch.setattr(auto, "extract_x5_imu", lambda *_args, **_kwargs: samples)
-    monkeypatch.setattr(
-        auto,
-        "write_dataset_h5",
-        lambda output, **_kwargs: output.write_bytes(b"h5"),
-    )
+    h5_calls = []
+
+    def fake_write(output, **kwargs):
+        h5_calls.append((output, kwargs))
+        output.write_bytes(b"h5")
+
+    monkeypatch.setattr(auto, "write_dataset_h5", fake_write)
     monkeypatch.setattr(auto, "_run", lambda *_args: (_ for _ in ()).throw(
         AssertionError("resume unexpectedly invoked an external command")
     ))
@@ -221,6 +223,13 @@ def test_format_pair_resumes_existing_videos_without_encoding(
 
     assert episode.is_dir()
     assert (episode / "dataset.h5").read_bytes() == b"h5"
+    output, kwargs = h5_calls[0]
+    assert output == episode.parent / ".instaumi_20260901_120000.formatting/dataset.h5"
+    assert kwargs["dataset_id"] == "instaumi_20260901_120000"
+    assert kwargs["left_video"] == episode.parent / ".instaumi_20260901_120000.formatting/video/Left.mp4"
+    assert kwargs["right_video"] == episode.parent / ".instaumi_20260901_120000.formatting/video/Right.mp4"
+    assert kwargs["left_source"] == left_path
+    assert kwargs["right_source"] == right_path
 
 
 def test_encoder_supports_a6000_nvenc(monkeypatch) -> None:
