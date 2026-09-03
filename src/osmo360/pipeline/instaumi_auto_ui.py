@@ -78,7 +78,7 @@ def _ffmpeg_progress(log_root: Path, frame_count: int) -> float:
     if frame_count <= 0:
         return 0.0
     total = 0
-    for path in log_root.glob("video-*.progress"):
+    for path in log_root.glob("video-*.log"):
         values: dict[str, str] = {}
         try:
             for line in path.read_text(encoding="utf-8").splitlines():
@@ -196,7 +196,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--data-root",
         type=Path,
-        default=Path("/home/ps/current-robotics-data-2/total_annotation/umi_insta360"),
+        default=Path("/home/ps/current-robotics-data-2/umi_insta360"),
     )
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=7871)

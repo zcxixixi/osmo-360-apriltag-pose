@@ -2,7 +2,7 @@
 Description=Process the workstation shard of uploaded InstaUMI recordings
 After=network-online.target
 Wants=network-online.target
-ConditionPathIsDirectory=%t/gvfs/sftp:host=192.168.111.62,user=ps/home/ps/current-robotics-data-2/total_annotation/umi_insta360
+ConditionPathIsDirectory=%t/gvfs/sftp:host=192.168.111.62,user=ps/home/ps/current-robotics-data-2/umi_insta360
 
 [Service]
 Type=oneshot
@@ -12,7 +12,7 @@ Environment=OSMO_FFMPEG_BIN=%h/osmo-360-apriltag-pose-worker/work/tools/ffmpeg-m
 Environment=INSTAUMI_AUTO_FFMPEG=%h/osmo-360-apriltag-pose-worker/work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg
 Environment=INSTAUMI_AUTO_FFPROBE=%h/osmo-360-apriltag-pose-worker/work/tools/ffmpeg-master-latest-linux64-gpl/bin/ffprobe
 Environment=INSTAUMI_AUTO_VIDEO_ENCODER=hevc_nvenc
-ExecStart=%h/osmo-360-apriltag-pose-worker/.venv/bin/python -m osmo360.pipeline.instaumi_auto --data-root %t/gvfs/sftp:host=192.168.111.62,user=ps/home/ps/current-robotics-data-2/total_annotation/umi_insta360 --process-script %h/osmo-360-apriltag-pose-worker/bin/process_instaumi_dataset.sh --max-pairs 1 --shard-count 4 --shard-index 1
+ExecStart=%h/osmo-360-apriltag-pose-worker/.venv/bin/python -m osmo360.pipeline.instaumi_auto --data-root %t/gvfs/sftp:host=192.168.111.62,user=ps/home/ps/current-robotics-data-2/umi_insta360 --process-script %h/osmo-360-apriltag-pose-worker/bin/process_instaumi_dataset.sh --max-pairs 1 --shard-count 4 --shard-index 1
 Nice=5
 IOSchedulingClass=best-effort
 IOSchedulingPriority=6
@@ -20,7 +20,7 @@ UMask=0027
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=full
-ReadWritePaths=%t/gvfs/sftp:host=192.168.111.62,user=ps/home/ps/current-robotics-data-2/total_annotation/umi_insta360 %h/osmo-360-apriltag-pose-worker/work
+ReadWritePaths=%t/gvfs/sftp:host=192.168.111.62,user=ps/home/ps/current-robotics-data-2/umi_insta360 %h/osmo-360-apriltag-pose-worker/work
 TimeoutStartSec=infinity
 
 [Install]

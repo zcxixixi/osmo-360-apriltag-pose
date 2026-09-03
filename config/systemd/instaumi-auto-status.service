@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=%h/osmo-360-apriltag-pose-cpu
 Environment=PYTHONPATH=%h/osmo-360-apriltag-pose-cpu/src
-ExecStart=%h/osmo-360-apriltag-pose-cpu/.venv/bin/python -m osmo360.pipeline.instaumi_auto_ui --data-root %h/current-robotics-data-2/total_annotation/umi_insta360 --host 0.0.0.0 --port 7871
+ExecStart=%h/osmo-360-apriltag-pose-cpu/.venv/bin/python -m osmo360.pipeline.instaumi_auto_ui --data-root %h/current-robotics-data-2/umi_insta360 --host 0.0.0.0 --port 7871
 Restart=on-failure
 RestartSec=3
 UMask=0027
@@ -15,7 +15,7 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=full
 ProtectHome=read-only
-ReadOnlyPaths=%h/current-robotics-data-2/total_annotation/umi_insta360
+ReadOnlyPaths=%h/current-robotics-data-2/umi_insta360
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
