@@ -136,6 +136,30 @@ def test_encoder_forces_common_frame_rate_and_count(tmp_path: Path, monkeypatch)
     assert command[command.index("-progress") + 1] == "pipe:1"
 
 
+def test_completed_audio_and_video_are_reused(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "source.insv"
+    source.write_bytes(b"source")
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"RIFF" + b"x" * 50)
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"encoded")
+    calls = []
+    monkeypatch.setattr(auto, "_run", lambda command, log: calls.append(command))
+
+    auto._extract_audio(source, audio, tmp_path / "audio.log")
+    auto._encode_lens(
+        source,
+        video,
+        stream=0,
+        start_s=0.0,
+        frame_count=2,
+        size=1920,
+        log=tmp_path / "video.log",
+    )
+
+    assert calls == []
+
+
 def test_encoder_supports_a6000_nvenc(monkeypatch) -> None:
     monkeypatch.setattr(auto, "VIDEO_ENCODER", "hevc_nvenc")
 

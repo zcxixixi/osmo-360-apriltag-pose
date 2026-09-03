@@ -23,12 +23,12 @@ from scipy.io import wavfile
 from scipy.signal import correlate, correlation_lags
 
 from .devices import load_inventory
-from .insta360_telemetry import extract_x5_imu
+from .insta360_telemetry import ImuSamples, extract_x5_imu
 from .instaumi_format import common_window, write_dataset_h5
 from .four_mp4 import PIPELINE_REVISION as TRACKING_REVISION
 from .manifest import ManifestError, ROOT
 
-AUTOMATION_REVISION = "instaumi-auto-v4"
+AUTOMATION_REVISION = "instaumi-auto-v5"
 TARGET_FPS = "30000/1001"
 TARGET_FPS_FLOAT = 30000 / 1001
 SERIAL_PATTERN = re.compile(rb"IAHE[A-Z0-9]{10}")
@@ -310,6 +310,9 @@ def _run(command: list[str], log: Path) -> None:
 
 
 def _extract_audio(source: Path, output: Path, log: Path) -> None:
+    if output.is_file() and output.stat().st_size > 44:
+        return
+    output.parent.mkdir(parents=True, exist_ok=True)
     _run([
         str(FFMPEG), "-v", "error", "-y", "-i", str(source), "-vn",
         "-ac", "1", "-ar", "2000", "-c:a", "pcm_s16le", str(output),
@@ -363,6 +366,8 @@ def _encode_lens(
     size: int,
     log: Path,
 ) -> None:
+    if output.is_file() and output.stat().st_size > 0:
+        return
     temporary = output.with_name(output.stem + ".partial.mp4")
     temporary.unlink(missing_ok=True)
     command = [
@@ -478,6 +483,33 @@ def _process_complete(episode: Path) -> bool:
     )
 
 
+def _imu_cache_path(scratch: Path, side: str) -> Path:
+    return scratch / f"imu-{side}.npz"
+
+
+def _save_imu(path: Path, samples: ImuSamples) -> None:
+    np.savez_compressed(
+        path,
+        timestamp_ns=samples.timestamp_ns,
+        source_timestamp_ns=samples.source_timestamp_ns,
+        angular_velocity=samples.angular_velocity,
+        linear_acceleration=samples.linear_acceleration,
+        valid=samples.valid,
+        provenance=np.asarray(json.dumps(samples.provenance)),
+    )
+
+
+def _load_imu(path: Path) -> ImuSamples:
+    with np.load(path, allow_pickle=False) as arrays:
+        return ImuSamples(
+            timestamp_ns=arrays["timestamp_ns"].copy(),
+            source_timestamp_ns=arrays["source_timestamp_ns"].copy(),
+            angular_velocity=arrays["angular_velocity"].copy(),
+            linear_acceleration=arrays["linear_acceleration"].copy(),
+            valid=arrays["valid"].copy(),
+            provenance=json.loads(str(arrays["provenance"].item())),
+        )
+
 def format_pair(pair: Pair, automation_root: Path) -> Path:
     episode = pair.collector_root / pair.episode_name
     if _format_complete(episode):
@@ -486,19 +518,14 @@ def format_pair(pair: Pair, automation_root: Path) -> Path:
         raise PipelineFailure(f"incomplete existing episode requires review: {episode}")
 
     staging = pair.collector_root / f".{pair.episode_name}.formatting"
-    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
     video = staging / "video"
     processed = staging / "processed"
-    video.mkdir(parents=True)
-    processed.mkdir()
+    video.mkdir(parents=True, exist_ok=True)
+    processed.mkdir(parents=True, exist_ok=True)
     scratch = LOCAL_SCRATCH_ROOT / hashlib.sha256(pair.key.encode()).hexdigest()[:16]
-    shutil.rmtree(scratch, ignore_errors=True)
-    scratch.mkdir(parents=True)
+    scratch.mkdir(parents=True, exist_ok=True)
     logs = automation_root / "logs" / pair.collector_root.name / pair.episode_name
-    _atomic_json(logs / "format_status.json", {
-        "stage": "audio",
-        "updated_at_utc": _utc_now(),
-    })
 
     left_record, right_record = _probe_source(pair.left), _probe_source(pair.right)
     audio = scratch / "audio"
@@ -511,7 +538,14 @@ def format_pair(pair: Pair, automation_root: Path) -> Path:
         for future in futures:
             future.result()
     approximate = (pair.right.recorded_at - pair.left.recorded_at).total_seconds()
-    sync = _audio_offset(audio / "left.wav", audio / "right.wav", approximate)
+    sync_path = scratch / "sync.json"
+    sync = (
+        _load_json(sync_path)
+        if sync_path.is_file()
+        else _audio_offset(audio / "left.wav", audio / "right.wav", approximate)
+    )
+    if not sync_path.is_file():
+        _atomic_json(sync_path, sync)
     left_start, right_start, duration = common_window(
         left_record["duration_s"], right_record["duration_s"], sync["offset_s"]
     )
@@ -563,41 +597,56 @@ def format_pair(pair: Pair, automation_root: Path) -> Path:
         "updated_at_utc": _utc_now(),
     })
 
+    imu = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        imu_futures = {
-            "left": executor.submit(
-                extract_x5_imu, pair.left.path, scratch / "imu-left",
-                source_start_s=left_start, duration_s=duration,
-                expected_serial=left_record["serial"],
-            ),
-            "right": executor.submit(
-                extract_x5_imu, pair.right.path, scratch / "imu-right",
-                source_start_s=right_start, duration_s=duration,
-                expected_serial=right_record["serial"],
-            ),
-        }
-        imu = {side: future.result() for side, future in imu_futures.items()}
-    _atomic_json(logs / "format_status.json", {
-        "stage": "hdf5",
-        "frame_count_per_video": frame_count,
-        "video_count": 6,
-        "updated_at_utc": _utc_now(),
-    })
-
-    write_dataset_h5(
-        staging / "dataset.h5",
-        left_source=pair.left.path,
-        right_source=pair.right.path,
-        left_start_s=left_start,
-        right_start_s=right_start,
-        sync=sync,
-        ffprobe=FFPROBE,
-        source_records={"left": left_record, "right": right_record},
-        imu=imu,
-    )
-    _write_alignment(
-        processed / "time_alignment.csv", pair, sync, left_start, right_start, duration
-    )
+        imu_futures = {}
+        for side, source, start, record in (
+            ("left", pair.left.path, left_start, left_record),
+            ("right", pair.right.path, right_start, right_record),
+        ):
+            cache = _imu_cache_path(scratch, side)
+            imu_futures[side] = (
+                executor.submit(
+                    extract_x5_imu,
+                    source,
+                    scratch / f"imu-{side}",
+                    source_start_s=start,
+                    duration_s=duration,
+                    expected_serial=record["serial"],
+                )
+                if not cache.is_file()
+                else None
+            )
+        for side, future in imu_futures.items():
+            cache = _imu_cache_path(scratch, side)
+            if future is not None:
+                _save_imu(cache, future.result())
+            imu[side] = _load_imu(cache)
+    h5_path = staging / "dataset.h5"
+    if not h5_path.is_file() or h5_path.stat().st_size == 0:
+        write_dataset_h5(
+            h5_path,
+            dataset_id=pair.episode_name,
+            left_video=video / "Left.mp4",
+            right_video=video / "Right.mp4",
+            left_source=pair.left.path,
+            right_source=pair.right.path,
+            left_start_s=left_start,
+            right_start_s=right_start,
+            sync=sync,
+            ffprobe=FFPROBE,
+            source_records={"left": left_record, "right": right_record},
+            imu=imu,
+        )
+    if not (processed / "time_alignment.csv").is_file():
+        _write_alignment(
+            processed / "time_alignment.csv",
+            pair,
+            sync,
+            left_start,
+            right_start,
+            duration,
+        )
     _atomic_json(processed / "automation_status.json", {
         "schema_version": "instaumi-automation-status/1.0",
         "revision": AUTOMATION_REVISION,
