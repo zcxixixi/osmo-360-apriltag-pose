@@ -78,7 +78,10 @@ def _ffmpeg_progress(log_root: Path, frame_count: int) -> float:
     if frame_count <= 0:
         return 0.0
     total = 0
-    for path in log_root.glob("video-*.log"):
+    paths = sorted(
+        {*log_root.glob("video-*.log"), *log_root.glob("video-*.progress")}
+    )
+    for path in paths:
         values: dict[str, str] = {}
         try:
             for line in path.read_text(encoding="utf-8").splitlines():
